@@ -15,7 +15,7 @@ export const ROUTES = Object.freeze({
  * would allow localhost / Vercel preview URLs to accidentally become
  * permanent restaurant QR destinations.
  */
-export const PUBLIC_APP_URL = "https://rms.vercel.app";
+export const PUBLIC_APP_URL = "https://rms-restorantos.vercel.app";
 
 /**
  * Returns the permanent customer menu URL for a specific table.
