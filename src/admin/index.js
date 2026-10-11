@@ -556,7 +556,8 @@ async function renderAdminWorkspace(mount) {
           <!-- Center logo safely removed to match POS layout -->
         </div>
         <div class="topbar-side topbar-right">
-          <button class="icon-btn icon-btn-dark" id="admin-refresh" title="Refresh" aria-label="Refresh"><i class="ph ph-arrows-clockwise"></i></button>
+          <button class="icon-btn icon-btn-dark" id="admin-refresh" title="Refresh" aria-label="Refresh"><i class="ph-bold ph-arrows-clockwise"></i></button>
+          <button class="icon-btn" id="admin-logout" title="Sign Out" aria-label="Sign Out" style="background: #fee2e2; color: #e11d48; border: 1px solid #fecdd3; border-radius: 12px; margin-left: 8px;"><i class="ph-bold ph-sign-out"></i></button>
         </div>
       </header>
 
@@ -588,6 +589,25 @@ async function renderAdminWorkspace(mount) {
   }
 
   mount.querySelector("#admin-menu").addEventListener("click", () => window.__FOUR_FLAVOURS_NAV__?.open());
+
+  // ==========================================
+  // GLOBAL SIGN OUT LOGIC
+  // ==========================================
+  mount.querySelector("#admin-logout")?.addEventListener("click", async () => {
+    const btn = mount.querySelector("#admin-logout");
+    btn.innerHTML = `<i class="ph-bold ph-spinner-gap ph-spin"></i>`;
+    
+    // 1. Securely destroy the Supabase authentication session
+    await supabase.auth.signOut();
+    
+    // 2. Wipe the local browser memory
+    window.__ACTIVE_TENANT__ = null;
+    
+    // 3. Kick the user back to the main SaaS landing page
+    history.pushState({}, "", location.pathname);
+    location.hash = "";
+    window.dispatchEvent(new Event("rms:navigate"));
+  });
   
   mount.querySelector("#admin-refresh").addEventListener("click", async (e) => { 
     const btn = e.currentTarget;
@@ -642,29 +662,148 @@ async function renderAdminWorkspace(mount) {
   }
 
   async function renderOrders() {
-    area.innerHTML = `<section class="section-title-row"><div><span class="eyebrow">Order History</span><h1>All past bills.</h1><p>View, reprint, or permanently delete historical receipts from the database.</p></div></section><section class="admin-panel"><div class="admin-list-scroll" id="orders-list"><div class="empty-state"><i class="ph ph-spinner-gap"></i><strong>Loading orders...</strong></div></div></section>`;
+    area.innerHTML = `
+      <style>
+        .export-excel-wrapper { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
+        @media (max-width: 720px) { .export-excel-wrapper { position: static; transform: none; margin-top: 14px; } }
+      </style>
+      <section class="section-title-row" style="position: relative; width: 100%; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+        <div>
+          <span class="eyebrow">Order History</span>
+          <h1>All past bills.</h1>
+          <p>View, reprint, or permanently delete historical receipts from the database.</p>
+        </div>
+        <div class="export-excel-wrapper">
+          <button class="btn btn-primary" id="export-excel-btn" style="border-radius: 99px; font-size: 0.85rem; height: 40px; padding: 0 16px; gap: 8px; box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25); background: #16a34a; border: 1px solid #15803d; color: white;">
+            <i class="ph-bold ph-download-simple" style="font-size: 18px;"></i> To Excel
+          </button>
+        </div>
+      </section>
+      <section class="admin-panel">
+        <div class="admin-list-scroll" id="orders-list">
+          <div class="empty-state"><i class="ph ph-spinner-gap"></i><strong>Loading orders...</strong></div>
+        </div>
+      </section>`;
+    
     const list = area.querySelector("#orders-list");
     
-    try {
-      // Fetch orders, nested items, AND the status of their associated dining session
-      const { data: rawOrders, error } = await supabase.from("orders")
-        .select("*, order_items(*), dining_sessions(status)")
-        .order("created_at", { ascending: false })
-        .limit(150);
+    // ==========================================
+    // EXPORT TO EXCEL LOGIC (Dynamic SheetJS)
+    // ==========================================
+    const exportBtn = area.querySelector("#export-excel-btn");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", async () => {
+        const ogHtml = exportBtn.innerHTML;
+        exportBtn.disabled = true;
+        exportBtn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Exporting...`;
+
+        try {
+          // 1. Fetch fresh order data securely for this specific restaurant
+          const { data: ordersData, error } = await supabase
+            .from("orders")
+            .select("*, order_items(*), dining_sessions(table_id)")
+            .eq("restaurant_id", window.__ACTIVE_TENANT__.id)
+            .order("created_at", { ascending: false });
+
+          if (error) throw error;
+          if (!ordersData || ordersData.length === 0) throw new Error("There are no orders to export yet.");
+
+          // 2. Format Data specifically for Excel Columns
+          const excelData = ordersData.map(o => {
+             let tableStr = "Takeaway";
+             if (o.dining_sessions?.table_id && typeof tables !== 'undefined') {
+                const t = tables.find(x => x.id === o.dining_sessions.table_id);
+                if (t) tableStr = `Table ${t.table_no}`;
+             }
+
+             // Format items nicely: "2x Pizza, 1x Coke"
+             const itemsStr = (o.order_items || [])
+                .map(i => `${i.quantity}x ${i.name_snapshot || i.product_name || i.name}`)
+                .join(", ");
+
+             return {
+                "Order #": o.order_number,
+                "Date": new Date(o.created_at).toLocaleDateString('en-IN'),
+                "Time": new Date(o.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                "Order Type": tableStr,
+                "Items": itemsStr,
+                "Subtotal (₹)": Number(o.subtotal || 0),
+                "CGST (₹)": Number(o.cgst || 0),
+                "SGST (₹)": Number(o.sgst || 0),
+                "Rounding (₹)": Number(o.rounding || 0),
+                "Grand Total (₹)": Number(o.grand_total || 0),
+                "Status": String(o.status || "Completed").toUpperCase()
+             };
+          });
+
+          // 3. Dynamically load SheetJS (Prevents slowing down the website's initial load)
+          if (!window.XLSX) {
+             await new Promise((resolve, reject) => {
+                const script = document.createElement("script");
+                script.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+                script.onload = resolve;
+                script.onerror = reject;
+                document.head.appendChild(script);
+             });
+          }
+
+          // 4. Build Excel Workbook
+          const wb = window.XLSX.utils.book_new();
+          const ws = window.XLSX.utils.json_to_sheet(excelData);
+          
+          // Adjust Column Widths for readability
+          ws['!cols'] = [
+             { wch: 10 }, { wch: 15 }, { wch: 12 }, { wch: 18 }, { wch: 55 },
+             { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 15 }
+          ];
+
+          // 5. Sanitize Sheet Name (Excel has strict rules: max 31 chars, no symbols)
+          let safeSheetName = (window.__ACTIVE_TENANT__?.name || "Orders").substring(0, 31);
+          safeSheetName = safeSheetName.replace(/[\\\/\?\*\[\]\:]/g, ''); 
+          
+          window.XLSX.utils.book_append_sheet(wb, ws, safeSheetName);
+          
+          // 6. Download File
+          const cleanFileName = `${safeSheetName.replace(/\s+/g, '_')}_Orders.xlsx`;
+          window.XLSX.writeFile(wb, cleanFileName);
+          
+          showToast("Export Successful", "Excel file downloaded securely.");
+        } catch (err) {
+          console.error(err);
+          showToast("Export Failed", err.message, "error");
+        } finally {
+          exportBtn.disabled = false;
+          exportBtn.innerHTML = ogHtml;
+        }
+      });
+    }
+
+    const exportWrapper = area.querySelector(".export-excel-wrapper");
+
+      try {
+        // Fetch orders, nested items, AND the status of their associated dining session
+        const { data: rawOrders, error } = await supabase.from("orders")
+          .select("*, order_items(*), dining_sessions(status)")
+          .eq("restaurant_id", window.__ACTIVE_TENANT__.id) /* THE FIX: Explicitly isolates orders to the logged-in restaurant */
+          .order("created_at", { ascending: false })
+          .limit(150);
+          
+        if (error) throw error;
         
-      if (error) throw error;
-      
-      // LOGIC FIX: Only show Takeaway orders, or Dine-In orders where the table session is fully 'closed'.
-      // This hides active eating tables from the "Past Bills" ledger!
-      const orders = rawOrders.filter(o => 
-          o.order_type === 'takeaway' || 
-          (o.dining_sessions && o.dining_sessions.status === 'closed')
-      );
-      
-      if (!orders || orders.length === 0) {
-        list.innerHTML = `<div class="empty-state"><i class="ph ph-receipt"></i><strong>No completed bills yet</strong><span>Once a table is closed and paid, its final receipt will appear here.</span></div>`;
-        return;
-      }
+        // LOGIC FIX: Only show Takeaway orders, or Dine-In orders where the table session is fully 'closed'.
+        // This hides active eating tables from the "Past Bills" ledger!
+        const orders = rawOrders.filter(o => 
+            o.order_type === 'takeaway' || 
+            (o.dining_sessions && o.dining_sessions.status === 'closed')
+        );
+        
+        if (!orders || orders.length === 0) {
+          list.innerHTML = `<div class="empty-state"><i class="ph ph-receipt"></i><strong>No completed bills yet</strong><span>Once a table is closed and paid, its final receipt will appear here.</span></div>`;
+          if (exportWrapper) exportWrapper.style.display = "none"; // Hides the Excel button
+          return;
+        }
+
+        if (exportWrapper) exportWrapper.style.display = "block"; // Shows the Excel button
 
       // 1. Load the list of bills the Admin has already clicked on from local memory
       const seenOrders = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_orders") || "[]"));
@@ -963,7 +1102,8 @@ async function renderAdminWorkspace(mount) {
             if (selectedFile) {
               statusNode.innerHTML = `<i class="ph ph-spinner-gap"></i><span>Optimizing...</span>`;
               optimizedFile = await optimizeCuisineImage(selectedFile);
-              newStoragePath = `cuisines/${cuisineId}/${crypto.randomUUID()}.webp`;
+              // 🔒 STORAGE ISOLATION: Nests the image in a folder dedicated strictly to this restaurant
+              newStoragePath = `${window.__ACTIVE_TENANT__.id}/cuisines/${cuisineId}/${crypto.randomUUID()}.webp`;
               finalImageUrl = getDishPublicUrl(newStoragePath);
             }
             
@@ -1028,7 +1168,7 @@ async function renderAdminWorkspace(mount) {
         { label: "Delete category", icon: "ph-trash", className: "btn-danger", onClick: async ({ close, button }) => {
           button.disabled = true;
           try { 
-            const { error } = await supabase.from("cuisines").delete().eq("id", cuisine.id); 
+            const { error } = await supabase.from("cuisines").delete().eq("id", cuisine.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id); 
             if (error) throw error; 
             const storagePath = storagePathFromUrl(cuisine.image_url);
             if (storagePath) await supabase.storage.from(DISH_IMAGE_BUCKET).remove([storagePath]);
@@ -1549,7 +1689,7 @@ async function renderAdminWorkspace(mount) {
     async function renderManager() {
       try {
         // FETCH ALL ORDERS: Aggregate every round the customer ordered into one Master Tab
-        const { data: ordersList, error } = await supabase.from("orders").select("*, order_items(*)").eq("session_id", session.id).neq("status", "cancelled").order("created_at", { ascending: true });
+        const { data: ordersList, error } = await supabase.from("orders").select("*, order_items(*)").eq("session_id", session.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id).neq("status", "cancelled").order("created_at", { ascending: true });
         if (error) throw error;
 
         if (!ordersList || ordersList.length === 0) {
@@ -1563,7 +1703,7 @@ async function renderAdminWorkspace(mount) {
             </div>`;
           
           host.querySelector("#force-close-empty").addEventListener("click", async () => {
-             await supabase.from("dining_sessions").update({ status: 'closed' }).eq("id", session.id);
+             await supabase.from("dining_sessions").update({ status: 'closed' }).eq("id", session.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id);
              modal.close();
              reload();
           });
@@ -1647,7 +1787,7 @@ async function renderAdminWorkspace(mount) {
             btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i>`;
             try {
               // Intelligent Merge Sync: Fetch existing items to prevent wiping the bill
-              const { data: existingItems } = await supabase.from("order_items").select("*").eq("order_id", latestOrder.id);
+              const { data: existingItems } = await supabase.from("order_items").select("*").eq("order_id", latestOrder.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id);
               const mergedMap = new Map();
               
               if (existingItems) {
@@ -1803,7 +1943,7 @@ async function renderAdminWorkspace(mount) {
               
               try {
                  // Intelligent Merge Sync
-                 const { data: existingItems } = await supabase.from("order_items").select("*").eq("order_id", latestOrder.id);
+                 const { data: existingItems } = await supabase.from("order_items").select("*").eq("order_id", latestOrder.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id);
                  const mergedMap = new Map();
                  
                  if (existingItems) {
@@ -1999,7 +2139,14 @@ async function renderAdminWorkspace(mount) {
         }
       });
 
-      area.querySelector("#admin-lock-workspace").addEventListener("click", () => {
+      area.querySelector("#admin-lock-workspace").addEventListener("click", async () => {
+        const btn = area.querySelector("#admin-lock-workspace");
+        btn.innerHTML = `<i class="ph-bold ph-spinner-gap ph-spin"></i> Locking...`;
+        
+        // Securely destroy the session so the next person must sign in
+        await supabase.auth.signOut();
+        window.__ACTIVE_TENANT__ = null;
+        
         history.pushState({}, "", location.pathname);
         location.hash = "";
         window.dispatchEvent(new Event("rms:navigate"));
@@ -2101,6 +2248,7 @@ async function renderAdminWorkspace(mount) {
 
           // 2. The security check happens securely inside PostgreSQL here
           const { error } = await supabase.rpc("change_admin_pin", { 
+            p_restaurant_id: window.__ACTIVE_TENANT__.id,
             p_current_pin: currentPin, 
             p_new_pin: newPin 
           });
@@ -2220,7 +2368,7 @@ async function renderAdminWorkspace(mount) {
         { label: "Keep table", icon: "ph-arrow-left", className: "btn-quiet", onClick: ({ close }) => close() },
         { label: "Delete table", icon: "ph-trash", className: "btn-danger", onClick: async ({ close, button }) => {
           button.disabled = true;
-          try { const { data: openSessions, error: sessionError } = await supabase.from("dining_sessions").select("id").eq("table_id", table.id).neq("status", "closed").limit(1); if (sessionError) throw sessionError; if (openSessions?.length) throw new Error("This table has an open dining session. Close that session before deleting the table."); const { error } = await supabase.from("tables").delete().eq("id", table.id); if (error) throw error; showToast("Table deleted", `Table ${table.table_no} was removed.`); close(); await reload(); } catch (error) { button.disabled = false; showToast("Could not delete table", error.message, "error"); }
+          try { const { data: openSessions, error: sessionError } = await supabase.from("dining_sessions").select("id").eq("table_id", table.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id).neq("status", "closed").limit(1); if (sessionError) throw sessionError; if (openSessions?.length) throw new Error("This table has an open dining session. Close that session before deleting the table."); const { error } = await supabase.from("tables").delete().eq("id", table.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id); if (error) throw error; showToast("Table deleted", `Table ${table.table_no} was removed.`); close(); await reload(); } catch (error) { button.disabled = false; showToast("Could not delete table", error.message, "error"); }
         }}
       ]
     });
@@ -2299,7 +2447,7 @@ async function renderAdminWorkspace(mount) {
         { label: "Delete dish", icon: "ph-trash", className: "btn-danger", onClick: async ({ close, button }) => {
           button.disabled = true;
           try { 
-            const { error } = await supabase.from("products").delete().eq("id", product.id); 
+            const { error } = await supabase.from("products").delete().eq("id", product.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id); 
             if (error) throw error; 
             const storagePath = storagePathFromUrl(product.image_url);
             if (storagePath) await supabase.storage.from(DISH_IMAGE_BUCKET).remove([storagePath]);
@@ -2391,7 +2539,8 @@ async function renderAdminWorkspace(mount) {
               if (selectedFile) {
                 statusNode.innerHTML = `<i class="ph ph-spinner-gap"></i><span>Optimizing image…</span>`;
                 optimizedFile = await optimizeDishImage(selectedFile);
-                newStoragePath = `products/${productId}/${crypto.randomUUID()}.webp`;
+                // 🔒 STORAGE ISOLATION: Nests the image in a folder dedicated strictly to this restaurant
+                newStoragePath = `${window.__ACTIVE_TENANT__.id}/products/${productId}/${crypto.randomUUID()}.webp`;
                 finalImageUrl = getDishPublicUrl(newStoragePath);
               }
 
@@ -2399,7 +2548,9 @@ async function renderAdminWorkspace(mount) {
 
               const mainCat = String(fd.get("main_category") || "").trim();
               const subCat = String(fd.get("sub_category") || "").trim();
-              const finalCategory = subCat ? `${mainCat} -${subCat}` : mainCat;
+              
+              // THE FIX: Ensure there is a space BEFORE and AFTER the hyphen so parsing works perfectly!
+              const finalCategory = subCat ? `${mainCat} - ${subCat}` : mainCat;
 
               const payload = {
                 id: productId,
@@ -2476,30 +2627,48 @@ async function renderAdminWorkspace(mount) {
   };
   window.addEventListener("ff_admin_alert_received", adminAlertHandler);
 
-  // --- LIVE MONITORING WEBSOCKET ---
-  const realtimeChannel = supabase.channel('admin-live-updates')
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, async payload => {
+  // --- LIVE MONITORING WEBSOCKET (STRICT TENANT ISOLATION) ---
+  const tenantFilter = `restaurant_id=eq.${window.__ACTIVE_TENANT__.id}`;
+  const realtimeChannel = supabase.channel(`admin-live-updates-${window.__ACTIVE_TENANT__.id}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders', filter: tenantFilter }, async payload => {
+      // 1. INBOX NOTIFICATION: Customer placed a new order
+      if (payload.new?.note === "Customer Self-Order") {
+          const tableNo = window.__FF_TABLES__?.find(t => t.id === payload.new.table_id)?.table_no || "Unknown";
+          window.__adminAlerts = window.__adminAlerts || [];
+          window.__adminAlerts.push({ title: "New Customer Order", message: `Table ${tableNo} sent items to the kitchen.`, tableId: payload.new.table_id });
+          if (window.updateGlobalNotificationBadge) window.updateGlobalNotificationBadge();
+          showToast("New Order", `Table ${tableNo} placed an order!`, "success");
+      }
       if (section === "orders") renderOrders();
       else if (section === "overview") await reload();
     })
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'dining_sessions' }, async payload => {
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'dining_sessions', filter: tenantFilter }, async payload => {
+      const tableNo = window.__FF_TABLES__?.find(t => t.id === (payload.new?.table_id || payload.old?.table_id))?.table_no || "Unknown";
+
+      // 🌟 THE FIX: Catch brand new sessions (INSERT) and instantly notify the Admin!
       if (payload.eventType === 'INSERT' && payload.new?.status === 'open') {
-         const table = tables.find(t => t.id === payload.new.table_id);
-         if (table) showToast("Table Opened", `Table ${table.table_no} was just seated.`);
-      }
-      if (payload.eventType === 'UPDATE' && payload.new?.status === "closed" && payload.old?.status === "open") {
-        showToast("Bill Generated & Table Freed!", `A customer finished their meal.`, "success");
-        const ordersNavBtn = mount.querySelector('[data-section="orders"]');
-        if (ordersNavBtn) {
-          ordersNavBtn.style.color = "var(--gold-600)";
-          ordersNavBtn.classList.remove("qty-pulse");
-          void ordersNavBtn.offsetWidth;
-          ordersNavBtn.classList.add("qty-pulse");
-        }
-      } else if (payload.eventType === 'UPDATE' && payload.new?.status === "closed" && payload.old?.status !== "closed") {
-        showToast("Table Closed", "A table session was finalized by staff.");
+         showToast("Table Opened", `Table ${tableNo} was just seated.`);
       }
       
+      // 2. INBOX NOTIFICATION: Customer requested the bill
+      if (payload.eventType === 'UPDATE' && payload.new?.status === 'bill_requested' && payload.old?.status !== 'bill_requested') {
+         window.__adminAlerts = window.__adminAlerts || [];
+         window.__adminAlerts.push({ title: "Bill Requested", message: `Table ${tableNo} is ready to pay.`, tableId: payload.new.table_id });
+         if (window.updateGlobalNotificationBadge) window.updateGlobalNotificationBadge();
+         showToast("Bill Requested", `Table ${tableNo} requested their bill!`, "success");
+         
+         const ordersNavBtn = mount.querySelector('[data-section="orders"]');
+         if (ordersNavBtn) {
+           ordersNavBtn.style.color = "var(--gold-600)";
+           ordersNavBtn.classList.remove("qty-pulse"); void ordersNavBtn.offsetWidth; ordersNavBtn.classList.add("qty-pulse");
+         }
+      }
+      
+      if (payload.eventType === 'UPDATE' && payload.new?.status === "closed" && payload.old?.status !== "closed") {
+        showToast("Table Closed", `Table ${tableNo} was finalized and is now free.`, "success");
+      }
+      
+      // 🌟 INSTANT REFRESH: Magically draws the table block on screen the millisecond a session is created
       if (section === "overview" || section === "tables") {
          setTimeout(async () => await reload(), 200);
       }

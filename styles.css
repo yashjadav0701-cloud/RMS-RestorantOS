@@ -1668,6 +1668,7 @@ nav#admin-section-nav.admin-section-nav button {
   outline: none !important; 
   -webkit-tap-highlight-color: transparent !important; 
   transition: none !important;
+  cursor: pointer !important; /* The Magic Fix: Shows the hand/finger cursor on hover */
 }
 
 /* Base Inactive State (Olive Green, Outlined) */
@@ -2569,4 +2570,70 @@ nav#admin-section-nav.admin-section-nav button.active span {
 #pos-table-wrap .selected-text i.ph-caret-down {
   font-size: 16px !important;
   margin-left: 1px;
+}
+
+/* ==========================================
+   GLOBAL INTERACTION CURSORS
+   Forces the hand/pointer on all interactive elements
+========================================== */
+
+/* 1. Native Clickable Elements */
+a, 
+button, 
+label, 
+select, 
+summary, 
+input[type="button"], 
+input[type="submit"], 
+input[type="reset"], 
+input[type="checkbox"], 
+input[type="radio"],
+input[type="color"],
+[role="button"] {
+  cursor: pointer !important;
+}
+
+/* 2. Custom App Components & Action Cards */
+.btn,
+.icon-btn,
+.quick-action,
+.saas-feature-card,
+.cuisine-hero-card,
+.table-admin-card,
+.admin-order-data-row,
+.switch-field {
+  cursor: pointer !important;
+}
+
+/* 3. JavaScript Event Delegation Attributes */
+/* Catches every element in your app that triggers a modal, edit, delete, or navigation */
+[data-go],
+[data-section],
+[data-view-order],
+[data-delete-order],
+[data-edit-cuisine],
+[data-delete-cuisine],
+[data-edit-product],
+[data-delete-product],
+[data-manage-table],
+[data-edit-table],
+[data-delete-table],
+[data-qr],
+[data-manage-session],
+[data-draft-inc],
+[data-draft-dec],
+[data-alert-index],
+[data-alert-table-id] {
+  cursor: pointer !important;
+}
+
+/* 4. Disabled State Override */
+/* Ensures buttons that are loading or locked show the "Stop" cursor instead of the hand */
+button:disabled,
+input:disabled,
+.btn:disabled,
+.icon-btn:disabled,
+[disabled] {
+  cursor: not-allowed !important;
+  pointer-events: all !important; /* Ensures the cursor actually shows up on disabled items */
 }
