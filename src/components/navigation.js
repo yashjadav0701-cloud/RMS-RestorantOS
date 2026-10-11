@@ -94,17 +94,22 @@ export function mountNavigation({ active = "pos" }) {
   const actionColor = isPos ? "var(--danger)" : "var(--forest-900)";
   const actionId = isPos ? "staff-sign-out" : "admin-lock-workspace";
 
+  // Fetch dynamic branding securely populated by the SaaS Bootstrapper
+  const tenantName = window.__ACTIVE_TENANT__?.name || "RMS Cloud";
+  const tenantIcon = window.__ACTIVE_TENANT__?.icon_url ? versionedAsset(window.__ACTIVE_TENANT__.icon_url) : versionedAsset("assets/images/RMS_icon.svg");
+
   root.innerHTML = `
     <div class="drawer-overlay" data-drawer-overlay></div>
     <aside class="app-drawer" data-app-drawer aria-label="Application navigation">
       <div class="drawer-head">
-        <img src="${versionedAsset("assets/images/website_icon.svg")}" alt="" />
-        <div><strong>Four Flavours</strong><small>Restaurant OS</small></div>
+        <img src="${tenantIcon}" alt="Logo" style="border-radius: 8px; object-fit: cover;"/>
+        <div><strong>${escapeHtml(tenantName)}</strong><small>Restaurant OS</small></div>
         <button class="icon-btn icon-btn-dark" data-close-drawer title="Close menu" aria-label="Close menu"><i class="ph ph-x"></i></button>
       </div>
       <nav class="drawer-nav">
         <button class="drawer-nav-item ${isPos ? "active" : ""}" data-route="/"><i class="ph-bold ph-storefront"></i><span>POS</span></button>
-        <button class="drawer-nav-item ${active === "admin" ? "active" : ""}" data-route="#/4">
+        <!-- CRITICAL FIX: The Admin button now points to the proper #/admin route -->
+        <button class="drawer-nav-item ${active === "admin" ? "active" : ""}" data-route="#/admin">
           <i class="ph-bold ph-shield-check"></i><span>Admin</span>
           <span id="admin-drawer-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #e11d48; margin-left: auto; display: none;"></span>
         </button>
@@ -136,7 +141,7 @@ export function mountNavigation({ active = "pos" }) {
           // ADMIN MODE: Lock Workspace & Return to POS floor
           history.pushState({}, "", location.pathname);
           location.hash = "";
-          window.dispatchEvent(new Event("fourflavours:navigate"));
+          window.dispatchEvent(new Event("rms:navigate"));
       }
   });
 
@@ -150,18 +155,19 @@ export function mountNavigation({ active = "pos" }) {
       
       if (target === "/") { history.pushState({}, "", location.pathname); location.hash = ""; }
       else location.hash = target;
-      window.dispatchEvent(new Event("fourflavours:navigate"));
+      window.dispatchEvent(new Event("rms:navigate"));
       return;
     }
     if (event.target.closest("[data-close-drawer]") || event.target.closest("[data-drawer-overlay]")) { setOpen(false); return; }
   });
 
   window.__FOUR_FLAVOURS_NAV__ = { open: () => setOpen(true), close: () => setOpen(false), toggle: () => setOpen(!drawer.classList.contains("open")) };
+  window.__RMS_NAV__ = window.__FOUR_FLAVOURS_NAV__;
   
   // Sync dot visibility instantly when the drawer mounts
   setTimeout(updateGlobalNotificationBadge, 50);
   
-  return () => { setOpen(false); root.remove(); delete window.__FOUR_FLAVOURS_NAV__; };
+  return () => { setOpen(false); root.remove(); delete window.__FOUR_FLAVOURS_NAV__; delete window.__RMS_NAV__; };
 }
 
 export function openAppModal({ title, subtitle = "", body, actions = [] }) {
@@ -171,7 +177,8 @@ export function openAppModal({ title, subtitle = "", body, actions = [] }) {
     <section class="app-modal" role="dialog" aria-modal="true">
       <header class="modal-head">
         <div class="modal-title-wrap">
-          <span class="modal-kicker"><i class="ph ph-sparkle"></i>Four Flavours</span>
+          <!-- Dynamically inject active restaurant name here -->
+          <span class="modal-kicker"><i class="ph ph-sparkle"></i>${escapeHtml(window.__ACTIVE_TENANT__?.name || "RMS Cloud")}</span>
           <h2>${escapeHtml(title)}</h2>
           ${subtitle ? `<p>${escapeHtml(subtitle)}</p>` : ""}
         </div>

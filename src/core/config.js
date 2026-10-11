@@ -4,7 +4,7 @@ export const VERSION_SUFFIX = `?v=${encodeURIComponent(APP_VERSION)}`;
 
 export const ROUTES = Object.freeze({
   POS: "/",
-  ADMIN: "#/4",
+  ADMIN: "#/admin",
   CUSTOMER: "?table="
 });
 
@@ -15,7 +15,7 @@ export const ROUTES = Object.freeze({
  * would allow localhost / Vercel preview URLs to accidentally become
  * permanent restaurant QR destinations.
  */
-export const PUBLIC_APP_URL = "https://four-flavours.vercel.app";
+export const PUBLIC_APP_URL = "https://rms.vercel.app";
 
 /**
  * Returns the permanent customer menu URL for a specific table.

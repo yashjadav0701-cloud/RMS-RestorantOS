@@ -21,23 +21,82 @@ if (_initTable && _initScan && _initScan.toLowerCase() === "true") {
 
 export async function render({ mount }) {
   if (!supabase) {
-    mount.innerHTML = `<section class="access-screen dark-access"><div class="access-card"><img class="access-logo" src="${versionedAsset("assets/images/website_icon.svg")}" alt=""><h1>Four Flavours POS</h1><p>Supabase configuration is missing.</p></div></section>`;
+    mount.innerHTML = `<section class="access-screen dark-access"><div class="access-card"><div class="access-logo" style="display:grid; place-items:center; color:var(--forest-900); background:#fff;"><i class="ph-bold ph-warning-circle" style="font-size:32px;"></i></div><h1>RMS Cloud POS</h1><p>Supabase configuration is missing.</p></div></section>`;
     return () => {};
   }
 
+  // 1. Grab the active tenant ID securely resolved by app.js
+  let activeTenant = window.__ACTIVE_TENANT__;
+
+  // AUTO-RESOLVE: If the owner logged into the global root URL (without a slug), find their restaurant automatically!
+  if (!activeTenant) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+          const { data: rest } = await supabase.from("restaurants").select("*").eq("owner_id", user.id).maybeSingle();
+          if (rest) {
+              activeTenant = rest;
+              window.__ACTIVE_TENANT__ = rest;
+              
+              // Apply branding colors dynamically upon first login from the global hub
+              if (rest.background_color) {
+                  document.documentElement.style.setProperty("--cream-100", rest.background_color);
+                  document.documentElement.style.setProperty("--cream-50", rest.background_color);
+                  document.documentElement.style.setProperty("--paper", "#ffffff");
+              }
+              if (rest.foreground_color) {
+                  document.documentElement.style.setProperty("--forest-950", rest.foreground_color);
+                  document.documentElement.style.setProperty("--forest-900", rest.foreground_color);
+                  document.documentElement.style.setProperty("--forest-800", rest.foreground_color);
+                  document.documentElement.style.setProperty("--forest-700", rest.foreground_color);
+                  document.documentElement.style.setProperty("--ink", rest.foreground_color);
+              }
+              
+              // DEEP ARCHITECTURE FIX: 
+              // We DO NOT use history.replaceState() here. 
+              // Changing the physical URL locally breaks Live Server on refresh.
+          }
+      }
+  }
+
+  if (!activeTenant?.id) {
+      mount.innerHTML = `<section class="access-screen" style="text-align:center; padding:24px;">
+        <i class="ph-bold ph-warning-circle" style="font-size:48px; color:var(--danger); margin-bottom:16px;"></i>
+        <h1>Restaurant Data Missing</h1>
+        <p style="color:var(--muted); margin-top:8px;">Please navigate to your specific restaurant URL (e.g., /four-flavours) or check your database configuration.</p>
+      </section>`;
+      return () => {};
+  }
+  
+  const activeTenantId = activeTenant.id;
+
+  // 2. Fetch data strictly filtered by this specific restaurant ID!
   const [settingsResult, productsResult, tablesResult, cuisinesResult] = await Promise.all([
-    supabase.from("app_settings").select("*").eq("id", 1).maybeSingle(),
-    supabase.from("products").select("*").eq("is_active", true).order("sort_order", { ascending: true }).order("name", { ascending: true }),
-    supabase.from("tables").select("id, table_no, capacity, is_active").eq("is_active", true).order("table_no", { ascending: true }),
-    supabase.from("cuisines").select("*").order("sort_order", { ascending: true })
+    supabase.from("app_settings").select("*").eq("restaurant_id", activeTenantId).maybeSingle(),
+    supabase.from("products").select("*").eq("restaurant_id", activeTenantId).eq("is_active", true).order("sort_order", { ascending: true }).order("name", { ascending: true }),
+    supabase.from("tables").select("id, table_no, capacity, is_active").eq("restaurant_id", activeTenantId).eq("is_active", true).order("table_no", { ascending: true }),
+    supabase.from("cuisines").select("*").eq("restaurant_id", activeTenantId).order("sort_order", { ascending: true })
   ]);
+  
   if (settingsResult.error) throw settingsResult.error;
   if (productsResult.error) throw productsResult.error;
   if (tablesResult.error) throw tablesResult.error;
 
+  const restaurant = window.__ACTIVE_TENANT__ || { name: "RMS POS", background_color: "#fcfbf7", foreground_color: "#122216" };
   const settings = { ...DEFAULT_SETTINGS, ...(settingsResult.data ?? {}) };
   const products = productsResult.data ?? [];
   const cuisines = cuisinesResult.data ?? [];
+
+  // SaaS Dynamic Theming: Override global CSS variables with the tenant's chosen colors
+  if (restaurant.background_color) {
+    document.documentElement.style.setProperty("--cream-100", restaurant.background_color);
+    document.documentElement.style.setProperty("--paper", "#ffffff");
+  }
+  if (restaurant.foreground_color) {
+    document.documentElement.style.setProperty("--forest-900", restaurant.foreground_color);
+    document.documentElement.style.setProperty("--forest-950", restaurant.foreground_color);
+    document.documentElement.style.setProperty("--forest-800", restaurant.foreground_color);
+    // Optionally calculate slightly lighter variants for borders/hovers if needed, but solid works cleanly.
+  }
   
   // NATURAL SORT: Forces "10" to come after "9" instead of after "1"
   const tables = (tablesResult.data ?? []).sort((a, b) => 
@@ -61,7 +120,7 @@ export async function render({ mount }) {
 
   if (isCustomerMode) {
     if (!currentTableObj) {
-      mount.innerHTML = `<main class="customer-page"><section class="customer-message"><div class="message-mark"><i class="ph ph-qr-code"></i></div><span class="eyebrow">Four Flavours</span><h1>Table unavailable</h1><p>This QR code is invalid or no longer active.</p></section></main>`;
+      mount.innerHTML = `<main class="customer-page"><section class="customer-message"><div class="message-mark"><i class="ph ph-qr-code"></i></div><span class="eyebrow">${escapeHtml(restaurant.name)}</span><h1>Table unavailable</h1><p>This QR code is invalid or no longer active.</p></section></main>`;
       return () => {};
     }
     
@@ -245,7 +304,10 @@ export async function render({ mount }) {
               <span class="hamburger-dot" style="position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: #e11d48; display: none; border: 2px solid var(--paper);"></span>
             </button>
           `}
-          <img src="${versionedAsset("assets/images/website_logo.svg")}" alt="Four Flavours" style="height: 46px; width: auto; max-height: none; object-fit: contain; flex-shrink: 0;" />
+          ${restaurant.logo_url 
+             ? `<img src="${versionedAsset(restaurant.logo_url)}" alt="${escapeHtml(restaurant.name)}" style="height: 46px; width: auto; max-height: none; object-fit: contain; flex-shrink: 0;" />`
+             : `<div style="font-weight: 900; font-size: 1.2rem; color: var(--forest-950);">${escapeHtml(restaurant.name)}</div>`
+          }
         </div>
         <div class="brand-center pos-brand-center main-logo-only"></div>
         <div class="topbar-side topbar-right">
@@ -414,12 +476,15 @@ export async function render({ mount }) {
               <div class="ty-wrapper">
                  <div class="ty-card">
                     <div class="ty-logo-wrap">
-                      <img src="${versionedAsset("assets/images/website_icon.svg")}" alt="Four Flavours Logo">
+                      ${restaurant.icon_url 
+                         ? `<img src="${versionedAsset(restaurant.icon_url)}" alt="Logo">` 
+                         : `<i class="ph-bold ph-storefront" style="font-size: 42px; color: var(--forest-900);"></i>`
+                      }
                     </div>
                     <h1 class="ty-title">Thank You!</h1>
                     <p class="ty-subtitle">Your bill is on the way to your table.</p>
                     <div class="ty-divider"></div>
-                    <p class="ty-footer">We hope you enjoyed your time at Four Flavours.<br>Please wait while our staff attends to you.</p>
+                    <p class="ty-footer">We hope you enjoyed your time at ${escapeHtml(restaurant.name)}.<br>Please wait while our staff attends to you.</p>
                  </div>
               </div>
            `;
@@ -719,11 +784,17 @@ export async function render({ mount }) {
       return true;
     });
 
-    grid.innerHTML = visible.length ? visible.map(product => `
+    grid.innerHTML = visible.length ? visible.map(product => {
+      // Dynamic Dietary Tag Logic (High Contrast & Visible)
+      const isVeg = product.is_veg !== false; 
+      const markColor = isVeg ? "#16a34a" : "#dc2626"; // Vibrant Green vs Vibrant Red
+      const markTitle = isVeg ? "Vegetarian" : "Non-Vegetarian";
+
+      return `
       <article class="pos-product-card" data-product-card="${product.id}">
         <div class="pos-product-media">
           ${product.image_url ? `<img src="${versionedAsset(product.image_url)}" alt="" loading="lazy">` : `<div class="product-placeholder"><i class="ph ph-fork-knife"></i></div>`}
-          <span class="veg-mark" title="Vegetarian"><span></span></span>
+          <span class="veg-mark" title="${markTitle}" style="border: 2px solid ${markColor}; background: #fff; width: 24px; height: 24px; box-shadow: 0 3px 10px rgba(0,0,0,0.3);"><span style="background: ${markColor}; width: 10px; height: 10px;"></span></span>
         </div>
         <div class="pos-product-copy">
           <strong>${escapeHtml(product.name)}</strong>
@@ -739,7 +810,8 @@ export async function render({ mount }) {
           </div>
         </div>
       </article>
-    `).join("") : `<div class="empty-state"><i class="ph ph-magnifying-glass"></i><strong>No dishes found</strong><span>Try another search or category.</span></div>`;
+      `;
+    }).join("") : `<div class="empty-state"><i class="ph ph-magnifying-glass"></i><strong>No dishes found</strong><span>Try another search or category.</span></div>`;
 
     grid.classList.remove("grid-refresh-anim");
     void grid.offsetWidth;
@@ -764,12 +836,15 @@ export async function render({ mount }) {
 
     function openProductDetailModal(product) {
       let currentQty = state.getState().items.find(i => i.id === product.id)?.quantity || 0;
+      
+      const isVeg = product.is_veg !== false;
+      const markColor = isVeg ? "#16a34a" : "#dc2626"; 
 
       const modalBody = `
         <div class="premium-product-detail">
           <div class="detail-media">
             ${product.image_url ? `<img src="${versionedAsset(product.image_url)}" alt="">` : `<div class="product-placeholder"><i class="ph ph-fork-knife"></i></div>`}
-            <span class="veg-mark" title="Vegetarian"><span></span></span>
+            <span class="veg-mark" title="${isVeg ? 'Vegetarian' : 'Non-Vegetarian'}" style="border: 2px solid ${markColor}; background: #fff; width: 28px; height: 28px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); top: 16px; right: 16px;"><span style="background: ${markColor}; width: 12px; height: 12px;"></span></span>
           </div>
           <div class="detail-content">
             <div class="detail-price-row">
@@ -1172,7 +1247,7 @@ export async function render({ mount }) {
                             <h1 class="thank-you-title">Thank You!</h1>
                             <p class="thank-you-message">Your bill is on the way to your table.</p>
                             <div class="thank-you-divider"></div>
-                            <p class="thank-you-footer">We hope you enjoyed your time at Four Flavours.<br>Please wait while our staff attends to you.</p>
+                            <p class="thank-you-footer">We hope you enjoyed your time at ${escapeHtml(restaurant.name)}.<br>Please wait while our staff attends to you.</p>
                           </div>
                         </div>
                       `;
@@ -1388,7 +1463,7 @@ export async function render({ mount }) {
     const receiptHTML = `
       <article class="thermal-receipt" id="thermal-receipt-content">
         <header class="thermal-head">
-          <img class="thermal-logo" src="${versionedAsset("assets/images/website_icon.svg")}" alt="Logo">
+          ${restaurant.icon_url ? `<img class="thermal-logo" src="${versionedAsset(restaurant.icon_url)}" alt="Logo">` : ''}
           <h1>${escapeHtml(settings.restaurant_name)}</h1>
           ${settings.restaurant_address ? `<p>${escapeHtml(settings.restaurant_address).replace(/\n/g, '<br>')}</p>` : ''}
           ${settings.gst_number ? `<p><strong>GSTIN:</strong> ${escapeHtml(settings.gst_number)}</p>` : ''}
@@ -1431,7 +1506,7 @@ export async function render({ mount }) {
         ` : ""}
         <footer class="thermal-foot">
           <p>${escapeHtml(settings.receipt_footer || 'Thank you for dining with us!')}</p>
-          <div class="thermal-software-tag">Powered by Four Flavours POS</div>
+          <div class="thermal-software-tag">Powered by RMS Cloud</div>
         </footer>
       </article>
     `;

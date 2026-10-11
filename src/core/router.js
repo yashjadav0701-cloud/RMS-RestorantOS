@@ -5,12 +5,13 @@ function getRoute() {
   const params = new URLSearchParams(location.search);
   const tableId = params.get("table");
   if (tableId) return { name: "customer", tableId, key: `customer:${tableId}` };
-  if (location.hash === "#/4") return { name: "admin", key: "admin" };
+  if (location.hash === "#/admin") return { name: "admin", key: "admin" };
   return { name: "pos", key: "pos" };
 }
 
 async function moduleFor(name) {
-  if (name === "customer") return import("../customer/index.js");
+  // CRITICAL FIX: Customer and Staff interfaces are handled by the unified POS module!
+  if (name === "customer") return import("../pos/index.js");
   if (name === "admin") return import("../admin/index.js");
   return import("../pos/index.js");
 }
@@ -30,7 +31,7 @@ export async function renderRoute(mount) {
     const session = await getSession();
     
     // Check if there is a session AND it is actively verified for this specific browser tab session
-    const isSessionVerified = session && sessionStorage.getItem("ff_staff_active") === "true";
+    const isSessionVerified = session && sessionStorage.getItem("rms_staff_active") === "true";
     
     if (!isSessionVerified) {
        const { renderStaffLogin } = await import("../components/lockScreen.js");
@@ -38,8 +39,8 @@ export async function renderRoute(mount) {
            mount,
            onLogin: () => {
                // Mark this browser tab as securely authenticated
-               sessionStorage.setItem("ff_staff_active", "true");
-               window.dispatchEvent(new Event("fourflavours:navigate"));
+               sessionStorage.setItem("rms_staff_active", "true");
+               window.dispatchEvent(new Event("rms:navigate"));
            }
        });
        activeCleanup = typeof cleanup === "function" ? cleanup : null;
@@ -60,7 +61,7 @@ export function startRouter({ mount }) {
 
   // STRICT SECURITY: Force sign-out on fresh launch (new tab/window) to ensure staff always log in
   const isCustomer = new URLSearchParams(location.search).has("table");
-  if (!isCustomer && !sessionStorage.getItem("ff_staff_active")) {
+  if (!isCustomer && !sessionStorage.getItem("rms_staff_active")) {
      import("./supabase.js").then(({ supabase }) => {
          if (supabase) supabase.auth.signOut();
      });
@@ -82,12 +83,15 @@ export function startRouter({ mount }) {
 
   window.addEventListener("popstate", rerender);
   window.addEventListener("hashchange", rerender);
-  window.addEventListener("fourflavours:navigate", rerender);
+  window.addEventListener("rms:navigate", rerender);
+  window.addEventListener("fourflavours:navigate", rerender); // Kept safely to prevent breaking old buttons
+  
   window.addEventListener("keydown", event => {
     const customer = new URLSearchParams(location.search).has("table");
-    if (!customer && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+    // Rebranded Secret Shortcut: Ctrl+M (Management) to enter Admin Dashboard
+    if (!customer && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "m") {
       event.preventDefault();
-      location.hash = "#/4";
+      location.hash = "#/admin";
     }
   });
 

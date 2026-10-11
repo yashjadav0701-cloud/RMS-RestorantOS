@@ -499,12 +499,24 @@ export async function render({ mount }) {
 }
 
 async function fetchWorkspace() {
+  // 1. STRICT IDENTITY VERIFICATION: Always ask Supabase for the true logged-in user.
+  // This completely eliminates "Ghost State" where a previous login's data remains in memory across accounts.
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+      const { data: rest } = await supabase.from("restaurants").select("*").eq("owner_id", user.id).maybeSingle();
+      if (rest) {
+          window.__ACTIVE_TENANT__ = rest;
+      }
+  }
+
+  const activeTenantId = window.__ACTIVE_TENANT__?.id;
+
   const [settings, products, tables, sessions, cuisines] = await Promise.all([
-    supabase.from("app_settings").select("*").eq("id", 1).maybeSingle(),
-    supabase.from("products").select("*").order("sort_order", { ascending: true }).order("name", { ascending: true }),
-    supabase.from("tables").select("*").order("table_no", { ascending: true }),
-    supabase.from("dining_sessions").select("*").neq("status", "closed").order("bill_requested_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }),
-    supabase.from("cuisines").select("*").order("sort_order", { ascending: true })
+    supabase.from("app_settings").select("*").eq("restaurant_id", activeTenantId).maybeSingle(),
+    supabase.from("products").select("*").eq("restaurant_id", activeTenantId).order("sort_order", { ascending: true }).order("name", { ascending: true }),
+    supabase.from("tables").select("*").eq("restaurant_id", activeTenantId).order("table_no", { ascending: true }),
+    supabase.from("dining_sessions").select("*").eq("restaurant_id", activeTenantId).neq("status", "closed").order("bill_requested_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }),
+    supabase.from("cuisines").select("*").eq("restaurant_id", activeTenantId).order("sort_order", { ascending: true })
   ]);
   for (const result of [settings, products, tables, sessions, cuisines]) if (result?.error) throw result.error;
   
@@ -521,6 +533,12 @@ async function renderAdminWorkspace(mount) {
   window.__FF_TABLES__ = tables;
   let section = "overview";
 
+  // 1. Fetch dynamic tenant branding safely
+  const activeTenant = window.__ACTIVE_TENANT__ || {};
+  const logoUrl = activeTenant.logo_url ? versionedAsset(activeTenant.logo_url) : null;
+  const iconUrl = activeTenant.icon_url ? versionedAsset(activeTenant.icon_url) : null;
+  const tenantName = activeTenant.name || "RMS Cloud";
+
   mount.innerHTML = `
     <section class="admin-page">
       <header class="app-topbar admin-topbar">
@@ -529,7 +547,10 @@ async function renderAdminWorkspace(mount) {
             <i class="ph ph-list"></i>
             <span class="hamburger-dot" style="position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: #e11d48; display: none; border: 2px solid var(--paper);"></span>
           </button>
-          <img src="${versionedAsset("assets/images/website_logo.svg")}" alt="Four Flavours" style="height: 40px; width: auto;" />
+          ${logoUrl 
+            ? `<img src="${logoUrl}" alt="${escapeHtml(tenantName)}" style="height: 40px; max-width: 180px; object-fit: contain; object-position: left center;" />`
+            : `<strong style="font-size: 1.15rem; color: var(--forest-950); margin-left: 4px;">${escapeHtml(tenantName)}</strong>`
+          }
         </div>
         <div class="brand-center main-logo-only">
           <!-- Center logo safely removed to match POS layout -->
@@ -733,7 +754,7 @@ async function renderAdminWorkspace(mount) {
     const receiptHTML = `
       <article class="thermal-receipt" id="thermal-receipt-content">
         <header class="thermal-head">
-          <img class="thermal-logo" src="${versionedAsset("assets/images/website_icon.svg")}" alt="Logo">
+          ${window.__ACTIVE_TENANT__?.icon_url ? `<img class="thermal-logo" src="${versionedAsset(window.__ACTIVE_TENANT__.icon_url)}" alt="Logo">` : ''}
           <h1>${escapeHtml(settings.restaurant_name)}</h1>
           ${settings.restaurant_address ? `<p>${escapeHtml(settings.restaurant_address).replace(/\n/g, '<br>')}</p>` : ''}
           ${settings.gst_number ? `<p><strong>GSTIN:</strong> ${escapeHtml(settings.gst_number)}</p>` : ''}
@@ -776,7 +797,7 @@ async function renderAdminWorkspace(mount) {
         ` : ""}
         <footer class="thermal-foot">
           <p>${escapeHtml(settings.receipt_footer || 'Thank you for dining with us!')}</p>
-          <div class="thermal-software-tag">Powered by Four Flavours POS</div>
+          <div class="thermal-software-tag">Powered by RMS Cloud</div>
         </footer>
       </article>
     `;
@@ -814,7 +835,7 @@ async function renderAdminWorkspace(mount) {
               
               const opt = {
                 margin: 0,
-                filename: `FourFlavours_Bill_#${order.order_number}.pdf`,
+                filename: `${(settings.restaurant_name || 'Bill').replace(/\s+/g, '_')}_#${order.order_number}.pdf`,
                 image: { type: 'jpeg', quality: 1 },
                 html2canvas: { scale: 4, useCORS: true }, 
                 jsPDF: { unit: 'mm', format: [80, heightInMM], orientation: 'portrait' }
@@ -859,50 +880,133 @@ async function renderAdminWorkspace(mount) {
 
   function renderCuisines() {
     area.innerHTML = `
-      <section class="section-title-row"><div><span class="eyebrow">Cuisine Backgrounds</span><h1>Main menu categories.</h1><p>Upload beautiful background images for the 4 main cuisines. These appear as large cards on the customer and POS screens.</p></div></section>
+      <section class="section-title-row" style="align-items: center;">
+        <div style="flex: 1;"><span class="eyebrow">Menu Categories</span><h1>Manage your categories.</h1><p>Add new menu categories, organize their sort order, and upload their background images for the POS.</p></div>
+        <button class="btn btn-primary" id="add-cuisine" style="height: 44px; border-radius: 12px; font-weight: 800; flex-shrink: 0;"><i class="ph-bold ph-plus"></i> Add category</button>
+      </section>
       <section class="admin-panel"><div class="admin-list-scroll" id="cuisine-list"></div></section>`;
+    
     const list = area.querySelector("#cuisine-list");
-    list.innerHTML = cuisines.length ? cuisines.map(cuisine => `<article class="admin-product-row"><div class="admin-product-image">${cuisine.image_url ? `<img src="${versionedAsset(cuisine.image_url)}" alt="">` : `<div class="product-placeholder"><i class="ph ph-image"></i></div>`}</div><div class="admin-product-main"><div class="admin-product-title"><div><strong>${escapeHtml(cuisine.name)}</strong></div></div></div><div class="admin-product-actions"><button class="icon-btn icon-btn-light" data-edit-cuisine="${cuisine.id}" title="Upload image" aria-label="Upload image"><i class="ph ph-upload-simple"></i></button></div></article>`).join("") : `<div class="empty-state"><strong>No cuisines configured in the database.</strong></div>`;
-    list.addEventListener("click", e => { const b = e.target.closest("[data-edit-cuisine]"); if (!b) return; const c = cuisines.find(x => x.id === b.dataset.editCuisine); if (c) openCuisineEditor(c); });
+    list.innerHTML = cuisines.length ? cuisines.map(cuisine => `
+      <article class="admin-product-row" style="align-items: center;">
+        <div class="admin-product-image">${cuisine.image_url ? `<img src="${versionedAsset(cuisine.image_url)}" alt="">` : `<div class="product-placeholder"><i class="ph ph-image"></i></div>`}</div>
+        <div class="admin-product-main">
+          <div class="admin-product-title"><div><strong style="font-size: 15px;">${escapeHtml(cuisine.name)}</strong></div></div>
+          <div style="margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 600;">Display Order: ${cuisine.sort_order || 0}</div>
+        </div>
+        <div class="admin-product-actions" style="display: flex; gap: 8px;">
+          <button class="icon-btn icon-btn-light" data-edit-cuisine="${cuisine.id}" title="Edit Category" style="border-radius: 10px;"><i class="ph-bold ph-pencil-simple"></i></button>
+          <button class="icon-btn icon-btn-danger" data-delete-cuisine="${cuisine.id}" title="Delete Category" style="border-radius: 10px;"><i class="ph-bold ph-trash"></i></button>
+        </div>
+      </article>`).join("") : `<div class="empty-state"><strong>No categories configured.</strong></div>`;
+    
+    area.querySelector("#add-cuisine").addEventListener("click", () => openCuisineEditor());
+    list.addEventListener("click", e => { 
+        const edit = e.target.closest("[data-edit-cuisine]"); 
+        const del = e.target.closest("[data-delete-cuisine]");
+        if (edit) { const c = cuisines.find(x => x.id === edit.dataset.editCuisine); if (c) openCuisineEditor(c); } 
+        if (del) { const c = cuisines.find(x => x.id === del.dataset.deleteCuisine); if (c) openCuisineDelete(c); }
+    });
   }
 
-  function openCuisineEditor(cuisine) {
+  function openCuisineEditor(cuisine = null) {
+    const editing = Boolean(cuisine);
     const currentImageUrl = cuisine?.image_url ? versionedAsset(cuisine.image_url) : "";
     const currentImageHtml = currentImageUrl ? `<div class="image-upload-preview" id="cuisine-preview"><img src="${currentImageUrl}" alt="" /><div class="image-preview-copy"><strong>Current background</strong><span>Upload another to replace.</span></div></div>` : `<div class="image-upload-preview empty" id="cuisine-preview"><i class="ph ph-image"></i><div class="image-preview-copy"><strong>No image yet</strong><span>Add a background photo.</span></div></div>`;
+    
     const modal = openAppModal({
-      title: `Edit ${escapeHtml(cuisine.name)} image`,
-      subtitle: "Photos are automatically cropped to 4:5 and optimized.",
-      body: `<form id="cuisine-form" class="stack-form"><div class="field"><span>Background Image</span><label class="image-upload-zone"><input id="cuisine-image" type="file" accept="image/*" /><span class="image-upload-icon"><i class="ph ph-cloud-arrow-up"></i></span><span class="image-upload-copy"><strong>Choose photo</strong><small>JPG, PNG, WebP · optimized automatically</small></span></label>${currentImageHtml}<div class="image-upload-status" id="cuisine-upload-status"></div></div></form>`,
+      title: editing ? `Edit ${escapeHtml(cuisine.name)}` : "Add new category",
+      subtitle: "Category photos are automatically cropped to 3:4 and optimized.",
+      body: `
+        <form id="cuisine-form" class="stack-form">
+          <div class="form-grid-two">
+            <label class="field"><span>Category Name</span><input class="field-input" name="name" value="${escapeHtml(cuisine?.name ?? "")}" placeholder="e.g. Italian, Desserts" required /></label>
+            <label class="field"><span>Display Order</span><input class="field-input" name="sort_order" type="number" value="${cuisine?.sort_order ?? 1}" required /></label>
+          </div>
+          <div class="field" style="margin-top: 8px;">
+            <span>Background Image</span>
+            <label class="image-upload-zone">
+              <input id="cuisine-image" type="file" accept="image/*" />
+              <span class="image-upload-icon"><i class="ph ph-cloud-arrow-up"></i></span>
+              <span class="image-upload-copy"><strong>Choose photo</strong><small>JPG, PNG, WebP · optimized automatically</small></span>
+            </label>
+            ${currentImageHtml}
+            ${editing && cuisine?.image_url ? `<label class="switch-field image-remove-switch" style="margin-top: 8px;"><input type="checkbox" name="remove_image" id="remove-image" /><span class="switch-ui"></span><span><strong>Remove image</strong><small>The category will still exist without a photo.</small></span></label>` : ""}
+            <div class="image-upload-status" id="cuisine-upload-status"></div>
+          </div>
+        </form>`,
       actions: [
         { label: "Cancel", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() },
-        { label: "Save image", icon: "ph-floppy-disk", className: "btn-primary", onClick: async ({ root, close, button }) => {
+        { label: editing ? "Save changes" : "Create category", icon: "ph-floppy-disk", className: "btn-primary", onClick: async ({ root, close, button }) => {
+          const form = root.querySelector("#cuisine-form");
+          if (!form.reportValidity()) return;
+          
+          const fd = new FormData(form);
+          const name = String(fd.get("name") || "").trim();
+          const sortOrder = Number(fd.get("sort_order") || 1);
           const fileInput = root.querySelector("#cuisine-image");
           const selectedFile = fileInput?.files?.[0];
-          if (!selectedFile) { close(); return; }
+          const removeImage = root.querySelector("#remove-image")?.checked;
+          
           button.disabled = true;
           const statusNode = root.querySelector("#cuisine-upload-status");
+          
           try {
-            statusNode.innerHTML = `<i class="ph ph-spinner-gap"></i><span>Optimizing...</span>`;
-            const optimizedFile = await optimizeCuisineImage(selectedFile);
-            const newStoragePath = `cuisines/${cuisine.id}/${crypto.randomUUID()}.webp`;
-            statusNode.innerHTML = `<i class="ph ph-cloud-arrow-up"></i><span>Uploading...</span>`;
-            const { error: uploadError } = await supabase.storage.from(DISH_IMAGE_BUCKET).upload(newStoragePath, optimizedFile, { contentType: "image/webp", upsert: false });
-            if (uploadError) throw uploadError;
-            const finalImageUrl = getDishPublicUrl(newStoragePath);
-            const { error: dbError } = await supabase.from("cuisines").update({ image_url: finalImageUrl }).eq("id", cuisine.id);
-            if (dbError) throw dbError;
-            const oldPath = storagePathFromUrl(cuisine.image_url);
-            if (oldPath) {
-              const { error: cleanupError } = await supabase.storage.from(DISH_IMAGE_BUCKET).remove([oldPath]);
-              if (cleanupError) console.warn("Failed to delete old cuisine image:", cleanupError);
+            let finalImageUrl = cuisine?.image_url ?? null;
+            let newStoragePath = null;
+            let optimizedFile = null;
+            const oldPath = storagePathFromUrl(cuisine?.image_url);
+            const cuisineId = editing ? cuisine.id : crypto.randomUUID();
+
+            if (removeImage && !selectedFile) finalImageUrl = null;
+
+            if (selectedFile) {
+              statusNode.innerHTML = `<i class="ph ph-spinner-gap"></i><span>Optimizing...</span>`;
+              optimizedFile = await optimizeCuisineImage(selectedFile);
+              newStoragePath = `cuisines/${cuisineId}/${crypto.randomUUID()}.webp`;
+              finalImageUrl = getDishPublicUrl(newStoragePath);
             }
-            showToast("Cuisine updated");
+            
+            // 1. SAVE DATABASE ROW FIRST (Establishes ownership so the Bucket allows the upload)
+            statusNode.innerHTML = `<i class="ph ph-floppy-disk"></i><span>Saving category...</span>`;
+            const payload = {
+                id: cuisineId,
+                restaurant_id: window.__ACTIVE_TENANT__.id,
+                name: name,
+                sort_order: sortOrder,
+                image_url: finalImageUrl
+            };
+            
+            if (editing) {
+                const { error: dbError } = await supabase.from("cuisines").update(payload).eq("id", cuisineId);
+                if (dbError) throw dbError;
+            } else {
+                const { error: dbError } = await supabase.from("cuisines").insert(payload);
+                if (dbError) throw dbError;
+            }
+
+            // 2. UPLOAD IMAGE TO STORAGE SECOND (Now authorized by RLS)
+            if (selectedFile && optimizedFile) {
+              statusNode.innerHTML = `<i class="ph ph-cloud-arrow-up"></i><span>Uploading...</span>`;
+              const { error: uploadError } = await supabase.storage.from(DISH_IMAGE_BUCKET).upload(newStoragePath, optimizedFile, { contentType: "image/webp", upsert: false });
+              if (uploadError) throw uploadError;
+            }
+            
+            if (editing && oldPath && (newStoragePath || removeImage)) {
+              await supabase.storage.from(DISH_IMAGE_BUCKET).remove([oldPath]);
+            }
+            
+            showToast(editing ? "Category updated" : "Category created", name);
             close();
             await reload();
-          } catch (error) { button.disabled = false; statusNode.innerHTML = `<i class="ph ph-warning-circle"></i><span>${escapeHtml(error.message)}</span>`; }
+          } catch (error) { 
+              button.disabled = false; 
+              statusNode.innerHTML = `<i class="ph ph-warning-circle"></i><span>${escapeHtml(error.message)}</span>`; 
+          }
         }}
       ]
     });
+    
     modal.root.querySelector("#cuisine-image")?.addEventListener("change", e => {
       const file = e.target.files?.[0];
       if (!file) return;
@@ -910,6 +1014,30 @@ async function renderAdminWorkspace(mount) {
       const preview = modal.root.querySelector("#cuisine-preview");
       preview.classList.remove("empty");
       preview.innerHTML = `<img src="${previewUrl}" alt=""><div class="image-preview-copy"><strong>New image selected</strong><span>${escapeHtml(file.name)}</span></div>`;
+      if (modal.root.querySelector("#remove-image")) modal.root.querySelector("#remove-image").checked = false;
+    });
+  }
+
+  function openCuisineDelete(cuisine) {
+    openAppModal({
+      title: `Delete ${escapeHtml(cuisine.name)}?`,
+      subtitle: "This will permanently remove the category from the menu layout.",
+      body: `<div class="danger-confirm"><div class="danger-confirm-icon"><i class="ph-bold ph-trash"></i></div><h3>Remove this category?</h3><p>This action removes the category image and tile. Dishes belonging to this category will remain in the database but may be grouped under "Others".</p></div>`,
+      actions: [
+        { label: "Cancel", icon: "ph-arrow-left", className: "btn-quiet", onClick: ({ close }) => close() },
+        { label: "Delete category", icon: "ph-trash", className: "btn-danger", onClick: async ({ close, button }) => {
+          button.disabled = true;
+          try { 
+            const { error } = await supabase.from("cuisines").delete().eq("id", cuisine.id); 
+            if (error) throw error; 
+            const storagePath = storagePathFromUrl(cuisine.image_url);
+            if (storagePath) await supabase.storage.from(DISH_IMAGE_BUCKET).remove([storagePath]);
+            showToast("Category deleted", `${cuisine.name} was removed.`); 
+            close(); 
+            await reload(); 
+          } catch (error) { button.disabled = false; showToast("Could not delete", error.message, "error"); }
+        }}
+      ]
     });
   }
 
@@ -941,7 +1069,15 @@ async function renderAdminWorkspace(mount) {
 
     area.innerHTML = `
       ${alertsHtml}
-      <section class="admin-hero" style="${alertsHtml ? 'padding-top: 0;' : ''}"><div><span class="eyebrow">Control centre</span><h1>Everything in its place.</h1><p>Menu, tables, tax, UPI and table sessions in one restrained workspace.</p></div><div class="admin-hero-mark"><img src="${versionedAsset("assets/images/website_icon.svg")}" alt=""></div></section>
+      <section class="admin-hero" style="${alertsHtml ? 'padding-top: 0;' : ''}">
+        <div><span class="eyebrow">Control centre</span><h1>Everything in its place.</h1><p>Menu, tables, tax, UPI and table sessions in one restrained workspace.</p></div>
+        <div class="admin-hero-mark">
+          ${iconUrl 
+            ? `<img src="${iconUrl}" alt="${escapeHtml(tenantName)}" style="width: 100%; height: 100%; object-fit: cover;">`
+            : `<div style="width: 100%; height: 100%; display: grid; place-items: center; background: var(--sage-100); color: var(--forest-700); font-size: 32px;"><i class="ph-bold ph-storefront"></i></div>`
+          }
+        </div>
+      </section>
       <section class="metric-grid">${metricCard("ph-fork-knife", activeProducts, "Active dishes")}${metricCard("ph-armchair", activeTables, "Active tables")}${metricCard("ph-bell", sessions.length, "Open sessions")}${metricCard("ph-receipt", billRequests, "Bill requests")}</section>
       <section class="admin-grid-two">
         <article class="admin-panel"><div class="panel-head"><div><span class="eyebrow">Quick actions</span><h2>Run the floor</h2></div></div><div class="quick-action-grid"><button class="quick-action" data-go="tables"><i class="ph ph-armchair"></i><span><strong>Manage tables</strong><small>Add, edit, delete and print QR codes.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="menu"><i class="ph ph-fork-knife"></i><span><strong>Manage menu</strong><small>Names, descriptions, prices and visibility.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="settings"><i class="ph ph-gear"></i><span><strong>Tax & UPI</strong><small>Keep server-side billing settings current.</small></span><i class="ph ph-arrow-right"></i></button></div></article>
@@ -1133,7 +1269,10 @@ async function renderAdminWorkspace(mount) {
       const canvasHtml = `
          <div class="a0-canvas" id="a0-print-target">
             <header class="a0-header">
-               <div class="a0-logo-box"><img src="${versionedAsset("assets/images/website_logo.svg")}" class="a0-logo" alt="Logo"></div>
+               ${window.__ACTIVE_TENANT__?.logo_url 
+                 ? `<div class="a0-logo-box"><img src="${versionedAsset(window.__ACTIVE_TENANT__.logo_url)}" class="a0-logo" alt="Logo"></div>`
+                 : `<div class="a0-logo-box" style="padding: 24px 60px;"><h1 style="font-size: 72px; color: var(--forest-950); margin: 0; letter-spacing: -0.02em;">${escapeHtml(window.__ACTIVE_TENANT__?.name || "Menu")}</h1></div>`
+               }
             </header>
             <div class="a0-grid">
                ${columnsHtml}
@@ -1199,7 +1338,7 @@ async function renderAdminWorkspace(mount) {
                   // This allows html2pdf to process and directly download the file without the print dialog!
                   const opt = {
                      margin: 0,
-                     filename: `FourFlavours_Premium_Menu.pdf`,
+                     filename: `${(window.__ACTIVE_TENANT__?.name || 'Menu').replace(/\s+/g, '_')}_Premium_Menu.pdf`,
                      image: { type: 'jpeg', quality: 1 },
                      html2canvas: { 
                          scale: 1.5, 
@@ -1750,49 +1889,304 @@ async function renderAdminWorkspace(mount) {
   }
 
   function renderSettings() {
-    area.innerHTML = `
-      <section class="section-title-row" style="flex-direction: row !important; justify-content: space-between !important; align-items: flex-end !important; text-align: left !important;">
-        <div style="align-items: flex-start !important; text-align: left !important;">
-          <span class="eyebrow">Restaurant settings</span>
-          <h1 style="text-align: left !important; margin: 6px 0;">Keep the bill precise.</h1>
-          <p style="text-align: left !important;">Database-verified tax and totals.</p>
-        </div>
-        <button class="btn btn-quiet" id="admin-lock-workspace" style="border-color: var(--forest-900); color: var(--forest-900); font-weight: 800; flex-shrink: 0;"><i class="ph-bold ph-lock-key"></i>Lock & Return to POS</button>
-      </section>
-      <section class="admin-panel settings-panel">
-        <form id="settings-form" class="settings-form-grid">
-          <label class="field"><span>Restaurant name</span><input class="field-input" name="restaurant_name" value="${escapeHtml(settings.restaurant_name)}" required></label>
-          <label class="field"><span>UPI ID</span><input class="field-input" name="upi_id" value="${escapeHtml(settings.upi_id || "")}" placeholder="fourflavours@upi"></label>
-          <label class="field"><span>GSTIN (GST Number)</span><input class="field-input" name="gst_number" value="${escapeHtml(settings.gst_number || "")}" placeholder="22AAAAA0000A1Z5"></label>
-          <label class="field settings-wide"><span>Restaurant Address (Prints on Bill)</span><textarea class="field-input textarea-input" name="restaurant_address" placeholder="123 Food Street, City, State" rows="2">${escapeHtml(settings.restaurant_address || "")}</textarea></label>
-          <label class="field"><span>CGST %</span><input class="field-input" name="cgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.cgst_rate)}" required></label>
-          <label class="field"><span>SGST %</span><input class="field-input" name="sgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.sgst_rate)}" required></label>
-          <label class="field settings-wide"><span>Receipt footer</span><input class="field-input" name="receipt_footer" value="${escapeHtml(settings.receipt_footer || "")}"></label>
-          <div class="settings-wide settings-preview"><div class="settings-preview-icon"><i class="ph ph-shield-check"></i></div><div><strong>Secure calculation</strong><span>Prices, tax rates and the final total are recalculated by PostgreSQL when the order is created.</span></div></div>
-          <div class="settings-wide"><button class="btn btn-primary" type="submit"><i class="ph ph-floppy-disk"></i>Save settings</button></div>
-        </form>
-      </section>`;
+    // Fetch current restaurant-level branding configuration securely
+    supabase.from("restaurants").select("*").maybeSingle().then(({ data: restData }) => {
+      if (!restData) return;
 
-    area.querySelector("#admin-lock-workspace").addEventListener("click", () => {
-      // Securely routes the manager back to the POS floor. Re-entering Admin will strictly require the PIN.
-      history.pushState({}, "", location.pathname);
-      location.hash = "";
-      window.dispatchEvent(new Event("fourflavours:navigate"));
-    });
+      area.innerHTML = `
+        <section class="section-title-row" style="flex-direction: row !important; justify-content: space-between !important; align-items: flex-end !important; text-align: left !important;">
+          <div style="align-items: flex-start !important; text-align: left !important;">
+            <span class="eyebrow">Restaurant settings</span>
+            <h1 style="text-align: left !important; margin: 6px 0;">Keep the bill precise.</h1>
+            <p style="text-align: left !important;">Database-verified tax, totals, and branding.</p>
+          </div>
+          <button class="btn btn-quiet" id="admin-lock-workspace" style="border-color: var(--forest-900); color: var(--forest-900); font-weight: 800; flex-shrink: 0;"><i class="ph-bold ph-lock-key"></i>Lock & Return to POS</button>
+        </section>
+        
+        <!-- Branding Section -->
+        <section class="admin-panel settings-panel" style="margin-bottom: 16px;">
+          <div class="panel-head" style="margin-bottom: 16px;">
+            <div><span class="eyebrow">Branding</span><h2>Visual Identity</h2></div>
+          </div>
+          <form id="branding-form" class="settings-form-grid">
+            <label class="field settings-wide">
+              <span>Square Icon (Receipts & Mobile)</span>
+              <div style="display: flex; gap: 12px; align-items: center; margin-top: 6px;">
+                <div id="icon-preview-box" style="width: 64px; height: 64px; border-radius: 12px; border: 1px solid var(--line); overflow: hidden; background: var(--sage-100); display: flex; align-items: center; justify-content: center;">
+                  ${restData.icon_url ? `<img src="${versionedAsset(restData.icon_url)}" style="width: 100%; height: 100%; object-fit: cover;">` : `<i class="ph ph-image" style="font-size: 24px; color: var(--muted);"></i>`}
+                </div>
+                <input class="field-input" type="file" id="icon_upload" accept="image/png, image/jpeg, image/svg+xml" style="flex: 1; padding: 8px;">
+              </div>
+            </label>
+            
+            <label class="field settings-wide">
+              <span>Landscape Logo (Top Header)</span>
+              <div style="display: flex; gap: 12px; align-items: center; margin-top: 6px;">
+                <div id="logo-preview-box" style="width: 120px; height: 48px; border-radius: 8px; border: 1px solid var(--line); overflow: hidden; background: var(--sage-100); display: flex; align-items: center; justify-content: center;">
+                  ${restData.logo_url ? `<img src="${versionedAsset(restData.logo_url)}" style="width: 100%; height: 100%; object-fit: contain;">` : `<i class="ph ph-image" style="font-size: 24px; color: var(--muted);"></i>`}
+                </div>
+                <input class="field-input" type="file" id="logo_upload" accept="image/png, image/jpeg, image/svg+xml" style="flex: 1; padding: 8px;">
+              </div>
+            </label>
 
-    area.querySelector("#settings-form").addEventListener("submit", async e => {
-      e.preventDefault(); const fd = new FormData(e.currentTarget);
-      const payload = { 
-        restaurant_name: String(fd.get("restaurant_name") || "").trim(), 
-        upi_id: String(fd.get("upi_id") || "").trim(),
-        gst_number: String(fd.get("gst_number") || "").trim(),
-        restaurant_address: String(fd.get("restaurant_address") || "").trim(),
-        cgst_rate: Number(fd.get("cgst_rate")), 
-        sgst_rate: Number(fd.get("sgst_rate")), 
-        receipt_footer: String(fd.get("receipt_footer") || "").trim() 
-      };
-      try { const { error } = await supabase.from("app_settings").update(payload).eq("id", 1); if (error) throw error; Object.assign(settings, payload); showToast("Settings saved", "Configuration updated."); } catch (error) { showToast("Could not save settings", error.message, "error"); }
-    });
+            <div class="settings-wide" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px;">
+              <label class="field" style="margin: 0;">
+                <span>Background Color</span>
+                <input class="field-input" name="background_color" type="color" value="${escapeHtml(restData.background_color || '#fcfbf7')}" style="height: 48px; width: 100%; padding: 4px; cursor: pointer; border-radius: 12px; background: var(--paper);">
+              </label>
+              
+              <label class="field" style="margin: 0;">
+                <span>Foreground Color</span>
+                <input class="field-input" name="foreground_color" type="color" value="${escapeHtml(restData.foreground_color || '#122216')}" style="height: 48px; width: 100%; padding: 4px; cursor: pointer; border-radius: 12px; background: var(--paper);">
+              </label>
+            </div>
+            
+            <div class="settings-wide" style="margin-top: 16px;">
+              <button class="btn btn-primary" type="submit" id="save-branding-btn" style="width: 100%; height: 48px; border-radius: 12px; font-size: 15px;">
+                <i class="ph-bold ph-check-circle"></i> Done
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Security Section -->
+        <section class="admin-panel settings-panel" style="margin-bottom: 16px;">
+          <div class="panel-head" style="margin-bottom: 16px;">
+            <div><span class="eyebrow">Security</span><h2>Access Control</h2></div>
+          </div>
+          <form id="security-form" class="settings-form-grid">
+            <label class="field"><span>Current 6-Digit PIN</span><input class="field-input" type="password" name="current_pin" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="••••••" required></label>
+            <label class="field"><span>New 6-Digit PIN</span><input class="field-input" type="password" name="new_pin" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="••••••" required></label>
+            <div class="settings-wide" style="margin-top: 8px;">
+              <button class="btn btn-primary" type="submit" id="save-security-btn" style="background: var(--forest-900); border-color: var(--forest-900);"><i class="ph ph-lock-key"></i>Change Admin PIN</button>
+            </div>
+          </form>
+        </section>
+
+        <!-- Billing Section -->
+        <section class="admin-panel settings-panel">
+          <form id="settings-form" class="settings-form-grid">
+            <label class="field"><span>Restaurant name</span><input class="field-input" name="restaurant_name" value="${escapeHtml(settings.restaurant_name)}" required></label>
+            <label class="field"><span>UPI ID</span><input class="field-input" name="upi_id" value="${escapeHtml(settings.upi_id || "")}" placeholder="restaurant@upi"></label>
+            <label class="field"><span>GSTIN (GST Number)</span><input class="field-input" name="gst_number" value="${escapeHtml(settings.gst_number || "")}" placeholder="22AAAAA0000A1Z5"></label>
+            <label class="field settings-wide"><span>Restaurant Address (Prints on Bill)</span><textarea class="field-input textarea-input" name="restaurant_address" placeholder="123 Food Street, City, State" rows="2">${escapeHtml(settings.restaurant_address || "")}</textarea></label>
+            <label class="field"><span>CGST %</span><input class="field-input" name="cgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.cgst_rate)}" required></label>
+            <label class="field"><span>SGST %</span><input class="field-input" name="sgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.sgst_rate)}" required></label>
+            <label class="field settings-wide"><span>Receipt footer</span><input class="field-input" name="receipt_footer" value="${escapeHtml(settings.receipt_footer || "")}"></label>
+            <div class="settings-wide settings-preview"><div class="settings-preview-icon"><i class="ph ph-shield-check"></i></div><div><strong>Secure calculation</strong><span>Prices, tax rates and the final total are recalculated by PostgreSQL when the order is created.</span></div></div>
+            <div class="settings-wide">
+              <button class="btn btn-primary" type="submit" id="save-billing-btn" style="height: 48px; border-radius: 12px; font-size: 15px; transition: all 0.2s ease;">
+                <i class="ph ph-floppy-disk"></i>Save billing settings
+              </button>
+            </div>
+          </form>
+        </section>`;
+
+      // 1. Add Instant Image Previews for the Uploaders
+      area.querySelector("#icon_upload")?.addEventListener("change", e => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const url = URL.createObjectURL(file);
+          area.querySelector("#icon-preview-box").innerHTML = `<img src="${url}" style="width: 100%; height: 100%; object-fit: cover;">`;
+        }
+      });
+
+      area.querySelector("#logo_upload")?.addEventListener("change", e => {
+        const file = e.target.files?.[0];
+        if (file) {
+          const url = URL.createObjectURL(file);
+          area.querySelector("#logo-preview-box").innerHTML = `<img src="${url}" style="width: 100%; height: 100%; object-fit: contain;">`;
+        }
+      });
+
+      area.querySelector("#admin-lock-workspace").addEventListener("click", () => {
+        history.pushState({}, "", location.pathname);
+        location.hash = "";
+        window.dispatchEvent(new Event("rms:navigate"));
+      });
+
+      area.querySelector("#branding-form").addEventListener("submit", async e => {
+        e.preventDefault();
+        const btn = area.querySelector("#save-branding-btn");
+        btn.disabled = true;
+        const ogText = btn.innerHTML;
+        btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Saving...`;
+
+        try {
+          const fd = new FormData(e.currentTarget);
+          const bgCol = fd.get("background_color");
+          const fgCol = fd.get("foreground_color");
+          
+          let iconUrl = restData.icon_url;
+          let logoUrl = restData.logo_url;
+
+          const iconFile = area.querySelector("#icon_upload").files[0];
+          const logoFile = area.querySelector("#logo_upload").files[0];
+
+          if (iconFile) {
+            const path = `${restData.id}/icon_${crypto.randomUUID()}.${iconFile.name.split('.').pop()}`;
+            const { error } = await supabase.storage.from('restaurant-assets').upload(path, iconFile);
+            if (error) throw error;
+            iconUrl = supabase.storage.from('restaurant-assets').getPublicUrl(path).data.publicUrl;
+          }
+
+          if (logoFile) {
+            const path = `${restData.id}/logo_${crypto.randomUUID()}.${logoFile.name.split('.').pop()}`;
+            const { error } = await supabase.storage.from('restaurant-assets').upload(path, logoFile);
+            if (error) throw error;
+            logoUrl = supabase.storage.from('restaurant-assets').getPublicUrl(path).data.publicUrl;
+          }
+
+          const { error } = await supabase.from("restaurants").update({
+            background_color: bgCol,
+            foreground_color: fgCol,
+            icon_url: iconUrl,
+            logo_url: logoUrl
+          }).eq("id", restData.id);
+
+          if (error) throw error;
+          
+          // Instantly apply the colors to the live document so they don't have to refresh!
+          if (bgCol) {
+            document.documentElement.style.setProperty("--cream-100", bgCol);
+            document.documentElement.style.setProperty("--cream-50", bgCol);
+          }
+          if (fgCol) {
+            document.documentElement.style.setProperty("--forest-950", fgCol);
+            document.documentElement.style.setProperty("--forest-900", fgCol);
+            document.documentElement.style.setProperty("--forest-800", fgCol);
+            document.documentElement.style.setProperty("--forest-700", fgCol);
+            document.documentElement.style.setProperty("--ink", fgCol);
+          }
+          
+          // Update the global state
+          if (window.__ACTIVE_TENANT__) {
+            window.__ACTIVE_TENANT__.background_color = bgCol;
+            window.__ACTIVE_TENANT__.foreground_color = fgCol;
+            if (iconUrl) window.__ACTIVE_TENANT__.icon_url = iconUrl;
+            if (logoUrl) window.__ACTIVE_TENANT__.logo_url = logoUrl;
+          }
+          
+          // Magically update the top header so the user doesn't even need to refresh
+          const topLogo = document.querySelector(".app-topbar .topbar-left img");
+          if (topLogo && logoUrl) topLogo.src = logoUrl;
+          
+          btn.innerHTML = `<i class="ph-bold ph-check"></i> Applied`;
+          showToast("Branding Updated", "Your new colors and logos are live!");
+          
+          setTimeout(() => { btn.innerHTML = ogText; }, 2500);
+        } catch (error) {
+          showToast("Error", error.message, "error");
+          btn.innerHTML = ogText;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      area.querySelector("#security-form").addEventListener("submit", async e => {
+        e.preventDefault();
+        
+        // 1. Capture the form element synchronously before we pause to talk to the database!
+        const form = e.target; 
+        
+        const btn = area.querySelector("#save-security-btn");
+        btn.disabled = true;
+        const ogText = btn.innerHTML;
+        btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Updating...`;
+
+        try {
+          const fd = new FormData(form);
+          const currentPin = fd.get("current_pin");
+          const newPin = fd.get("new_pin");
+
+          // 2. The security check happens securely inside PostgreSQL here
+          const { error } = await supabase.rpc("change_admin_pin", { 
+            p_current_pin: currentPin, 
+            p_new_pin: newPin 
+          });
+
+          if (error) throw error;
+          
+          btn.innerHTML = `<i class="ph ph-check"></i> PIN Changed!`;
+          showToast("Security Updated", "Your Admin PIN has been successfully changed.");
+          
+          // 3. Safely empty the text boxes using our captured reference
+          form.reset();
+          
+          setTimeout(() => { btn.innerHTML = ogText; }, 3000);
+        } catch (error) {
+          showToast("Update Failed", error.message, "error");
+          btn.innerHTML = ogText;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      area.querySelector("#settings-form").addEventListener("submit", async e => {
+        e.preventDefault(); 
+        
+        const form = e.currentTarget;
+        const btn = form.querySelector("#save-billing-btn");
+        const ogText = btn.innerHTML;
+        
+        // Instantly disable button and show loading spinner
+        btn.disabled = true;
+        btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Saving...`;
+
+        const fd = new FormData(form);
+        const payload = { 
+          restaurant_id: window.__ACTIVE_TENANT__.id,
+          restaurant_name: String(fd.get("restaurant_name") || "").trim(), 
+          upi_id: String(fd.get("upi_id") || "").trim(),
+          gst_number: String(fd.get("gst_number") || "").trim(),
+          restaurant_address: String(fd.get("restaurant_address") || "").trim(),
+          cgst_rate: Number(fd.get("cgst_rate")), 
+          sgst_rate: Number(fd.get("sgst_rate")), 
+          receipt_footer: String(fd.get("receipt_footer") || "").trim() 
+        };
+        
+        try { 
+          // 1. Save Billing Settings
+          const { error } = await supabase.from("app_settings").upsert(payload, { onConflict: 'restaurant_id' }); 
+          if (error) throw error; 
+          
+          // 2. Sync Master Tenant Identity
+          const { error: restError } = await supabase.from("restaurants").update({ name: payload.restaurant_name }).eq("id", window.__ACTIVE_TENANT__.id);
+          if (restError) throw restError;
+
+          // 3. Update Memory State
+          Object.assign(settings, payload); 
+          if (window.__ACTIVE_TENANT__) {
+            window.__ACTIVE_TENANT__.name = payload.restaurant_name;
+          }
+          
+          // 4. Live DOM Update (Magically changes the text on screen instantly)
+          const topbarName = document.querySelector(".app-topbar .topbar-left strong");
+          if (topbarName) topbarName.textContent = payload.restaurant_name;
+          
+          const drawerName = document.querySelector(".app-drawer .drawer-head strong");
+          if (drawerName) drawerName.textContent = payload.restaurant_name;
+          
+          document.title = `${payload.restaurant_name} | RMS`;
+
+          showToast("Settings saved", "Configuration updated."); 
+          
+          // Show success checkmark
+          btn.innerHTML = `<i class="ph-bold ph-check"></i> Saved`;
+          
+          // Revert back to normal after 2.5 seconds
+          setTimeout(() => { 
+            btn.innerHTML = ogText; 
+            btn.disabled = false; 
+          }, 2500);
+
+        } catch (error) { 
+          showToast("Could not save settings", error.message, "error"); 
+          btn.innerHTML = ogText;
+          btn.disabled = false;
+        }
+      });
+    }); 
   }
 
   function openTableEditor(table = null) {
@@ -1804,7 +2198,13 @@ async function renderAdminWorkspace(mount) {
       actions: [
         { label: "Cancel", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() },
         { label: editing ? "Save changes" : "Create table", icon: "ph-floppy-disk", className: "btn-primary", onClick: async ({ root, close, button }) => {
-          const form = root.querySelector("#table-form"); if (!form.reportValidity()) return; button.disabled = true; const fd = new FormData(form); const payload = { table_no: String(fd.get("table_no") || "").trim(), capacity: Number(fd.get("capacity")), is_active: fd.get("is_active") === "on" };
+          const form = root.querySelector("#table-form"); if (!form.reportValidity()) return; button.disabled = true; const fd = new FormData(form); 
+          const payload = { 
+            restaurant_id: window.__ACTIVE_TENANT__.id, // CRITICAL FIX: Tenant Isolation Identity attached
+            table_no: String(fd.get("table_no") || "").trim(), 
+            capacity: Number(fd.get("capacity")), 
+            is_active: fd.get("is_active") === "on" 
+          };
           try { const query = editing ? supabase.from("tables").update(payload).eq("id", table.id) : supabase.from("tables").insert(payload); const { error } = await query; if (error) throw error; showToast(editing ? "Table updated" : "Table created", `Table ${payload.table_no} is ready.`); close(); await reload(); } catch (error) { button.disabled = false; showToast("Could not save table", error.message, "error"); }
         }}
       ]
@@ -1814,7 +2214,7 @@ async function renderAdminWorkspace(mount) {
   function openTableDelete(table) {
     openAppModal({
       title: `Delete table ${escapeHtml(table.table_no)}?`,
-      subtitle: "This action uses Four Flavours' own confirmation screen.",
+      subtitle: "This action uses the standard confirmation screen.",
       body: `<div class="danger-confirm"><div class="danger-confirm-icon"><i class="ph ph-trash"></i></div><h3>Remove this table from management?</h3><p>The QR will stop accepting new orders. Historical orders remain in the database, but their table reference may become empty.</p><div class="modal-form-note warning"><i class="ph ph-warning-circle"></i><span>If this table currently has an open dining session, finish that session first.</span></div></div>`,
       actions: [
         { label: "Keep table", icon: "ph-arrow-left", className: "btn-quiet", onClick: ({ close }) => close() },
@@ -1828,12 +2228,11 @@ async function renderAdminWorkspace(mount) {
 
   function openTableQR(table) {
     const baseUrl = getCustomerTableUrl(table.id);
-    // INJECT SECURE SCAN INTENT: This guarantees the physical sticker overrides the lockout
     const url = baseUrl + (baseUrl.includes("?") ? "&" : "?") + "scan=true";
     
     const modal = openAppModal({
       title: `Table ${escapeHtml(table.table_no)} QR`,
-      subtitle: "This QR always opens the live Four Flavours menu for this specific table.",
+      subtitle: "This QR always opens the live menu for this specific table.",
       body: `
         <div class="qr-preview-panel">
           <div class="qr-preview" id="table-qr"></div>
@@ -1841,68 +2240,38 @@ async function renderAdminWorkspace(mount) {
           <div class="qr-url">${escapeHtml(url)}</div>
           <div class="qr-safety-note">
             <i class="ph ph-shield-check"></i>
-            <span>Production QR · Opens only the Four Flavours customer menu for this table.</span>
+            <span>Production QR · Opens only the customer menu for this table.</span>
           </div>
         </div>
       `,
       actions: [
         { label: "Close", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() },
-        { 
-          label: "Download", 
-          icon: "ph-download-simple", 
-          className: "btn-quiet", 
-          onClick: () => { 
+        { label: "Download", icon: "ph-download-simple", className: "btn-quiet", onClick: () => { 
             showToast("Generating...", "Preparing high-res QR code.");
-            
-            // Create a temporary, ultra-high-res QR code just for downloading
             const tempDiv = document.createElement("div");
-            new QRCode(tempDiv, { 
-              text: url, 
-              width: 1024, 
-              height: 1024, 
-              correctLevel: QRCode.CorrectLevel.M 
-            });
-            
+            new QRCode(tempDiv, { text: url, width: 1024, height: 1024, correctLevel: QRCode.CorrectLevel.M });
             setTimeout(() => {
               const qrCanvas = tempDiv.querySelector("canvas");
               if (qrCanvas) {
-                const padding = 120; // Creates a massive, clean margin for printing
+                const padding = 120;
                 const targetSize = qrCanvas.width + (padding * 2);
-                
                 const exportCanvas = document.createElement("canvas");
-                exportCanvas.width = targetSize;
-                exportCanvas.height = targetSize;
+                exportCanvas.width = targetSize; exportCanvas.height = targetSize;
                 const ctx = exportCanvas.getContext("2d");
-                
-                // Fill pure white background (Required for JPGs)
-                ctx.fillStyle = "#ffffff";
-                ctx.fillRect(0, 0, targetSize, targetSize);
-                
-                // Draw the crisp 1024x1024 QR code in the dead center
+                ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, targetSize, targetSize);
                 ctx.drawImage(qrCanvas, padding, padding);
-                
-                // Export as Max Quality JPG
-                const link = document.createElement("a");
-                link.download = `Table-${table.table_no}-QR.jpg`;
-                link.href = exportCanvas.toDataURL("image/jpeg", 1.0);
-                link.click();
-                
+                const link = document.createElement("a"); link.download = `Table-${table.table_no}-QR.jpg`; link.href = exportCanvas.toDataURL("image/jpeg", 1.0); link.click();
                 showToast("Downloaded", `Table ${table.table_no} high-res JPG saved.`);
-              } else {
-                showToast("Error", "Could not generate QR Code.", "error");
-              }
+              } else { showToast("Error", "Could not generate QR Code.", "error"); }
             }, 100);
           } 
         },
-        { 
-          label: "Print QR", 
-          icon: "ph-printer", 
-          className: "btn-primary", 
-          onClick: ({ button }) => { 
+        { label: "Print QR", icon: "ph-printer", className: "btn-primary", onClick: ({ button }) => { 
             button.disabled = true; 
             const host = document.querySelector("#qr-print-host"); 
             const qr = modal.root.querySelector("#table-qr"); 
-            host.innerHTML = `<section class="qr-print-sheet"><img src="${versionedAsset("assets/images/website_icon.svg")}" alt=""><h1>Four Flavours</h1><h2>Table ${escapeHtml(table.table_no)}</h2><div class="qr-print-code">${qr.innerHTML}</div><p>Scan to view the menu & order</p></section>`; 
+            const iconHtml = window.__ACTIVE_TENANT__?.icon_url ? `<img src="${versionedAsset(window.__ACTIVE_TENANT__.icon_url)}" alt="">` : '';
+            host.innerHTML = `<section class="qr-print-sheet">${iconHtml}<h1>Table ${escapeHtml(table.table_no)}</h1><div class="qr-print-code">${qr.innerHTML}</div><p>Scan to view the menu & order</p></section>`; 
             document.body.classList.add("print-qr"); 
             window.print(); 
             setTimeout(() => { document.body.classList.remove("print-qr"); host.innerHTML = ""; button.disabled = false; }, 800); 
@@ -1911,17 +2280,11 @@ async function renderAdminWorkspace(mount) {
       ]
     });
 
-    // We force clear the container to guarantee no injected logos push the QR code out of the box
     setTimeout(() => {
       if (globalThis.QRCode) {
         const container = modal.root.querySelector("#table-qr");
         container.innerHTML = ""; 
-        new QRCode(container, { 
-          text: url, 
-          width: 256, 
-          height: 256, 
-          correctLevel: QRCode.CorrectLevel.M 
-        });
+        new QRCode(container, { text: url, width: 256, height: 256, correctLevel: QRCode.CorrectLevel.M });
       }
     }, 50);
   }
@@ -1938,739 +2301,175 @@ async function renderAdminWorkspace(mount) {
           try { 
             const { error } = await supabase.from("products").delete().eq("id", product.id); 
             if (error) throw error; 
-            
-            // Cleanup the image from storage to prevent orphaned files taking up space
             const storagePath = storagePathFromUrl(product.image_url);
-            if (storagePath) {
-              await supabase.storage.from(DISH_IMAGE_BUCKET).remove([storagePath]);
-            }
-
+            if (storagePath) await supabase.storage.from(DISH_IMAGE_BUCKET).remove([storagePath]);
             showToast("Dish deleted", `${product.name} was removed.`); 
             close(); 
             await reload(); 
-          } catch (error) { 
-            button.disabled = false; 
-            showToast("Could not delete dish", error.message, "error"); 
-          }
+          } catch (error) { button.disabled = false; showToast("Could not delete dish", error.message, "error"); }
         }}
       ]
     });
   }
 
   function openProductEditor(product = null) {
-    const editing =
-      Boolean(product);
+    const editing = Boolean(product);
+    const currentImageUrl = product?.image_url ? versionedAsset(product.image_url) : "";
+    const currentImageHtml = currentImageUrl ? `<div class="image-upload-preview" id="image-preview"><img src="${currentImageUrl}" alt="" /><div class="image-preview-copy"><strong>Current dish image</strong><span>Upload another image below to replace it.</span></div></div>` : `<div class="image-upload-preview empty" id="image-preview"><i class="ph ph-image"></i><div class="image-preview-copy"><strong>No dish image yet</strong><span>Add a clear food photograph for the customer menu.</span></div></div>`;
 
-    const currentImageUrl =
-      product?.image_url
-        ? versionedAsset(product.image_url)
-        : "";
+    const modal = openAppModal({
+      title: editing ? "Edit dish" : "Add dish",
+      subtitle: "Dish photos are automatically cropped to 4:3, optimized and stored as WebP.",
+      body: `
+        <form id="product-form" class="stack-form">
+          <label class="field"><span>Dish name</span><input class="field-input" name="name" value="${escapeHtml(product?.name ?? "")}" required /></label>
+          
+          <!-- Native HTML Combobox Datalists (Tenant Isolated) -->
+          <datalist id="cuisine-datalist">
+            ${cuisines.map(c => `<option value="${escapeHtml(c.name)}">`).join("")}
+          </datalist>
+          <datalist id="subcat-datalist">
+            ${[...new Set(products.map(p => { const parts = String(p.category || "").split(" - "); return parts.length > 1 ? parts.slice(1).join(" - ").trim() : null; }).filter(Boolean))].map(sub => `<option value="${escapeHtml(sub)}">`).join("")}
+          </datalist>
 
-    const currentImageHtml =
-      currentImageUrl
-        ? `
-          <div
-            class="image-upload-preview"
-            id="image-preview"
-          >
-            <img
-              src="${currentImageUrl}"
-              alt=""
-            />
-
-            <div class="image-preview-copy">
-              <strong>Current dish image</strong>
-              <span>
-                Upload another image below to replace it.
-              </span>
-            </div>
-          </div>
-        `
-        : `
-          <div
-            class="image-upload-preview empty"
-            id="image-preview"
-          >
-            <i class="ph ph-image"></i>
-
-            <div class="image-preview-copy">
-              <strong>No dish image yet</strong>
-              <span>
-                Add a clear food photograph for the customer menu.
-              </span>
-            </div>
-          </div>
-        `;
-
-    const modal =
-      openAppModal({
-        title:
-          editing
-            ? "Edit dish"
-            : "Add dish",
-
-        subtitle:
-          "Dish photos are automatically cropped to 4:3, optimized and stored as WebP.",
-
-        body: `
-          <form
-            id="product-form"
-            class="stack-form"
-          >
+          <div style="display: grid; grid-template-columns: 1.2fr 1.2fr 100px; gap: 10px;">
             <label class="field">
-              <span>Dish name</span>
-
-              <input
-                class="field-input"
-                name="name"
-                value="${escapeHtml(product?.name ?? "")}"
-                required
-              />
+              <span>Category</span>
+              <input class="field-input" list="cuisine-datalist" name="main_category" value="${escapeHtml(String(product?.category ?? "").split(" - ")[0]?.trim() ?? "")}" placeholder="e.g. Indian" required autocomplete="off" />
             </label>
-
-            <div class="form-grid-two">
-              <label class="field">
-                <span>Category</span>
-
-                <input
-                  class="field-input"
-                  name="category"
-                  value="${escapeHtml(product?.category ?? "")}"
-                  required
-                />
-              </label>
-
-              <label class="field">
-                <span>Price (₹)</span>
-
-                <input
-                  class="field-input"
-                  name="price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value="${Number(product?.price ?? 0)}"
-                  required
-                />
-              </label>
-            </div>
-
             <label class="field">
-              <span>Description</span>
-
-              <textarea
-                class="field-input textarea-input"
-                name="description"
-                maxlength="240"
-                placeholder="A short, appetising description for customers"
-              >${escapeHtml(product?.description ?? "")}</textarea>
+              <span>Sub Category</span>
+              <input class="field-input" list="subcat-datalist" name="sub_category" value="${escapeHtml(String(product?.category ?? "").split(" - ").slice(1).join(" - ")?.trim() ?? "")}" placeholder="e.g. Starter" required autocomplete="off" />
             </label>
+            <label class="field">
+              <span>Price (₹)</span>
+              <input class="field-input" name="price" type="number" min="0" step="0.01" value="${Number(product?.price ?? 0)}" required />
+            </label>
+          </div>
+          
+          <label class="field"><span>Description</span><textarea class="field-input textarea-input" name="description" maxlength="240" placeholder="A short, appetising description for customers">${escapeHtml(product?.description ?? "")}</textarea></label>
+          <div class="field">
+            <span>Dish image</span>
+            <label class="image-upload-zone" data-image-zone>
+              <input id="product-image" name="product_image" type="file" accept="image/*" />
+              <span class="image-upload-icon"><i class="ph ph-cloud-arrow-up"></i></span>
+              <span class="image-upload-copy"><strong>Choose dish photo</strong><small>JPG, PNG, WebP, etc. · automatically converted to optimized 4:3 WebP</small></span>
+              <span class="image-upload-arrow"><i class="ph ph-arrow-up-right"></i></span>
+            </label>
+            ${currentImageHtml}
+            ${editing && product?.image_url ? `<label class="switch-field image-remove-switch"><input type="checkbox" name="remove_image" id="remove-image" /><span class="switch-ui"></span><span><strong>Remove current image</strong><small>The dish will remain available without a photo.</small></span></label>` : ""}
+            <div class="image-upload-status" id="image-upload-status"><i class="ph ph-sparkle"></i><span>Best result: clear dish photo with the food near the centre.</span></div>
+          </div>
+          <div class="inline-switch-grid">
+            <label class="switch-field"><input type="checkbox" name="is_active" ${product?.is_active ?? true ? "checked" : ""} /><span class="switch-ui"></span><span><strong>Visible</strong><small>Show this dish on the customer menu.</small></span></label>
+            <label class="switch-field"><input type="checkbox" name="tax_exempt" ${product?.tax_exempt ? "checked" : ""} /><span class="switch-ui"></span><span><strong>Tax exempt</strong><small>Exclude it from GST calculations.</small></span></label>
+            <label class="switch-field settings-wide"><input type="checkbox" name="is_veg" ${product?.is_veg ?? true ? "checked" : ""} /><span class="switch-ui"></span><span><strong>Vegetarian</strong><small>Toggle off for non-vegetarian dishes. Displays dietary symbol on menus.</small></span></label>
+          </div>
+        </form>
+      `,
+      actions: [
+        { label: "Cancel", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() },
+        { label: editing ? "Save changes" : "Create dish", icon: "ph-floppy-disk", className: "btn-primary", onClick: async ({ root, close, button }) => {
+            const form = root.querySelector("#product-form");
+            if (!form.reportValidity()) return;
+            button.disabled = true;
+            const statusNode = root.querySelector("#image-upload-status");
+            const fileInput = root.querySelector("#product-image");
+            const removeImage = root.querySelector("#remove-image");
+            const selectedFile = fileInput?.files?.[0] ?? null;
+            const shouldRemoveImage = Boolean(removeImage?.checked);
+            if (selectedFile && shouldRemoveImage) removeImage.checked = false;
+            const finalRemoveImage = Boolean(removeImage?.checked);
+            const fd = new FormData(form);
+            const productId = editing ? product.id : crypto.randomUUID();
+            let newStoragePath = null;
+            let previousStoragePath = storagePathFromUrl(product?.image_url);
+            let finalImageUrl = product?.image_url ?? null;
 
-            <div class="field">
-              <span>Dish image</span>
-
-              <label
-                class="image-upload-zone"
-                data-image-zone
-              >
-                <input
-                  id="product-image"
-                  name="product_image"
-                  type="file"
-                  accept="image/*"
-                />
-
-                <span class="image-upload-icon">
-                  <i class="ph ph-cloud-arrow-up"></i>
-                </span>
-
-                <span class="image-upload-copy">
-                  <strong>
-                    Choose dish photo
-                  </strong>
-
-                  <small>
-                    JPG, PNG, WebP, etc. · automatically converted to
-                    optimized 4:3 WebP
-                  </small>
-                </span>
-
-                <span class="image-upload-arrow">
-                  <i class="ph ph-arrow-up-right"></i>
-                </span>
-              </label>
-
-              ${currentImageHtml}
-
-              ${
-                editing &&
-                product?.image_url
-                  ? `
-                    <label class="switch-field image-remove-switch">
-                      <input
-                        type="checkbox"
-                        name="remove_image"
-                        id="remove-image"
-                      />
-
-                      <span class="switch-ui"></span>
-
-                      <span>
-                        <strong>
-                          Remove current image
-                        </strong>
-
-                        <small>
-                          The dish will remain available without a photo.
-                        </small>
-                      </span>
-                    </label>
-                  `
-                  : ""
+            try {
+              let optimizedFile = null;
+              if (selectedFile) {
+                statusNode.innerHTML = `<i class="ph ph-spinner-gap"></i><span>Optimizing image…</span>`;
+                optimizedFile = await optimizeDishImage(selectedFile);
+                newStoragePath = `products/${productId}/${crypto.randomUUID()}.webp`;
+                finalImageUrl = getDishPublicUrl(newStoragePath);
               }
 
-              <div
-                class="image-upload-status"
-                id="image-upload-status"
-              >
-                <i class="ph ph-sparkle"></i>
-                <span>
-                  Best result: clear dish photo with the food near the centre.
-                </span>
-              </div>
-            </div>
-
-            <div class="inline-switch-grid">
-              <label class="switch-field">
-                <input
-                  type="checkbox"
-                  name="is_active"
-                  ${product?.is_active ?? true ? "checked" : ""}
-                />
-
-                <span class="switch-ui"></span>
-
-                <span>
-                  <strong>Visible</strong>
-                  <small>
-                    Show this dish on the customer menu.
-                  </small>
-                </span>
-              </label>
-
-              <label class="switch-field">
-                <input
-                  type="checkbox"
-                  name="tax_exempt"
-                  ${product?.tax_exempt ? "checked" : ""}
-                />
-
-                <span class="switch-ui"></span>
-
-                <span>
-                  <strong>Tax exempt</strong>
-                  <small>
-                    Exclude it from GST calculations.
-                  </small>
-                </span>
-              </label>
-            </div>
-          </form>
-        `,
-
-        actions: [
-          {
-            label: "Cancel",
-            icon: "ph-x",
-            className: "btn-quiet",
-
-            onClick: ({
-              close
-            }) => close()
-          },
-
-          {
-            label:
-              editing
-                ? "Save changes"
-                : "Create dish",
-
-            icon:
-              "ph-floppy-disk",
-
-            className:
-              "btn-primary",
-
-            onClick:
-              async ({
-                root,
-                close,
-                button
-              }) => {
-                const form =
-                  root.querySelector(
-                    "#product-form"
-                  );
-
-                if (
-                  !form.reportValidity()
-                ) {
-                  return;
-                }
-
-                button.disabled =
-                  true;
-
-                const statusNode =
-                  root.querySelector(
-                    "#image-upload-status"
-                  );
-
-                const fileInput =
-                  root.querySelector(
-                    "#product-image"
-                  );
-
-                const removeImage =
-                  root.querySelector(
-                    "#remove-image"
-                  );
-
-                const selectedFile =
-                  fileInput?.files?.[0] ??
-                  null;
-
-                const shouldRemoveImage =
-                  Boolean(
-                    removeImage?.checked
-                  );
-
-                if (
-                  selectedFile &&
-                  shouldRemoveImage
-                ) {
-                  removeImage.checked =
-                    false;
-                }
-
-                const finalRemoveImage =
-                  Boolean(
-                    removeImage?.checked
-                  );
-
-                const fd =
-                  new FormData(form);
-
-                const productId =
-                  editing
-                    ? product.id
-                    : crypto.randomUUID();
-
-                let newStoragePath =
-                  null;
-
-                let previousStoragePath =
-                  storagePathFromUrl(
-                    product?.image_url
-                  );
-
-                let finalImageUrl =
-                  product?.image_url ??
-                  null;
-
-                try {
-                  const payload = {
-                    id: productId,
-
-                    name:
-                      String(
-                        fd.get("name") ||
-                        ""
-                      ).trim(),
-
-                    category:
-                      String(
-                        fd.get("category") ||
-                        ""
-                      ).trim(),
-
-                    price:
-                      Number(
-                        fd.get("price")
-                      ),
-
-                    description:
-                      String(
-                        fd.get("description") ||
-                        ""
-                      ).trim(),
-
-                    image_url:
-                      finalImageUrl,
-
-                    is_active:
-                      fd.get("is_active") ===
-                      "on",
-
-                    tax_exempt:
-                      fd.get("tax_exempt") ===
-                      "on"
-                  };
-
-                  if (
-                    finalRemoveImage &&
-                    !selectedFile
-                  ) {
-                    payload.image_url =
-                      null;
-
-                    finalImageUrl =
-                      null;
-                  }
-
-                  if (
-                    selectedFile
-                  ) {
-                    statusNode.innerHTML = `
-                      <i class="ph ph-spinner-gap"></i>
-                      <span>
-                        Optimizing image…
-                      </span>
-                    `;
-
-                    const optimizedFile =
-                      await optimizeDishImage(
-                        selectedFile
-                      );
-
-                    statusNode.innerHTML = `
-                      <i class="ph ph-cloud-arrow-up"></i>
-                      <span>
-                        Uploading optimized WebP…
-                      </span>
-                    `;
-
-                    /*
-                     * NEVER overwrite the previous file.
-                     *
-                     * New unique path = immediate CDN freshness.
-                     */
-                    newStoragePath =
-                      `products/${productId}/${crypto.randomUUID()}.webp`;
-
-                    const {
-                      error:
-                        uploadError
-                    } =
-                      await supabase.storage
-                        .from(
-                          DISH_IMAGE_BUCKET
-                        )
-                        .upload(
-                          newStoragePath,
-                          optimizedFile,
-                          {
-                            cacheControl:
-                              String(
-                                IMAGE_CACHE_SECONDS
-                              ),
-
-                            contentType:
-                              "image/webp",
-
-                            upsert:
-                              false
-                          }
-                        );
-
-                    if (
-                      uploadError
-                    ) {
-                      throw uploadError;
-                    }
-
-                    finalImageUrl =
-                      getDishPublicUrl(
-                        newStoragePath
-                      );
-
-                    payload.image_url =
-                      finalImageUrl;
-                  }
-
-                  statusNode.innerHTML = `
-                    <i class="ph ph-floppy-disk"></i>
-                    <span>
-                      Saving dish…
-                    </span>
-                  `;
-
-                  const query =
-                    editing
-                      ? supabase
-                          .from("products")
-                          .update(
-                            {
-                              name:
-                                payload.name,
-
-                              category:
-                                payload.category,
-
-                              price:
-                                payload.price,
-
-                              description:
-                                payload.description,
-
-                              image_url:
-                                payload.image_url,
-
-                              is_active:
-                                payload.is_active,
-
-                              tax_exempt:
-                                payload.tax_exempt
-                            }
-                          )
-                          .eq(
-                            "id",
-                            product.id
-                          )
-                      : supabase
-                          .from("products")
-                          .insert(
-                            payload
-                          );
-
-                  const {
-                    error
-                  } =
-                    await query;
-
-                  if (error) {
-                    throw error;
-                  }
-
-                  /*
-                   * Remove the old Storage object only after the database
-                   * successfully points at the new image.
-                   */
-                  if (
-                    editing &&
-                    previousStoragePath &&
-                    (
-                      newStoragePath ||
-                      finalRemoveImage
-                    )
-                  ) {
-                    const {
-                      error:
-                        cleanupError
-                    } =
-                      await supabase.storage
-                        .from(
-                          DISH_IMAGE_BUCKET
-                        )
-                        .remove([
-                          previousStoragePath
-                        ]);
-
-                    if (
-                      cleanupError
-                    ) {
-                      console.warn(
-                        "Old dish image cleanup failed:",
-                        cleanupError
-                      );
-                    }
-                  }
-
-                  showToast(
-                    editing
-                      ? "Dish updated"
-                      : "Dish created",
-
-                    payload.name
-                  );
-
-                  close();
-
-                  await reload();
-
-                } catch (
-                  error
-                ) {
-                  /*
-                   * If the new image was uploaded but the DB save failed,
-                   * remove the new object so Storage never fills with orphans.
-                   */
-                  if (
-                    newStoragePath
-                  ) {
-                    try {
-                      await supabase.storage
-                        .from(
-                          DISH_IMAGE_BUCKET
-                        )
-                        .remove([
-                          newStoragePath
-                        ]);
-                    } catch (
-                      cleanupError
-                    ) {
-                      console.warn(
-                        "Failed to remove orphaned upload:",
-                        cleanupError
-                      );
-                    }
-                  }
-
-                  statusNode.innerHTML = `
-                    <i class="ph ph-warning-circle"></i>
-                    <span>
-                      ${escapeHtml(
-                        error.message
-                      )}
-                    </span>
-                  `;
-
-                  button.disabled =
-                    false;
-
-                  showToast(
-                    "Could not save dish",
-                    error.message,
-                    "error"
-                  );
-                }
+              if (finalRemoveImage && !selectedFile) { finalImageUrl = null; }
+
+              const mainCat = String(fd.get("main_category") || "").trim();
+              const subCat = String(fd.get("sub_category") || "").trim();
+              const finalCategory = subCat ? `${mainCat} -${subCat}` : mainCat;
+
+              const payload = {
+                id: productId,
+                restaurant_id: window.__ACTIVE_TENANT__.id,
+                name: String(fd.get("name") || "").trim(),
+                category: finalCategory,
+                price: Number(fd.get("price")),
+                description: String(fd.get("description") || "").trim(),
+                image_url: finalImageUrl,
+                is_active: fd.get("is_active") === "on",
+                tax_exempt: fd.get("tax_exempt") === "on",
+                is_veg: fd.get("is_veg") === "on"
+              };
+
+              // 1. SAVE DATABASE ROW FIRST (Establishes ownership so the Bucket allows the upload)
+              statusNode.innerHTML = `<i class="ph ph-floppy-disk"></i><span>Saving dish details…</span>`;
+              const query = editing ? supabase.from("products").update(payload).eq("id", product.id) : supabase.from("products").insert(payload);
+              const { error } = await query;
+              if (error) throw error;
+
+              // 2. UPLOAD IMAGE TO STORAGE SECOND (Now authorized by RLS)
+              if (selectedFile && optimizedFile) {
+                statusNode.innerHTML = `<i class="ph ph-cloud-arrow-up"></i><span>Uploading photo…</span>`;
+                const { error: uploadError } = await supabase.storage.from(DISH_IMAGE_BUCKET).upload(newStoragePath, optimizedFile, { cacheControl: String(IMAGE_CACHE_SECONDS), contentType: "image/webp", upsert: false });
+                if (uploadError) throw uploadError;
               }
-          }
-        ]
-      });
 
-    const fileInput =
-      modal.root.querySelector(
-        "#product-image"
-      );
+              if (editing && previousStoragePath && (newStoragePath || finalRemoveImage)) {
+                const { error: cleanupError } = await supabase.storage.from(DISH_IMAGE_BUCKET).remove([previousStoragePath]);
+                if (cleanupError) console.warn("Old dish image cleanup failed:", cleanupError);
+              }
 
-    const preview =
-      modal.root.querySelector(
-        "#image-preview"
-      );
+              showToast(editing ? "Dish updated" : "Dish created", payload.name);
+              close();
+              await reload();
+            } catch (error) {
+              if (newStoragePath) {
+                try { await supabase.storage.from(DISH_IMAGE_BUCKET).remove([newStoragePath]); } 
+                catch (cleanupError) { console.warn("Failed to remove orphaned upload:", cleanupError); }
+              }
+              statusNode.innerHTML = `<i class="ph ph-warning-circle"></i><span>${escapeHtml(error.message)}</span>`;
+              button.disabled = false;
+              showToast("Could not save dish", error.message, "error");
+            }
+        }}
+      ]
+    });
 
-    const status =
-      modal.root.querySelector(
-        "#image-upload-status"
-      );
+    const fileInput = modal.root.querySelector("#product-image");
+    const preview = modal.root.querySelector("#image-preview");
+    const status = modal.root.querySelector("#image-upload-status");
+    const removeImage = modal.root.querySelector("#remove-image");
+    let previewUrl = null;
 
-    const removeImage =
-      modal.root.querySelector(
-        "#remove-image"
-      );
-
-    let previewUrl =
-      null;
-
-    fileInput?.addEventListener(
-      "change",
-      event => {
-        const file =
-          event.target.files?.[0];
-
-        if (!file) {
-          return;
-        }
-
-        if (
-          file.size >
-          MAX_SOURCE_IMAGE_BYTES
-        ) {
-          fileInput.value = "";
-
-          showToast(
-            "Image too large",
-            "Please choose an image smaller than 12 MB.",
-            "error"
-          );
-
-          return;
-        }
-
-        if (
-          !file.type.startsWith(
-            "image/"
-          )
-        ) {
-          fileInput.value = "";
-
-          showToast(
-            "Invalid image",
-            "Please select an image file.",
-            "error"
-          );
-
-          return;
-        }
-
-        if (
-          removeImage
-        ) {
-          removeImage.checked =
-            false;
-        }
-
-        if (
-          previewUrl
-        ) {
-          URL.revokeObjectURL(
-            previewUrl
-          );
-        }
-
-        previewUrl =
-          URL.createObjectURL(
-            file
-          );
-
-        preview.classList.remove(
-          "empty"
-        );
-
-        preview.innerHTML = `
-          <img
-            src="${previewUrl}"
-            alt=""
-          />
-
-          <div class="image-preview-copy">
-            <strong>
-              New image selected
-            </strong>
-
-            <span>
-              ${escapeHtml(file.name)}
-              ·
-              ${(file.size / 1024 / 1024).toFixed(2)}
-              MB source
-            </span>
-          </div>
-        `;
-
-        status.innerHTML = `
-          <i class="ph ph-check-circle"></i>
-          <span>
-            Ready. It will be cropped to 4:3 and converted to optimized WebP when saved.
-          </span>
-        `;
-      }
-    );
+    fileInput?.addEventListener("change", event => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      if (file.size > MAX_SOURCE_IMAGE_BYTES) { fileInput.value = ""; showToast("Image too large", "Please choose an image smaller than 12 MB.", "error"); return; }
+      if (!file.type.startsWith("image/")) { fileInput.value = ""; showToast("Invalid image", "Please select an image file.", "error"); return; }
+      if (removeImage) removeImage.checked = false;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = URL.createObjectURL(file);
+      preview.classList.remove("empty");
+      preview.innerHTML = `<img src="${previewUrl}" alt="" /><div class="image-preview-copy"><strong>New image selected</strong><span>${escapeHtml(file.name)} · ${(file.size / 1024 / 1024).toFixed(2)} MB source</span></div>`;
+      status.innerHTML = `<i class="ph ph-check-circle"></i><span>Ready. It will be cropped to 4:3 and converted to optimized WebP when saved.</span>`;
+    });
   }
 
   // Listen for the custom inbox event triggered by navigation.js
   const adminAlertHandler = async () => {
-    // Await reload() to fetch the live active tables without manual refresh.
-    // The 400ms timeout ensures Postgres has completely finished saving the new session before we query it.
     setTimeout(async () => {
        if (section === "overview") await reload();
     }, 400);
@@ -2684,19 +2483,12 @@ async function renderAdminWorkspace(mount) {
       else if (section === "overview") await reload();
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'dining_sessions' }, async payload => {
-      
-      // INSTANT SEATING DETECTION: A customer just scanned the QR code!
       if (payload.eventType === 'INSERT' && payload.new?.status === 'open') {
          const table = tables.find(t => t.id === payload.new.table_id);
          if (table) showToast("Table Opened", `Table ${table.table_no} was just seated.`);
       }
-      
-      // CUSTOMER AUTO-CLOSE DETECTION: 
-      // If status jumps directly from 'open' to 'closed', the customer generated the bill!
       if (payload.eventType === 'UPDATE' && payload.new?.status === "closed" && payload.old?.status === "open") {
-        showToast("Bill Generated & Table Freed!", `A customer finished their meal. Check the Orders tab for their bill.`, "success");
-        
-        // Highlight the Orders tab in Gold to notify the admin
+        showToast("Bill Generated & Table Freed!", `A customer finished their meal.`, "success");
         const ordersNavBtn = mount.querySelector('[data-section="orders"]');
         if (ordersNavBtn) {
           ordersNavBtn.style.color = "var(--gold-600)";
@@ -2708,9 +2500,7 @@ async function renderAdminWorkspace(mount) {
         showToast("Table Closed", "A table session was finalized by staff.");
       }
       
-      // Instantly refresh the overview and tables grid
       if (section === "overview" || section === "tables") {
-         // A tiny 200ms delay ensures the database transaction finishes before fetching the new data
          setTimeout(async () => await reload(), 200);
       }
     })
@@ -2718,7 +2508,6 @@ async function renderAdminWorkspace(mount) {
 
   renderSection();
   
-  // Cleanup the socket connection if the admin logs out or closes the workspace
   return () => {
     navCleanup?.();
     window.removeEventListener("ff_admin_alert_received", adminAlertHandler);
