@@ -1,66 +1,66 @@
 import { versionedAsset } from "../core/config.js";
 import { supabase, signOut } from "../core/supabase.js";
 
-window.__unreadAdminCount = window.__unreadAdminCount || 0;
-window.__adminAlerts = window.__adminAlerts || [];
 window.__orderTotalsCache = window.__orderTotalsCache || new Map();
 window.__sessionStatusCache = window.__sessionStatusCache || new Map();
+
+// 💾 TABLE ALERT ENGINE: Binds seen/unseen states strictly to Table IDs
+try {
+  window.__tableAlerts = JSON.parse(localStorage.getItem('rms_table_alerts') || '{}');
+} catch(e) {
+  window.__tableAlerts = {};
+}
 
 export function updateGlobalNotificationBadge() {
   const drawerDot = document.getElementById("admin-drawer-dot");
   const hamburgerDots = document.querySelectorAll(".hamburger-dot");
-  const show = window.__unreadAdminCount > 0;
+  const unreadCount = Object.keys(window.__tableAlerts || {}).length;
+  const show = unreadCount > 0;
   
   if (drawerDot) drawerDot.style.display = show ? "block" : "none";
   hamburgerDots.forEach(dot => { dot.style.display = show ? "block" : "none"; });
 }
-// Attach to the global window so the Admin dashboard can securely trigger it
 window.updateGlobalNotificationBadge = updateGlobalNotificationBadge;
 
-export function clearGlobalNotification() {
-  window.__unreadAdminCount = 0;
-  window.__adminAlerts = [];
-  updateGlobalNotificationBadge();
-}
-window.clearGlobalNotification = clearGlobalNotification;
-
-export function addAdminAlert(title, message, tableId = null) {
-  window.__adminAlerts.unshift({ title, message, tableId });
-  if (window.__adminAlerts.length > 15) window.__adminAlerts.pop(); 
-  window.__unreadAdminCount++;
+export function setTableAlert(tableId, type, message) {
+  if (!tableId) return;
+  window.__tableAlerts = window.__tableAlerts || {};
+  window.__tableAlerts[tableId] = { type, message, timestamp: Date.now() };
+  localStorage.setItem('rms_table_alerts', JSON.stringify(window.__tableAlerts));
   updateGlobalNotificationBadge();
   window.dispatchEvent(new Event("ff_admin_alert_received"));
 }
+window.setTableAlert = setTableAlert;
 
-// Ensure the listener only boots up on staff devices, NOT customer phones!
+export function clearTableAlert(tableId) {
+  if (!tableId || !window.__tableAlerts[tableId]) return;
+  delete window.__tableAlerts[tableId];
+  localStorage.setItem('rms_table_alerts', JSON.stringify(window.__tableAlerts));
+  updateGlobalNotificationBadge();
+  window.dispatchEvent(new Event("ff_admin_alert_received"));
+}
+window.clearTableAlert = clearTableAlert;
+
+export function clearGlobalNotification() {
+  window.__tableAlerts = {};
+  localStorage.setItem('rms_table_alerts', '{}');
+  updateGlobalNotificationBadge();
+  window.dispatchEvent(new Event("ff_admin_alert_received"));
+}
+window.clearGlobalNotification = clearGlobalNotification;
+
 const isCustomerMode = Boolean(new URLSearchParams(window.location.search).get("table") || new URLSearchParams(window.location.search).get("t"));
 
 if (!isCustomerMode && !window.__FF_GLOBAL_LISTENER__) {
   window.__FF_GLOBAL_LISTENER__ = true;
-  
-  function getTableNo(tableId) {
-    if (!tableId) return "Takeaway";
-    if (window.__FF_TABLES__) {
-       const t = window.__FF_TABLES__.find(x => x.id === tableId);
-       if (t) return t.table_no;
-    }
-    return "Unknown";
-  }
 
-  // INTELLIGENT BROADCAST LISTENER: Completely bypasses PostgreSQL triggers.
-  // We listen directly to explicit events sent by the customer's browser.
   supabase.channel('ff-admin-alerts')
     .on('broadcast', { event: 'customer_order' }, payload => {
-       const tableNo = getTableNo(payload.payload.tableId);
-       if (payload.payload.isNew) {
-          addAdminAlert("New Customer Order", `Table ${tableNo} sent a new order to the kitchen.`, payload.payload.tableId);
-       } else {
-          addAdminAlert("Customer Added Items", `Table ${tableNo} added more items to their live tab.`, payload.payload.tableId);
-       }
+       if (payload.payload.isNew) setTableAlert(payload.payload.tableId, "new_order", "New Order Received");
+       else setTableAlert(payload.payload.tableId, "added_items", "Additional Items Added");
     })
     .on('broadcast', { event: 'customer_bill' }, payload => {
-       const tableNo = getTableNo(payload.payload.tableId);
-       addAdminAlert("Bill Requested", `Table ${tableNo} requested their final bill.`, payload.payload.tableId);
+       setTableAlert(payload.payload.tableId, "bill_requested", "Bill Requested");
     })
     .subscribe();
 }
@@ -72,9 +72,6 @@ export function escapeHtml(value) {
 export function money(value, symbol = "₹") { return `${symbol}${Number(value || 0).toFixed(2)}`; }
 
 export function showToast(title, message, type = "success") {
-  // STRICT OVERRIDE: Suppress all "success" popups across the entire app
-  if (type === "success") return;
-
   const root = document.getElementById("toast-root");
   if (!root) return;
   const toast = document.createElement("div");
@@ -184,9 +181,8 @@ export function openAppModal({ title, subtitle = "", body, actions = [] }) {
         </div>
         <button class="icon-btn icon-btn-light" data-modal-close title="Close" aria-label="Close"><i class="ph ph-x"></i></button>
       </header>
-      <div class="modal-body">${body}</div>
-      ${actions.length ? `<footer class="modal-actions">${actions.map((a,i)=>`<button class="btn ${a.className ?? "btn-quiet"}" data-modal-action="${i}" ${a.disabled ? "disabled" : ""}>${a.icon ? `<i class="ph ${a.icon}"></i>` : ""}${escapeHtml(a.label)}</button>`).join("")}</footer>` : ""}
-    </section>`;
+      <div class="modal-body">${body}</div>${actions.length ? `<footer class="modal-actions">${actions.map((a,i)=>`<button class="btn ${a.className ?? "btn-quiet"}" style="${a.style || ''}" data-modal-action="${i}" ${a.disabled ? "disabled" : ""}>${a.icon ? `<i class="ph ${a.icon}" style="font-size: 22px; margin-right: 2px;"></i>` : ""}${escapeHtml(a.label)}</button>`).join("")}</footer>` : ""}
+        </section>`;
   document.body.appendChild(root);
   document.body.classList.add("modal-open");
   const close = () => { root.remove(); document.body.classList.remove("modal-open"); document.removeEventListener("keydown", esc); };

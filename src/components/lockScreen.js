@@ -10,7 +10,7 @@ export async function renderStaffLogin({ mount, onLogin }) {
 
   mount.innerHTML = `
     <style>
-      .saas-landing { min-height: 100vh; background: radial-gradient(circle at 50% 0%, var(--sage-200) 0%, var(--cream-100) 40%); display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: var(--ui-font); padding: 24px; position: relative; overflow: hidden; }
+      .saas-landing { min-height: 100vh; background: radial-gradient(circle at 50% 0%, var(--sage-200) 0%, var(--cream-100) 40%); display: flex; flex-direction: column; align-items: center; justify-content: center; font-family: var(--ui-font); padding: 24px 24px 80px 24px; position: relative; overflow-y: auto; overflow-x: hidden; }
       
       /* Ambient Floating Orbs */
       .bg-orb-1 { position: absolute; top: -150px; left: -100px; width: 500px; height: 500px; background: radial-gradient(circle, rgba(201,164,90,0.12) 0%, transparent 70%); border-radius: 50%; pointer-events: none; }

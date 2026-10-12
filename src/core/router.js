@@ -30,16 +30,14 @@ export async function renderRoute(mount) {
     const { getSession } = await import("./supabase.js");
     const session = await getSession();
     
-    // Check if there is a session AND it is actively verified for this specific browser tab session
-    const isSessionVerified = session && sessionStorage.getItem("rms_staff_active") === "true";
-    
-    if (!isSessionVerified) {
+    // 🔒 FAULT TOLERANCE FIX: If a Supabase session exists in persistent memory, 
+    // instantly grant access to the POS floor. If they attempt to enter the Admin area, 
+    // the secondary 6-Digit PIN lock will automatically catch them.
+    if (!session) {
        const { renderStaffLogin } = await import("../components/lockScreen.js");
        const cleanup = await renderStaffLogin({
            mount,
            onLogin: () => {
-               // Mark this browser tab as securely authenticated
-               sessionStorage.setItem("rms_staff_active", "true");
                window.dispatchEvent(new Event("rms:navigate"));
            }
        });
@@ -59,13 +57,9 @@ export function startRouter({ mount }) {
   if (started) return;
   started = true;
 
-  // STRICT SECURITY: Force sign-out on fresh launch (new tab/window) to ensure staff always log in
-  const isCustomer = new URLSearchParams(location.search).has("table");
-  if (!isCustomer && !sessionStorage.getItem("rms_staff_active")) {
-     import("./supabase.js").then(({ supabase }) => {
-         if (supabase) supabase.auth.signOut();
-     });
-  }
+  // 🔒 FAULT TOLERANCE: Aggressive signOut() removed.
+  // The underlying Supabase token persists across power outages.
+  // Staff only need to enter their fast 6-digit PIN to unlock the screen.
 
   const rerender = () => renderRoute(mount).catch(error => {
     console.error(error);

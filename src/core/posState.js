@@ -42,11 +42,35 @@ export function createPOSState(initial = {}) {
   const cart = new Map();
   const listeners = new Set();
 
+  // 💾 POWER OUTAGE RECOVERY: Secure Local Persistence
+  const getDraftKey = () => `rms.draft.${window.__ACTIVE_TENANT__?.id || 'sys'}.${orderType}.${tableId || 'none'}`;
+  
+  const saveDraft = () => {
+    const items = [...cart.values()];
+    if (items.length > 0) localStorage.setItem(getDraftKey(), JSON.stringify(items));
+    else localStorage.removeItem(getDraftKey());
+  };
+
+  const loadDraft = () => {
+    cart.clear();
+    try {
+      const saved = localStorage.getItem(getDraftKey());
+      if (saved) JSON.parse(saved).forEach(item => cart.set(item.id, item));
+    } catch (e) { console.warn("Draft restore failed", e); }
+  };
+
   const snapshot = () => {
     const items = [...cart.values()].map(item => ({ ...item }));
     return { items, orderType, tableId, totals: calculateTotals(items, settings) };
   };
-  const emit = () => listeners.forEach(listener => listener(snapshot()));
+  
+  const emit = () => {
+    saveDraft(); // Instantly save to disk on every single tap
+    listeners.forEach(listener => listener(snapshot()));
+  };
+
+  // Restore initial state on load
+  loadDraft();
 
   return {
     subscribe(listener) { listeners.add(listener); listener(snapshot()); return () => listeners.delete(listener); },
@@ -55,9 +79,14 @@ export function createPOSState(initial = {}) {
     setOrderType(next) {
       orderType = next === "takeaway" ? "takeaway" : "dine_in";
       if (orderType === "takeaway") tableId = null;
+      loadDraft(); // Magically switch cart memory when changing modes
       emit();
     },
-    setTable(table) { tableId = table?.id ?? null; emit(); },
+    setTable(table) { 
+      tableId = table?.id ?? null; 
+      loadDraft(); // Magically switch cart memory when switching between tables
+      emit(); 
+    },
     addProduct(product) {
       if (!product?.id) return;
       const current = cart.get(product.id);

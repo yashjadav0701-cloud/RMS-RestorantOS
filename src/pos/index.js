@@ -395,7 +395,9 @@ export async function render({ mount }) {
   }
 
   const tenantFilter = `restaurant_id=eq.${activeTenantId}`;
-  realtimeChannel = supabase.channel(`pos-live-updates-${activeTenantId}`)
+  // FIX: Appended random UUID to the channel name to prevent Supabase lifecycle collision crashes,
+  // while strictly keeping the tenantFilter to ensure data isolation!
+  realtimeChannel = supabase.channel(`pos-live-updates-${activeTenantId}-${crypto.randomUUID()}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "orders", filter: tenantFilter }, payload => {
         window.dispatchEvent(new Event("ff_live_update"));
       })
@@ -704,6 +706,8 @@ export async function render({ mount }) {
         dropdown?.classList.remove("active");
         toggleBtn?.classList.remove("open");
         renderProducts();
+        // UI Polish: Smoothly scroll back to top when a filter is applied
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       });
     });
 
@@ -716,6 +720,8 @@ export async function render({ mount }) {
         
         window.history.pushState({ view: "cuisine", cuisine: activeCuisine }, "", "#" + encodeURIComponent(activeCuisine));
         renderProducts();
+        // UI Polish: Smoothly scroll back to top when switching cuisines
+        window.scrollTo({ top: 0, behavior: 'smooth' });
       });
     });
 
@@ -859,6 +865,23 @@ export async function render({ mount }) {
 
     const scroller = area.querySelector("#pos-product-container");
     if (scroller) {
+      // APP-LIKE PULL-TO-REFRESH GESTURE
+      let touchStartY = 0;
+      scroller.addEventListener("touchstart", e => {
+         if (scroller.scrollTop <= 0) touchStartY = e.touches[0].clientY;
+      }, { passive: true });
+
+      scroller.addEventListener("touchend", e => {
+         if (scroller.scrollTop <= 0 && touchStartY > 0) {
+            const touchEndY = e.changedTouches[0].clientY;
+            if (touchEndY - touchStartY > 120) { // If dragged down more than 120px
+                showToast("Refreshing...", "Syncing live menu.");
+                setTimeout(() => window.location.reload(), 400);
+            }
+         }
+         touchStartY = 0;
+      }, { passive: true });
+
       let lastScroll = 0;
       scroller.addEventListener("scroll", e => {
         const current = e.target.scrollTop;
@@ -1157,7 +1180,8 @@ export async function render({ mount }) {
                             } else {
                           const { data: sess } = await supabase.from("dining_sessions").select("id").eq("table_id", current_state.tableId).in("status", ["open", "bill_requested"]).maybeSingle();
                           if (sess) {
-                            const { error: updateError } = await supabase.rpc("mark_session_bill_ready", { p_session_id: sess.id });
+                            // FAST-TRACK WORKFLOW: Generating the final bill as an Admin immediately settles and closes the table.
+                            const { error: updateError } = await supabase.rpc("complete_session_payment", { p_session_id: sess.id, p_payment_method: "cash" });
                             if (updateError) throw updateError;
                           }
                         }

@@ -632,6 +632,26 @@ async function renderAdminWorkspace(mount) {
     }
   });
 
+  // APP-LIKE PULL-TO-REFRESH GESTURE (ADMIN WORKSPACE)
+  const adminContent = mount.querySelector(".admin-content");
+  if (adminContent) {
+    let touchStartY = 0;
+    adminContent.addEventListener("touchstart", e => {
+      if (adminContent.scrollTop <= 0) touchStartY = e.touches[0].clientY;
+    }, { passive: true });
+
+    adminContent.addEventListener("touchend", e => {
+      if (adminContent.scrollTop <= 0 && touchStartY > 0) {
+        const touchEndY = e.changedTouches[0].clientY;
+        if (touchEndY - touchStartY > 120) { // If dragged down more than 120px
+          const refreshBtn = mount.querySelector("#admin-refresh");
+          if (refreshBtn) refreshBtn.click(); // Triggers the soft-refresh loader securely!
+        }
+      }
+      touchStartY = 0;
+    }, { passive: true });
+  }
+
   mount.querySelector("#admin-section-nav").addEventListener("click", event => {
     const b = event.target.closest("[data-section]");
     if (!b) return;
@@ -784,17 +804,16 @@ async function renderAdminWorkspace(mount) {
         // Fetch orders, nested items, AND the status of their associated dining session
         const { data: rawOrders, error } = await supabase.from("orders")
           .select("*, order_items(*), dining_sessions(status)")
-          .eq("restaurant_id", window.__ACTIVE_TENANT__.id) /* THE FIX: Explicitly isolates orders to the logged-in restaurant */
+          .eq("restaurant_id", window.__ACTIVE_TENANT__.id) 
           .order("created_at", { ascending: false })
           .limit(150);
           
         if (error) throw error;
         
-        // LOGIC FIX: Only show Takeaway orders, or Dine-In orders where the table session is fully 'closed'.
-        // This hides active eating tables from the "Past Bills" ledger!
+        // Ensure requested bills show up in Orders so Admins can settle them securely
         const orders = rawOrders.filter(o => 
             o.order_type === 'takeaway' || 
-            (o.dining_sessions && o.dining_sessions.status === 'closed')
+            (o.dining_sessions && ['closed', 'bill_requested', 'bill_ready'].includes(o.dining_sessions.status))
         );
         
         if (!orders || orders.length === 0) {
@@ -813,8 +832,10 @@ async function renderAdminWorkspace(mount) {
 
       list.innerHTML = orders.map(o => {
         const orderDate = new Date(o.created_at);
-        // It is only "New" if it is recent AND the admin hasn't clicked it yet
-        const isNew = orderDate > twelveHoursAgo && !seenOrders.has(o.id);
+        
+        // HIGHLIGHT FIX: Unpaid table bills stay "New" until 'Paid' is clicked and the table closes.
+        const isUnpaidTable = o.dining_sessions && ['bill_requested', 'bill_ready'].includes(o.dining_sessions.status);
+        const isNew = isUnpaidTable || (orderDate > twelveHoursAgo && !seenOrders.has(o.id));
         
         return `
         <article class="admin-order-data-row" style="${isNew ? 'border-color: var(--gold-400); background: var(--gold-100); box-shadow: 0 4px 16px rgba(201,164,90,0.2);' : ''}">
@@ -851,6 +872,19 @@ async function renderAdminWorkspace(mount) {
         
         if (del) deleteOrder(orders.find(x => x.id === del.dataset.deleteOrder));
       });
+
+      // THE AUTO-OPEN HANDOFF: Automatically opens the receipt if navigated from an Amber Table Alert
+      if (window.__autoOpenOrderTableId) {
+          const targetTableId = window.__autoOpenOrderTableId;
+          window.__autoOpenOrderTableId = null;
+          const latestOrder = orders.find(o => o.table_id === targetTableId || o.dining_sessions?.table_id === targetTableId);
+          if (latestOrder) {
+               showAdminReceiptPreview(latestOrder);
+          } else {
+               showToast("Order Not Found", "No items were added to this table's session.", "error");
+          }
+      }
+
     } catch (err) {
       list.innerHTML = `<div class="empty-state"><i class="ph ph-warning-circle"></i><strong>Error loading orders</strong><span>${escapeHtml(err.message)}</span></div>`;
     }
@@ -941,13 +975,8 @@ async function renderAdminWorkspace(mount) {
       </article>
     `;
 
-    const modal = openAppModal({
-      title: `Order #${order.order_number} Receipt`,
-      subtitle: "Reprint, download, or view historical bill details.",
-      body: `<div class="receipt-preview-container">${receiptHTML}</div>`,
-      actions: [
-        { label: "Close", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() },
-        { label: "Download", icon: "ph-download-simple", className: "btn-quiet", onClick: async ({ root, button }) => {
+    const actionsList = [
+        { label: "PDF", icon: "ph-bold ph-download-simple", className: "btn-quiet", style: "color: var(--forest-950); font-weight: 900;", onClick: async ({ root, button }) => {
             const element = root.querySelector("#thermal-receipt-content");
             button.disabled = true;
             const originalText = button.innerHTML;
@@ -992,11 +1021,43 @@ async function renderAdminWorkspace(mount) {
               button.innerHTML = originalText;
             }
         }},
-        { label: "Print", icon: "ph-printer", className: "btn-primary", onClick: () => {
+        { label: "Print", icon: "ph-bold ph-printer", className: "btn-primary", style: "background: var(--forest-950); border-color: var(--forest-950); font-weight: 900;", onClick: () => {
             const host = document.querySelector("#receipt-print-host");
             if (host) { host.innerHTML = modal.root.querySelector("#thermal-receipt-content").outerHTML; window.print(); }
         }}
-      ]
+    ];
+
+    // THE CLOSING LOOPHOLE FIX: If the bill is actively requested, let Admin mark it paid securely right here!
+    if (order.dining_sessions && ['bill_requested', 'bill_ready'].includes(order.dining_sessions.status)) {
+        actionsList.push({
+             label: "Paid", 
+             icon: "ph-bold ph-check-circle", 
+             className: "btn-primary", 
+             style: "background: var(--success); border-color: var(--success); font-weight: 900;",
+             onClick: async ({ close, button }) => {
+                 button.disabled = true;
+                 const og = button.innerHTML;
+                 button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Processing...`;
+                 try {
+                     const { error } = await supabase.rpc("complete_session_payment", { p_session_id: order.session_id, p_payment_method: "cash" });
+                     if (error) throw error;
+                     showToast("Table Closed", `Payment recorded successfully.`, "success");
+                     close();
+                     reload();
+                 } catch(err) {
+                     showToast("Error", err.message, "error");
+                     button.disabled = false;
+                     button.innerHTML = og;
+                 }
+             }
+        });
+    }
+
+    const modal = openAppModal({
+      title: `Order #${order.order_number} Receipt`,
+      subtitle: order.dining_sessions && ['bill_requested', 'bill_ready'].includes(order.dining_sessions.status) ? "Review the customer's tab and close the table to accept payment." : "Reprint, download, or view historical bill details.",
+      body: `<div class="receipt-preview-container">${receiptHTML}</div>`,
+      actions: actionsList
     });
 
     if (settings.upi_id && globalThis.QRCode) {
@@ -1186,30 +1247,9 @@ async function renderAdminWorkspace(mount) {
     const activeTables = tables.filter(t => t.is_active).length;
     const billRequests = sessions.filter(s => s.status === "bill_requested").length;
     
-    // Inject the Dynamic Customer Activity Inbox
-    const alertsHtml = window.__adminAlerts && window.__adminAlerts.length > 0 ? `
-      <section class="admin-panel" style="margin-bottom: 16px; border-color: var(--gold-400); background: var(--gold-100); box-shadow: 0 4px 16px rgba(201,164,90,0.2);">
-         <div class="panel-head" style="margin-bottom: 12px; align-items: center;">
-           <div><span class="eyebrow" style="color: var(--gold-600);">Customer Activity Inbox</span><h2 style="color: var(--forest-950); display: flex; align-items: center; gap: 8px; margin-top: 4px;"><i class="ph-fill ph-bell-ringing qty-pulse" style="color: var(--gold-500);"></i> Needs Attention</h2></div>
-           <button class="btn btn-quiet btn-small" id="clear-admin-alerts" style="background: #fff; border-color: var(--gold-400); color: var(--forest-900); font-weight: 800; cursor: pointer;">Clear Inbox</button>
-         </div>
-         <div class="quick-action-grid">
-           ${window.__adminAlerts.map((a, index) => `
-             <button class="quick-action" data-alert-index="${index}" ${a.tableId ? `data-alert-table-id="${escapeHtml(a.tableId)}"` : `data-go="orders"`} style="background: #fff; border-left: 4px solid var(--gold-500); grid-template-columns: minmax(0,1fr) auto; border-radius: 10px; cursor: pointer; padding: 12px;">
-                <div style="min-width: 0; text-align: left;">
-                  <strong style="font-size: 14px; color: var(--forest-950);">${escapeHtml(a.title)}</strong>
-                  <span style="display: block; font-size: 13px; color: var(--muted); margin-top: 2px;">${escapeHtml(a.message)}</span>
-                </div>
-                <i class="ph-bold ph-arrow-right" style="color: var(--gold-500); font-size: 18px;"></i>
-             </button>
-           `).join("")}
-         </div>
-      </section>
-    ` : "";
-
+    // Erase the old standalone inbox, using native table rows instead
     area.innerHTML = `
-      ${alertsHtml}
-      <section class="admin-hero" style="${alertsHtml ? 'padding-top: 0;' : ''}">
+      <section class="admin-hero" style="padding-top: 0;">
         <div><span class="eyebrow">Control centre</span><h1>Everything in its place.</h1><p>Menu, tables, tax, UPI and table sessions in one restrained workspace.</p></div>
         <div class="admin-hero-mark">
           ${iconUrl 
@@ -1221,63 +1261,80 @@ async function renderAdminWorkspace(mount) {
       <section class="metric-grid">${metricCard("ph-fork-knife", activeProducts, "Active dishes")}${metricCard("ph-armchair", activeTables, "Active tables")}${metricCard("ph-bell", sessions.length, "Open sessions")}${metricCard("ph-receipt", billRequests, "Bill requests")}</section>
       <section class="admin-grid-two">
         <article class="admin-panel"><div class="panel-head"><div><span class="eyebrow">Quick actions</span><h2>Run the floor</h2></div></div><div class="quick-action-grid"><button class="quick-action" data-go="tables"><i class="ph ph-armchair"></i><span><strong>Manage tables</strong><small>Add, edit, delete and print QR codes.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="menu"><i class="ph ph-fork-knife"></i><span><strong>Manage menu</strong><small>Names, descriptions, prices and visibility.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="settings"><i class="ph ph-gear"></i><span><strong>Tax & UPI</strong><small>Keep server-side billing settings current.</small></span><i class="ph ph-arrow-right"></i></button></div></article>
-        <article class="admin-panel"><div class="panel-head"><div><span class="eyebrow">Dining sessions</span><h2>Open tables</h2></div><span class="soft-badge">${sessions.length} active</span></div><div class="session-mini-scroll" id="overview-session-list">
-          ${sessions.length ? sessions.map(s => `
-            <div class="admin-mini-row" style="padding: 16px 12px; border: 1px solid ${s.status === 'bill_requested' ? 'var(--gold-400)' : 'var(--line)'}; border-radius: 14px; margin-bottom: 8px; background: ${s.status === 'bill_requested' ? 'var(--gold-100)' : 'var(--paper)'}; ${s.status === 'bill_requested' ? 'box-shadow: 0 4px 16px rgba(201,164,90,0.25);' : ''}">
-              <div class="mini-row-icon" style="${s.status === 'bill_requested' ? 'background: var(--gold-400); color: #fff;' : ''}"><i class="ph-bold ${s.status === 'bill_requested' ? 'ph-bell-ringing qty-pulse' : 'ph-armchair'}"></i></div>
+        <article class="admin-panel"><div class="panel-head"><div><span class="eyebrow">Dining sessions</span><h2>Open tables</h2></div><button class="btn btn-quiet btn-small" id="clear-admin-alerts" style="padding: 0 10px;">Clear Alerts</button></div><div class="session-mini-scroll" id="overview-session-list">
+          ${sessions.length ? sessions.map(s => {
+            const tableAlert = window.__tableAlerts ? window.__tableAlerts[s.table_id] : null;
+            const isBillReq = s.status === 'bill_requested' || tableAlert?.type === 'bill_requested';
+            const isNewGreen = !isBillReq && tableAlert && ['new_order', 'added_items', 'new_session'].includes(tableAlert.type);
+            const tableNo = escapeHtml(tables.find(t => t.id === s.table_id)?.table_no ?? "—");
+            
+            let rowStyle = "background: var(--paper); border-color: var(--line);";
+            let iconBg = "var(--sage-100)"; let iconColor = "var(--forest-700)";
+            let titleColor = "inherit"; let statusColor = "var(--muted)"; let statusWeight = "normal";
+            let statusText = s.status === "bill_ready" ? "Bill ready" : "Dining session open";
+            let iconClass = "ph-armchair";
+            let badgeHtml = "";
+            let actionBtnHtml = `<button class="btn btn-primary btn-small" data-manage-session="${s.id}">Manage</button>`;
+            
+            if (isBillReq) {
+                rowStyle = "background: var(--gold-100); border-color: var(--gold-400); box-shadow: 0 4px 16px rgba(201,164,90,0.25);";
+                iconBg = "var(--gold-400)"; iconColor = "#fff";
+                titleColor = "var(--gold-600)"; statusColor = "var(--gold-600)"; statusWeight = "800";
+                statusText = tableAlert?.message || "Customer requested final bill!";
+                iconClass = "ph-receipt qty-pulse";
+                badgeHtml = `<span style="background: var(--gold-500); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase;">Needs Bill</span>`;
+                actionBtnHtml = `<button class="btn btn-primary btn-small qty-pulse" style="background: var(--gold-500); color: var(--forest-950); border-color: var(--gold-500);" data-view-bill-order="${s.table_id}">View Bill in Orders</button>`;
+            } else if (isNewGreen) {
+                rowStyle = "background: var(--success-soft); border-color: #a3d9b0; box-shadow: 0 4px 16px rgba(44,108,69,0.15);";
+                iconBg = "var(--success)"; iconColor = "#fff";
+                titleColor = "var(--forest-950)"; statusColor = "var(--success)"; statusWeight = "800";
+                statusText = tableAlert.message || "New activity";
+                iconClass = "ph-bell-ringing qty-pulse";
+                badgeHtml = `<span style="background: var(--success); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase;">NEW</span>`;
+                actionBtnHtml = `<button class="btn btn-primary btn-small" style="background: var(--success); border-color: var(--success);" data-manage-session="${s.id}">Manage</button>`;
+            }
+
+            return `
+            <div class="admin-mini-row" style="padding: 16px 12px; border: 1px solid transparent; ${rowStyle} border-radius: 14px; margin-bottom: 8px;">
+              <div class="mini-row-icon" style="background: ${iconBg}; color:${iconColor};"><i class="ph-bold ${iconClass}"></i></div>
               <div style="flex: 1; margin-left: 14px;">
-                <strong style="font-size: 15px; ${s.status === 'bill_requested' ? 'color: var(--gold-600);' : ''}">Table ${escapeHtml(tables.find(t => t.id === s.table_id)?.table_no ?? "—")}</strong>
-                <span style="font-size: 12px; color: ${s.status === 'bill_requested' ? 'var(--gold-600)' : 'var(--muted)'}; font-weight: ${s.status === 'bill_requested' ? '800' : 'normal'};">${s.status === "bill_requested" ? "Customer requested bill!" : s.status === "bill_ready" ? "Bill ready" : "Dining session open"}</span>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <strong style="font-size: 15px; color: ${titleColor};">Table ${tableNo}</strong>${badgeHtml}
+                </div>
+                <span style="font-size: 12px; color: ${statusColor}; font-weight: ${statusWeight}; margin-top: 4px; display: block;">${statusText}</span>
               </div>
               <div style="display: flex; align-items: center; gap: 14px;">
-                <button class="${s.status === 'bill_requested' ? 'btn btn-primary btn-small qty-pulse' : 'btn btn-primary btn-small'}" data-manage-session="${s.id}">Manage</button>
+                ${actionBtnHtml}
               </div>
-            </div>
-          `).join("") : `<div class="empty-state compact"><i class="ph ph-circle-wavy-check"></i><strong>No open table sessions</strong><span>The floor is currently clear.</span></div>`}
+            </div>`;
+          }).join("") : `<div class="empty-state compact"><i class="ph ph-circle-wavy-check"></i><strong>No open table sessions</strong><span>The floor is currently clear.</span></div>`}
         </div></article>
       </section>`;
     
     area.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => { section = b.dataset.go; updateNavUI(); renderSection(); }));
     
-    // INTELLIGENT ALERT ROUTING & DISMISSAL
-    area.querySelectorAll("[data-alert-index]").forEach(btn => {
-      btn.addEventListener("click", () => {
-         // 1. Remove the alert from the inbox instantly
-         const idx = Number(btn.dataset.alertIndex);
-         if (window.__adminAlerts && window.__adminAlerts[idx]) {
-             window.__adminAlerts.splice(idx, 1);
-             window.__unreadAdminCount = window.__adminAlerts.length;
-             if (window.updateGlobalNotificationBadge) window.updateGlobalNotificationBadge();
-         }
-
-         // 2. Route to the correct destination
-         const tId = btn.dataset.alertTableId;
-         if (tId) {
-             const table = tables.find(x => x.id === tId);
-             const session = sessions.find(x => x.table_id === tId && x.status !== 'closed');
-             
-             if (table && session) {
-                 openAdminTableManager(table, session);
-                 renderOverview(); // Update UI to hide the alert box seamlessly
-             } else {
-                 section = "orders"; 
-                 updateNavUI(); 
-                 renderSection();
-             }
-         } else {
-             section = "orders"; 
-             updateNavUI(); 
-             renderSection();
-         }
-      });
-    });
-    
     area.querySelector("#overview-session-list")?.addEventListener("click", e => {
       const row = e.target.closest("[data-manage-session]");
-      if (!row) return;
-      const session = sessions.find(x => x.id === row.dataset.manageSession);
-      const table = tables.find(x => x.id === session?.table_id);
-      if (table && session) openAdminTableManager(table, session);
+      const viewBill = e.target.closest("[data-view-bill-order]");
+
+      if (row) {
+          const session = sessions.find(x => x.id === row.dataset.manageSession);
+          const table = tables.find(x => x.id === session?.table_id);
+          if (table && session) {
+              if (window.clearTableAlert) window.clearTableAlert(table.id); // Clear Green highlight immediately
+              openAdminTableManager(table, session);
+              renderOverview(); // Update UI
+          }
+      }
+
+      if (viewBill) {
+          const tableId = viewBill.dataset.viewBillOrder;
+          if (window.clearTableAlert) window.clearTableAlert(tableId); // Clear Amber highlight immediately
+          window.__autoOpenOrderTableId = tableId; // Instruct Orders tab to auto-open receipt
+          section = "orders";
+          updateNavUI();
+          renderSection();
+      }
     });
     
     area.querySelector("#clear-admin-alerts")?.addEventListener("click", () => {
@@ -1622,29 +1679,41 @@ async function renderAdminWorkspace(mount) {
 
     list.innerHTML = tables.length ? tables.map(t => {
       const openSession = activeSessions.find(s => s.table_id === t.id);
-      const isBillReq = openSession?.status === "bill_requested";
+      const tableAlert = window.__tableAlerts ? window.__tableAlerts[t.id] : null;
+      const isBillReq = openSession?.status === "bill_requested" || tableAlert?.type === "bill_requested";
+      const isNewGreen = !isBillReq && tableAlert && ["new_order", "added_items", "new_session"].includes(tableAlert.type);
+
+      let cardStyle = "";
+      if (isBillReq) cardStyle = "background: var(--gold-100); border-color: var(--gold-400); box-shadow: 0 4px 16px rgba(201,164,90,0.25);";
+      else if (isNewGreen) cardStyle = "background: var(--success-soft); border-color: #a3d9b0; box-shadow: 0 4px 16px rgba(44,108,69,0.15);";
+      else if (openSession) cardStyle = "background: var(--danger-soft); border-color: #f1c7c4;";
       
       return `
-        <article class="table-admin-card ${isBillReq ? 'bill-requested-card' : openSession ? 'occupied-card' : ''} ${t.is_active ? "" : "inactive"}">
+        <article class="table-admin-card ${t.is_active ? "" : "inactive"}" style="${cardStyle}">
           <div class="table-badge">
-            <i class="ph-bold ph-armchair"></i>
+            <i class="ph-bold ${isBillReq ? 'ph-receipt qty-pulse' : isNewGreen ? 'ph-bell-ringing qty-pulse' : 'ph-armchair'}" style="${isBillReq ? 'color: var(--gold-600);' : isNewGreen ? 'color: var(--success);' : openSession ? 'color: var(--danger);' : ''}"></i>
             <strong>${escapeHtml(t.table_no)}</strong>
+            ${isNewGreen ? `<span style="background: var(--success); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; margin-left: 8px;">NEW</span>` : ''}
+            ${isBillReq ? `<span style="background: var(--gold-500); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; margin-left: 8px;">BILL</span>` : ''}
           </div>
           <div class="table-card-main">
             <div>
               <span class="eyebrow">Capacity: ${Number(t.capacity)}</span>
-              ${openSession 
-                ? `<strong style="color: var(--danger);">Occupied</strong>`
-                : `<strong>Empty</strong>`
-              }
+              ${isBillReq ? `<strong style="color: var(--gold-600);">${tableAlert?.message || 'Needs Bill'}</strong>` :
+                isNewGreen ? `<strong style="color: var(--success);">${tableAlert.message}</strong>` :
+                openSession ? `<strong style="color: var(--danger);">Occupied</strong>` : `<strong>Empty</strong>`}
             </div>
-            ${openSession
-              ? `<span class="table-state active" style="color: var(--danger);"><span></span>Session Active</span>`
+            ${openSession || isBillReq || isNewGreen
+              ? `<span class="table-state active" style="${isNewGreen ? 'color: var(--success);' : isBillReq ? 'color: var(--gold-600);' : 'color: var(--danger);'}"><span><div style="background:currentColor;width:6px;height:6px;border-radius:50%;"></div></span>Session Active</span>`
               : `<span class="table-state ${t.is_active ? "active" : "inactive"}"><span></span>${t.is_active ? "Ready" : "Hidden"}</span>`
             }
           </div>
           <div class="table-card-actions">
-            ${openSession
+            ${isBillReq
+              ? `<button class="btn btn-primary btn-small qty-pulse" style="background: var(--gold-500); color: var(--forest-950); border-color: var(--gold-500);" data-view-bill-order="${t.id}">View Bill in Orders</button>`
+              : isNewGreen
+              ? `<button class="btn btn-primary btn-small" style="background: var(--success); border-color: var(--success);" data-manage-table="${t.id}">Manage</button>`
+              : openSession
               ? `<button class="btn btn-primary btn-small" data-manage-table="${t.id}"><i class="ph-bold ph-list-magnifying-glass"></i> Manage</button>`
               : `
                 ${t.is_active ? `<button class="icon-btn icon-btn-light" data-qr="${t.id}" title="Table QR"><i class="ph-bold ph-qr-code"></i></button>` : ""}
@@ -1664,14 +1733,29 @@ async function renderAdminWorkspace(mount) {
       const del = e.target.closest("[data-delete-table]");
       const qr = e.target.closest("[data-qr]");
       const manageTbl = e.target.closest("[data-manage-table]");
+      const viewBill = e.target.closest("[data-view-bill-order]");
       
       if (edit) { const t = tables.find(x => x.id === edit.dataset.editTable); if (t) openTableEditor(t); }
       if (del) { const t = tables.find(x => x.id === del.dataset.deleteTable); if (t) openTableDelete(t); }
       if (qr) { const t = tables.find(x => x.id === qr.dataset.qr); if (t) openTableQR(t); }
+      
       if (manageTbl) { 
         const t = tables.find(x => x.id === manageTbl.dataset.manageTable);
         const s = activeSessions.find(x => x.table_id === t.id);
-        if (t && s) openAdminTableManager(t, s); 
+        if (t && s) {
+            if (window.clearTableAlert) window.clearTableAlert(t.id);
+            openAdminTableManager(t, s);
+            renderTables(); // instantly clear the UI highlight behind modal
+        }
+      }
+      
+      if (viewBill) {
+          const tableId = viewBill.dataset.viewBillOrder;
+          if (window.clearTableAlert) window.clearTableAlert(tableId);
+          window.__autoOpenOrderTableId = tableId;
+          section = "orders";
+          updateNavUI();
+          renderSection();
       }
     });
   }
@@ -2629,51 +2713,51 @@ async function renderAdminWorkspace(mount) {
 
   // --- LIVE MONITORING WEBSOCKET (STRICT TENANT ISOLATION) ---
   const tenantFilter = `restaurant_id=eq.${window.__ACTIVE_TENANT__.id}`;
-  const realtimeChannel = supabase.channel(`admin-live-updates-${window.__ACTIVE_TENANT__.id}`)
-    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders', filter: tenantFilter }, async payload => {
-      // 1. INBOX NOTIFICATION: Customer placed a new order
-      if (payload.new?.note === "Customer Self-Order") {
+  
+  const realtimeChannel = supabase.channel(`admin-live-updates-${window.__ACTIVE_TENANT__.id}-${crypto.randomUUID()}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: tenantFilter }, async payload => {
+      if (payload.eventType === 'INSERT' && payload.new?.note === "Customer Self-Order") {
           const tableNo = window.__FF_TABLES__?.find(t => t.id === payload.new.table_id)?.table_no || "Unknown";
-          window.__adminAlerts = window.__adminAlerts || [];
-          window.__adminAlerts.push({ title: "New Customer Order", message: `Table ${tableNo} sent items to the kitchen.`, tableId: payload.new.table_id });
-          if (window.updateGlobalNotificationBadge) window.updateGlobalNotificationBadge();
+          if (window.setTableAlert) window.setTableAlert(payload.new.table_id, "new_order", "New Order Received");
           showToast("New Order", `Table ${tableNo} placed an order!`, "success");
       }
+      
       if (section === "orders") renderOrders();
-      else if (section === "overview") await reload();
+      else if (section === "overview" || section === "tables") await reload(); 
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'dining_sessions', filter: tenantFilter }, async payload => {
       const tableNo = window.__FF_TABLES__?.find(t => t.id === (payload.new?.table_id || payload.old?.table_id))?.table_no || "Unknown";
 
-      // 🌟 THE FIX: Catch brand new sessions (INSERT) and instantly notify the Admin!
       if (payload.eventType === 'INSERT' && payload.new?.status === 'open') {
+         if (window.setTableAlert) window.setTableAlert(payload.new.table_id, "new_session", "Table Opened");
          showToast("Table Opened", `Table ${tableNo} was just seated.`);
       }
       
-      // 2. INBOX NOTIFICATION: Customer requested the bill
-      if (payload.eventType === 'UPDATE' && payload.new?.status === 'bill_requested' && payload.old?.status !== 'bill_requested') {
-         window.__adminAlerts = window.__adminAlerts || [];
-         window.__adminAlerts.push({ title: "Bill Requested", message: `Table ${tableNo} is ready to pay.`, tableId: payload.new.table_id });
-         if (window.updateGlobalNotificationBadge) window.updateGlobalNotificationBadge();
-         showToast("Bill Requested", `Table ${tableNo} requested their bill!`, "success");
+      if (payload.eventType === 'UPDATE' && payload.new?.status === "bill_requested" && payload.old?.status !== "bill_requested") {
+         if (window.setTableAlert) window.setTableAlert(payload.new.table_id, "bill_requested", "Bill Requested");
+         showToast("Bill Requested", `Table ${tableNo} finalized their meal!`, "success");
          
          const ordersNavBtn = mount.querySelector('[data-section="orders"]');
          if (ordersNavBtn) {
            ordersNavBtn.style.color = "var(--gold-600)";
            ordersNavBtn.classList.remove("qty-pulse"); void ordersNavBtn.offsetWidth; ordersNavBtn.classList.add("qty-pulse");
          }
+      } else if (payload.eventType === 'UPDATE' && payload.new?.status === "closed" && payload.old?.status !== "closed") {
+         showToast("Table Closed", `Table ${tableNo} was finalized and is now free.`, "success");
       }
       
-      if (payload.eventType === 'UPDATE' && payload.new?.status === "closed" && payload.old?.status !== "closed") {
-        showToast("Table Closed", `Table ${tableNo} was finalized and is now free.`, "success");
-      }
-      
-      // 🌟 INSTANT REFRESH: Magically draws the table block on screen the millisecond a session is created
-      if (section === "overview" || section === "tables") {
-         setTimeout(async () => await reload(), 200);
+      // CRITICAL FIX: Force the UI to dynamically redraw the live floor the millisecond the status changes!
+      if (section === "overview" || section === "tables" || section === "orders") {
+          setTimeout(async () => await reload(), 150);
       }
     })
-    .subscribe();
+    .subscribe(status => {
+      const btn = mount.querySelector("#admin-refresh i");
+      if (btn) {
+         if (status === "SUBSCRIBED") btn.style.color = "var(--success)";
+         else btn.style.color = "";
+      }
+    });
 
   renderSection();
   
