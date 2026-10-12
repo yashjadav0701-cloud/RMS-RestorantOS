@@ -2719,7 +2719,7 @@ h3 {
     position: relative !important;
     z-index: 10 !important;
     background: transparent !important;
-    margin: 0 0 16px 0 !important;
+    margin: 24px 0 16px 0 !important; /* CHANGE 24px HERE TO ADJUST THE GAP ABOVE THE PILLS */
     padding: 0 !important;
     width: 100% !important;
     display: flex !important;
@@ -2765,7 +2765,7 @@ h3 {
 /* 4. Precision Mobile Offsets (Matches Topbar shrink heights exactly) */
 @media (max-width: 720px) {
     #parity-unified-header, .pos-search-overlay { top: 68px !important; }
-    .pos-content, .customer-stage { padding-top: 2px !important; } 
+    .pos-content, .customer-stage { padding-top: 16px !important; } /* INCREASING THIS PUSHES THE ENTIRE MENU DOWN */
 }
 @media (max-width: 480px) {
     #parity-unified-header, .pos-search-overlay { top: 56px !important; }
