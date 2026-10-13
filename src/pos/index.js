@@ -1555,8 +1555,14 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
                                  }
                               }).subscribe();
                               
-                            const pollFallback = setInterval(async () => {
-                                const { data } = await supabase.from("dining_sessions").select("status").eq("table_id", current_state.tableId).order('created_at', {ascending: false}).limit(1).maybeSingle();
+                              const pollFallback = setInterval(async () => {
+                                // 🔒 SECURITY FIX: Pass the session_token and tenant ID so RLS allows the customer to read the status
+                                const { data } = await supabase.from("dining_sessions")
+                                    .select("status")
+                                    .eq("session_token", token)
+                                    .eq("restaurant_id", window.__ACTIVE_TENANT__.id)
+                                    .maybeSingle();
+                                    
                                 if (data?.status === "closed") {
                                     clearInterval(pollFallback);
                                     showThankYouUI();
