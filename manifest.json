@@ -1,23 +1,23 @@
 {
-  "name": "Restaurant Management System - POS and QR Ordering",
-  "short_name": "RMS",
+  "name": "Table Forge System",
+  "short_name": "Table Forge",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FCFCF9",
   "theme_color": "#122216",
   "icons": [
     {
-      "src": "/assets/images/app_icon.svg?v=2.4.4",
+      "src": "/assets/images/app_icon.svg?v=2.4.5",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/assets/images/app_icon.svg?v=2.4.4",
+      "src": "/assets/images/app_icon.svg?v=2.4.5",
       "sizes": "512x512",
       "type": "image/png"
     },
     {
-      "src": "/assets/images/app_icon.svg?v=2.4.4",
+      "src": "/assets/images/app_icon.svg?v=2.4.5",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

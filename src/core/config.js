@@ -15,7 +15,7 @@ export const ROUTES = Object.freeze({
  * would allow localhost / Vercel preview URLs to accidentally become
  * permanent restaurant QR destinations.
  */
-export const PUBLIC_APP_URL = "https://rms-restorantos.vercel.app";
+export const PUBLIC_APP_URL = "https://tableforgesystem.vercel.app";
 
 /**
  * Returns the permanent customer menu URL for a specific table.
@@ -36,7 +36,7 @@ export function getCustomerTableUrl(tableId) {
 }
 
 export const DEFAULT_SETTINGS = Object.freeze({
-  restaurant_name: "Four Flavours",
+  restaurant_name: "Table Forge System",
   upi_id: "",
   cgst_rate: 2.5,
   sgst_rate: 2.5,
