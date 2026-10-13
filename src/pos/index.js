@@ -147,50 +147,50 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
                   </div>
                 `;
 
-                const showThankYouUI = () => {
-                     const scr = document.getElementById("live-pending-screen");
-                     if (!scr) return;
-                     scr.innerHTML = `
-                        <style>
-                          @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
-                          @keyframes drawCheck { to { stroke-dashoffset: 0; } }
-                          @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
-                        </style>
-                        <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                          <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
-                              <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
-                              <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
-                            </svg>
-                          </div>
-                          <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
-                          <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
-                          <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                          <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
-                        </div>
-                     `;
-                     window.history.pushState({ locked: true }, "", window.location.href);
-                     window.addEventListener("popstate", () => { window.location.reload(); });
-                };
-
-                const pendingChannel = supabase.channel(`pending-tab-${current_state.tableId}`)
-                  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${current_state.tableId}` }, payload => {
-                     if (payload.new?.status === "closed") {
-                         showThankYouUI();
-                         supabase.removeChannel(pendingChannel);
-                     }
-                  }).subscribe();
-                  
-                const pollFallback = setInterval(async () => {
-                    const { data } = await supabase.from("dining_sessions").select("status").eq("table_id", current_state.tableId).order('created_at', {ascending: false}).limit(1).maybeSingle();
+                // The True Server-Side Verification Engine
+                const checkServerForPayment = async () => {
+                    const { data } = await supabase.from("dining_sessions").select("status").eq("id", mySession.id).maybeSingle();
                     if (data?.status === "closed") {
                         clearInterval(pollFallback);
-                        showThankYouUI();
+                        document.removeEventListener("visibilitychange", visibilityCheck);
                         supabase.removeChannel(pendingChannel);
+                        
+                        document.getElementById("app").innerHTML = `
+                          <style>
+                            @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
+                            @keyframes drawCheck { to { stroke-dashoffset: 0; } }
+                            @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+                          </style>
+                          <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
+                            <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
+                              <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
+                                  <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
+                                  <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
+                                </svg>
+                              </div>
+                              <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
+                              <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
+                              <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                              <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
+                            </div>
+                          </div>
+                        `;
+                        window.history.pushState({ locked: true }, "", window.location.href);
+                        window.addEventListener("popstate", () => { window.location.reload(); });
                     }
-                }, 3000);
+                };
 
-                return () => { clearInterval(pollFallback); supabase.removeChannel(pendingChannel); };
+                const pendingChannel = supabase.channel(`pending-tab-${currentTableObj.id}`)
+                  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `id=eq.${mySession.id}` }, () => checkServerForPayment()).subscribe();
+                  
+                const pollFallback = setInterval(checkServerForPayment, 3000);
+                
+                // Wake-Up Sync: Fires instantly when phone screen turns on
+                const visibilityCheck = () => { if (document.visibilityState === 'visible') checkServerForPayment(); };
+                document.addEventListener("visibilitychange", visibilityCheck);
+
+                return () => { clearInterval(pollFallback); document.removeEventListener("visibilitychange", visibilityCheck); supabase.removeChannel(pendingChannel); };
             }
 
             if (mySession.status === "closed") {
@@ -498,8 +498,6 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
   }
 
   const tenantFilter = `restaurant_id=eq.${activeTenantId}`;
-  // FIX: Appended random UUID to the channel name to prevent Supabase lifecycle collision crashes,
-  // while strictly keeping the tenantFilter to ensure data isolation!
   realtimeChannel = supabase.channel(`pos-live-updates-${activeTenantId}-${crypto.randomUUID()}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "orders", filter: tenantFilter }, payload => {
         window.dispatchEvent(new Event("ff_live_update"));
@@ -508,39 +506,6 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
         window.dispatchEvent(new Event("ff_live_update"));
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: tenantFilter }, payload => {
-        
-        // 🔒 INSTANT UPDATE: If Admin clicks 'Paid', instantly show the polite Thank You screen via WebSocket
-        if (isCustomerMode && payload.new?.status === "closed" && payload.new?.table_id === currentTableObj.id) {
-           document.querySelectorAll('.app-modal').forEach(m => m.remove());
-           document.body.classList.remove('modal-open');
-           
-           // CRITICAL FIX: Do NOT destroy tokens! Preserve them so if the 
-           // customer hits "refresh" they correctly land on the "Session Expired" lock screen!
-           
-           document.getElementById("app").innerHTML = `
-              <style>
-                @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
-                @keyframes drawCheck { to { stroke-dashoffset: 0; } }
-                @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
-              </style>
-              <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
-                <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                  
-                  <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
-                      <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
-                      <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
-                    </svg>
-                  </div>
-
-                  <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
-                  <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
-                  <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                  <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
-                </div>
-              </div>
-           `;
-        }
         window.dispatchEvent(new Event("ff_live_update"));
       })
       .subscribe(status => { const node = mount.querySelector("#pos-connection"); if (!node) return; const live = status === "SUBSCRIBED"; node.innerHTML = `<span class="connection-dot ${live ? "live" : "offline"}"></span>${live ? "Live" : "Offline"}`; });
@@ -1299,7 +1264,6 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
             
             ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
             
-            // Render Payment Pending Screen with Animated Clock
             document.getElementById("app").innerHTML = `
               <style>
                 @keyframes pulsePendingBlue { 0% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(2, 132, 199, 0); } 100% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0); } }
@@ -1320,30 +1284,52 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
                   <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
                   <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}!</p>
                 </div>
-              </div>`;
+              </div>
+            `;
 
-            // Active listener to instantly switch to Thank You on admin confirm
+            // The True Server-Side Verification Engine
+            const checkServerForPayment = async () => {
+                const { data } = await supabase.from("dining_sessions").select("status").eq("table_id", current_state.tableId).order('created_at', {ascending: false}).limit(1).maybeSingle();
+                if (data?.status === "closed") {
+                    clearInterval(pollFallback);
+                    document.removeEventListener("visibilitychange", visibilityCheck);
+                    supabase.removeChannel(pendingChannel);
+                    
+                    document.getElementById("app").innerHTML = `
+                      <style>
+                        @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
+                        @keyframes drawCheck { to { stroke-dashoffset: 0; } }
+                        @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+                      </style>
+                      <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
+                        <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
+                          <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
+                              <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
+                              <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
+                            </svg>
+                          </div>
+                          <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
+                          <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
+                          <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                          <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
+                        </div>
+                      </div>
+                    `;
+                    window.history.pushState({ locked: true }, "", window.location.href);
+                    window.addEventListener("popstate", () => { window.location.reload(); });
+                }
+            };
+
             const pendingChannel = supabase.channel(`pending-tab-${current_state.tableId}`)
-              .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${current_state.tableId}` }, payload => {
-                 if (payload.new?.status === "closed") {
-                     localStorage.removeItem(`rms.session.${current_state.tableId}`);
-                     localStorage.removeItem(`fourflavours.session.${current_state.tableId}`);
-                     
-                     const scr = document.getElementById("live-pending-screen");
-                     if (scr) {
-                         scr.innerHTML = `
-                            <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                              <div class="thank-you-icon" style="font-size: 5rem; color: #16a34a; margin-bottom: 24px;"><i class="ph-fill ph-check-circle"></i></div>
-                              <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Received</h1>
-                              <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
-                              <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                              <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
-                            </div>
-                         `;
-                     }
-                     supabase.removeChannel(pendingChannel);
-                 }
-              }).subscribe();
+              .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${current_state.tableId}` }, () => checkServerForPayment()).subscribe();
+              
+            const pollFallback = setInterval(checkServerForPayment, 3000);
+            
+            // Wake-Up Sync: Fires instantly when phone screen turns on
+            const visibilityCheck = () => { if (document.visibilityState === 'visible') checkServerForPayment(); };
+            document.addEventListener("visibilitychange", visibilityCheck);
+
         } catch(e) {
             showToast("Action Failed", e.message, "error");
             ctx.button.disabled = false;
