@@ -662,26 +662,6 @@ async function renderAdminWorkspace(mount) {
     }
   });
 
-  // APP-LIKE PULL-TO-REFRESH GESTURE (ADMIN WORKSPACE)
-  const adminContent = mount.querySelector(".admin-content");
-  if (adminContent) {
-    let touchStartY = 0;
-    adminContent.addEventListener("touchstart", e => {
-      if (adminContent.scrollTop <= 0) touchStartY = e.touches[0].clientY;
-    }, { passive: true });
-
-    adminContent.addEventListener("touchend", e => {
-      if (adminContent.scrollTop <= 0 && touchStartY > 0) {
-        const touchEndY = e.changedTouches[0].clientY;
-        if (touchEndY - touchStartY > 120) { // If dragged down more than 120px
-          const refreshBtn = mount.querySelector("#admin-refresh");
-          if (refreshBtn) refreshBtn.click(); // Triggers the soft-refresh loader securely!
-        }
-      }
-      touchStartY = 0;
-    }, { passive: true });
-  }
-
   mount.querySelector("#admin-section-nav").addEventListener("click", event => {
     const b = event.target.closest("[data-section]");
     if (!b) return;
