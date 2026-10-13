@@ -149,13 +149,44 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
 
                 // The True Server-Side Verification Engine
                 const checkServerForPayment = async () => {
-                    const { data } = await supabase.from("dining_sessions").select("status").eq("id", mySession.id).maybeSingle();
-                    if (data?.status === "closed") {
-                        clearInterval(pollFallback);
-                        document.removeEventListener("visibilitychange", visibilityCheck);
-                        supabase.removeChannel(pendingChannel);
-                        
-                        document.getElementById("app").innerHTML = `
+                  const { data, error } = await supabase.from("dining_sessions")
+                      .select("status")
+                      .eq("session_token", token)
+                      .eq("restaurant_id", window.__ACTIVE_TENANT__.id)
+                      .maybeSingle();
+                      
+                  if (data?.status === "closed" || (!error && !data)) {
+                      clearInterval(pollFallback);
+                      document.removeEventListener("visibilitychange", visibilityCheck);
+                      supabase.removeChannel(pendingChannel);
+                      window.location.reload();
+                  }
+              };
+
+              const pendingChannel = supabase.channel(`pending-tab-${current_state.tableId}`)
+                .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${current_state.tableId}` }, () => checkServerForPayment()).subscribe();
+                
+              const pollFallback = setInterval(checkServerForPayment, 3000);
+              const visibilityCheck = () => { if (document.visibilityState === 'visible') checkServerForPayment(); };
+              document.addEventListener("visibilitychange", visibilityCheck);
+              checkServerForPayment();
+
+                return () => { clearInterval(pollFallback); document.removeEventListener("visibilitychange", visibilityCheck); supabase.removeChannel(pendingChannel); };
+            }
+
+            if (mySession.status === "closed") {
+                const tabToken = sessionStorage.getItem(tabSessionKey);
+                const isRecentTab = (tabToken === existingToken) || (window.history.state?.locked === true);
+
+                if (isRecentTab) {
+                    const closedDate = new Date(mySession.updated_at || Date.now());
+                    const minutesSinceClosed = (Date.now() - closedDate.getTime()) / (1000 * 60);
+                    const hoursSinceClosed = minutesSinceClosed / 60;
+
+                    // 1. SERVER-SIDE SUCCESS CHECK: If the table was closed less than 15 minutes ago, 
+                    // the database confirms they just paid! Show the Thank You screen instantly.
+                    if (minutesSinceClosed < 15) {
+                        mount.innerHTML = `
                           <style>
                             @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
                             @keyframes drawCheck { to { stroke-dashoffset: 0; } }
@@ -178,30 +209,10 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
                         `;
                         window.history.pushState({ locked: true }, "", window.location.href);
                         window.addEventListener("popstate", () => { window.location.reload(); });
+                        return () => {};
                     }
-                };
 
-                const pendingChannel = supabase.channel(`pending-tab-${currentTableObj.id}`)
-                  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `id=eq.${mySession.id}` }, () => checkServerForPayment()).subscribe();
-                  
-                const pollFallback = setInterval(checkServerForPayment, 3000);
-                
-                // Wake-Up Sync: Fires instantly when phone screen turns on
-                const visibilityCheck = () => { if (document.visibilityState === 'visible') checkServerForPayment(); };
-                document.addEventListener("visibilitychange", visibilityCheck);
-
-                return () => { clearInterval(pollFallback); document.removeEventListener("visibilitychange", visibilityCheck); supabase.removeChannel(pendingChannel); };
-            }
-
-            if (mySession.status === "closed") {
-                const tabToken = sessionStorage.getItem(tabSessionKey);
-                const isRecentTab = (tabToken === existingToken) || (window.history.state?.locked === true);
-
-                if (isRecentTab) {
-                    // Lock the Back button / Ghost refresh!
-                    const closedDate = new Date(mySession.updated_at || Date.now());
-                    const hoursSinceClosed = (Date.now() - closedDate.getTime()) / (1000 * 60 * 60);
-
+                    // 2. OLD SESSION LOCK: If it's been closed for a while, lock the screen completely
                     if (hoursSinceClosed < 12) {
                         const timeString = closedDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
                         const dateString = closedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });

@@ -616,6 +616,11 @@ async function renderAdminWorkspace(mount) {
         else icon.className = icon.className.replace("ph-fill", "ph-bold");
       }
     });
+    
+    // Toggle the Red Notification Dot purely based on active alerts
+    const hasAlerts = Object.keys(window.__tableAlerts || {}).length > 0;
+    const dot = document.querySelector(".hamburger-dot");
+    if (dot) dot.style.display = hasAlerts ? "block" : "none";
   }
 
   mount.querySelector("#admin-menu").addEventListener("click", () => window.__FOUR_FLAVOURS_NAV__?.open());
@@ -892,38 +897,22 @@ async function renderAdminWorkspace(mount) {
               const orderId = view.dataset.viewOrder;
               const targetOrder = orders.find(x => x.id === orderId);
               
-              // 1. Mark as Seen in Orders List
               const updatedSeen = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_orders") || "[]"));
               updatedSeen.add(orderId);
               localStorage.setItem("fourflavours.seen_orders", JSON.stringify([...updatedSeen]));
               
-              // 2. Mark Session as Seen to clear Dashboard alerts
               if (targetOrder?.session_id) {
                   const updatedSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
                   updatedSessions.add(targetOrder.session_id);
                   localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...updatedSessions]));
               }
               
-              if (manageTbl) { 
-        const t = tables.find(x => x.id === manageTbl.dataset.manageTable);
-        const s = activeSessions.find(x => x.table_id === t.id);
-        if (t && s) {
-            if (window.__tableAlerts) delete window.__tableAlerts[t.id];
-            if (window.clearTableAlert) window.clearTableAlert(t.id);
-            openAdminTableManager(t, s);
-            renderTables(); // instantly clear the UI highlight behind modal
-        }
-      }
-      
-      if (viewBill) {
-          const tableId = viewBill.dataset.viewBillOrder;
-          if (window.__tableAlerts) delete window.__tableAlerts[tableId];
-          if (window.clearTableAlert) window.clearTableAlert(tableId);
-          window.__autoOpenOrderTableId = tableId;
-          section = "orders";
-          updateNavUI();
-          renderSection();
-      }
+              // Clear global alert state
+              const tId = targetOrder?.table_id || targetOrder?.dining_sessions?.table_id;
+              if (tId && window.__tableAlerts) delete window.__tableAlerts[tId];
+              if (tId && window.clearTableAlert) window.clearTableAlert(tId);
+              
+              showAdminReceiptPreview(targetOrder);
               renderOrders(); 
             }
             if (del) deleteOrder(orders.find(x => x.id === del.dataset.deleteOrder));
