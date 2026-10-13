@@ -883,8 +883,10 @@ async function renderAdminWorkspace(mount) {
         // 3. Render list with Gold/Green Highlight states
         list.innerHTML = orders.map(o => {
             const orderDate = new Date(o.created_at);
+        
             const isUnpaidTable = o.dining_sessions && ['bill_requested', 'bill_ready'].includes(o.dining_sessions.status);
-            const isNew = isUnpaidTable || (orderDate > twelveHoursAgo && !seenOrders.has(o.id));
+            // FIX: If the bill is marked as seen, the gold tag is removed instantly, regardless of payment status.
+            const isNew = !seenOrders.has(o.id) && (isUnpaidTable || orderDate > twelveHoursAgo);
             
             return `
             <article class="admin-order-data-row" style="${isNew ? 'border-color: var(--gold-400); background: var(--gold-100); box-shadow: 0 4px 16px rgba(201,164,90,0.2);' : ''}">
@@ -908,11 +910,27 @@ async function renderAdminWorkspace(mount) {
             
             if (view) {
               const orderId = view.dataset.viewOrder;
+              const targetOrder = orders.find(x => x.id === orderId);
+              
+              // 1. Mark as Seen in Orders List
               const updatedSeen = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_orders") || "[]"));
               updatedSeen.add(orderId);
               localStorage.setItem("fourflavours.seen_orders", JSON.stringify([...updatedSeen]));
               
-              showAdminReceiptPreview(orders.find(x => x.id === orderId));
+              // 2. Mark Session as Seen to clear Dashboard alerts
+              if (targetOrder?.session_id) {
+                  const updatedSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
+                  updatedSessions.add(targetOrder.session_id);
+                  localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...updatedSessions]));
+              }
+              
+              // 3. CROSS-SYNC: Instantly wipe the Global Alert
+              const tId = targetOrder?.table_id || targetOrder?.dining_sessions?.table_id;
+              if (tId && window.clearTableAlert) {
+                  window.clearTableAlert(tId);
+              }
+              
+              showAdminReceiptPreview(targetOrder);
               renderOrders(); 
             }
             if (del) deleteOrder(orders.find(x => x.id === del.dataset.deleteOrder));
@@ -922,7 +940,25 @@ async function renderAdminWorkspace(mount) {
             const targetTableId = window.__autoOpenOrderTableId;
             window.__autoOpenOrderTableId = null;
             const latestOrder = orders.find(o => o.table_id === targetTableId || o.dining_sessions?.table_id === targetTableId);
-            if (latestOrder) showAdminReceiptPreview(latestOrder);
+            
+            if (latestOrder) {
+                // Mark order as seen
+                const updatedSeen = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_orders") || "[]"));
+                updatedSeen.add(latestOrder.id);
+                localStorage.setItem("fourflavours.seen_orders", JSON.stringify([...updatedSeen]));
+                
+                // Mark session as seen
+                if (latestOrder.session_id) {
+                    const updatedSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
+                    updatedSessions.add(latestOrder.session_id);
+                    localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...updatedSessions]));
+                }
+                
+                showAdminReceiptPreview(latestOrder);
+                
+                // Redraw the list quietly in the background so the Gold highlight vanishes instantly
+                setTimeout(() => renderOrders(), 50); 
+            }
             else showToast("Order Not Found", "No items were added to this table's session.", "error");
         }
 
@@ -1308,8 +1344,11 @@ async function renderAdminWorkspace(mount) {
         <article class="admin-panel"><div class="panel-head"><div><span class="eyebrow">Quick actions</span><h2>Run the floor</h2></div></div><div class="quick-action-grid"><button class="quick-action" data-go="tables"><i class="ph ph-armchair"></i><span><strong>Manage tables</strong><small>Add, edit, delete and print QR codes.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="menu"><i class="ph ph-fork-knife"></i><span><strong>Manage menu</strong><small>Names, descriptions, prices and visibility.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="settings"><i class="ph ph-gear"></i><span><strong>Tax & UPI</strong><small>Keep server-side billing settings current.</small></span><i class="ph ph-arrow-right"></i></button></div></article>
         <article class="admin-panel"><div class="panel-head"><div><span class="eyebrow">Dining sessions</span><h2>Open tables</h2></div><button class="btn btn-quiet btn-small" id="clear-admin-alerts" style="padding: 0 10px;">Clear Alerts</button></div><div class="session-mini-scroll" id="overview-session-list">
           ${sessions.length ? sessions.map(s => {
+            // Check if the Admin has already opened this specific bill
+            const seenSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
             const tableAlert = window.__tableAlerts ? window.__tableAlerts[s.table_id] : null;
-            const isBillReq = s.status === 'bill_requested' || tableAlert?.type === 'bill_requested';
+            // Suppress the DB alert if it has already been seen!
+            const isBillReq = (s.status === 'bill_requested' && !seenSessions.has(s.id)) || tableAlert?.type === 'bill_requested';
             const isNewGreen = !isBillReq && tableAlert && ['new_order', 'added_items', 'new_session'].includes(tableAlert.type);
             const tableNo = escapeHtml(tables.find(t => t.id === s.table_id)?.table_no ?? "—");
             
@@ -1366,25 +1405,42 @@ async function renderAdminWorkspace(mount) {
           const session = sessions.find(x => x.id === row.dataset.manageSession);
           const table = tables.find(x => x.id === session?.table_id);
           if (table && session) {
-              if (window.clearTableAlert) window.clearTableAlert(table.id); // Clear Green highlight immediately
+              if (window.clearTableAlert) window.clearTableAlert(table.id);
               openAdminTableManager(table, session);
-              renderOverview(); // Update UI
+              renderOverview();
           }
       }
 
       if (viewBill) {
           const tableId = viewBill.dataset.viewBillOrder;
-          if (window.clearTableAlert) window.clearTableAlert(tableId); // Clear Amber highlight immediately
-          window.__autoOpenOrderTableId = tableId; // Instruct Orders tab to auto-open receipt
+          if (window.clearTableAlert) window.clearTableAlert(tableId);
+          window.__autoOpenOrderTableId = tableId;
           section = "orders";
           updateNavUI();
           renderSection();
       }
     });
     
-    area.querySelector("#clear-admin-alerts")?.addEventListener("click", () => {
-      if (window.clearGlobalNotification) window.clearGlobalNotification();
-      renderOverview();
+    area.querySelector("#clear-admin-alerts")?.addEventListener("click", async () => {
+      const btn = area.querySelector("#clear-admin-alerts");
+      if (btn) btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Clearing...`;
+
+      try {
+          if (window.clearGlobalNotification) window.clearGlobalNotification();
+          window.__tableAlerts = {};
+          
+          const seenSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
+          if (sessions && sessions.length) {
+              sessions.forEach(s => { seenSessions.add(s.id); });
+              localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...seenSessions]));
+          }
+
+          await reload();
+          showToast("Alerts Cleared", "All notifications and highlights have been reset.", "success");
+      } catch (err) {
+          showToast("Error", err.message, "error");
+          if (btn) btn.innerHTML = `Clear Alerts`;
+      }
     });
   }
 
@@ -1731,8 +1787,10 @@ async function renderAdminWorkspace(mount) {
 
     list.innerHTML = tables.length ? tables.map(t => {
       const openSession = activeSessions.find(s => s.table_id === t.id);
+      const seenSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
       const tableAlert = window.__tableAlerts ? window.__tableAlerts[t.id] : null;
-      const isBillReq = openSession?.status === "bill_requested" || tableAlert?.type === "bill_requested";
+      // Suppress the DB alert if it has already been seen!
+      const isBillReq = (openSession?.status === "bill_requested" && !seenSessions.has(openSession.id)) || tableAlert?.type === "bill_requested";
       const isNewGreen = !isBillReq && tableAlert && ["new_order", "added_items", "new_session"].includes(tableAlert.type);
 
       let cardStyle = "";
@@ -2843,6 +2901,11 @@ async function renderAdminWorkspace(mount) {
          if (window.setTableAlert) window.setTableAlert(payload.new.table_id, "bill_requested", "Bill Requested");
          showToast("Bill Requested", `Table ${tableNo} finalized their meal!`, "success");
          try { playDing(); playDing(); } catch(e){} // DOUBLE AUDIO ALERT FOR BILLS
+         
+         // If a bill is re-requested, we MUST remove it from seen_sessions so it flashes again!
+         const updatedSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
+         updatedSessions.delete(payload.new.id);
+         localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...updatedSessions]));
          
          const ordersNavBtn = mount.querySelector('[data-section="orders"]');
          if (ordersNavBtn) {
