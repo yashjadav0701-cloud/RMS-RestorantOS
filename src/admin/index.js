@@ -924,13 +924,26 @@ async function renderAdminWorkspace(mount) {
                   localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...updatedSessions]));
               }
               
-              // 3. CROSS-SYNC: Instantly wipe the Global Alert
-              const tId = targetOrder?.table_id || targetOrder?.dining_sessions?.table_id;
-              if (tId && window.clearTableAlert) {
-                  window.clearTableAlert(tId);
-              }
-              
-              showAdminReceiptPreview(targetOrder);
+              if (manageTbl) { 
+        const t = tables.find(x => x.id === manageTbl.dataset.manageTable);
+        const s = activeSessions.find(x => x.table_id === t.id);
+        if (t && s) {
+            if (window.__tableAlerts) delete window.__tableAlerts[t.id];
+            if (window.clearTableAlert) window.clearTableAlert(t.id);
+            openAdminTableManager(t, s);
+            renderTables(); // instantly clear the UI highlight behind modal
+        }
+      }
+      
+      if (viewBill) {
+          const tableId = viewBill.dataset.viewBillOrder;
+          if (window.__tableAlerts) delete window.__tableAlerts[tableId];
+          if (window.clearTableAlert) window.clearTableAlert(tableId);
+          window.__autoOpenOrderTableId = tableId;
+          section = "orders";
+          updateNavUI();
+          renderSection();
+      }
               renderOrders(); 
             }
             if (del) deleteOrder(orders.find(x => x.id === del.dataset.deleteOrder));
@@ -1347,8 +1360,9 @@ async function renderAdminWorkspace(mount) {
             // Check if the Admin has already opened this specific bill
             const seenSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
             const tableAlert = window.__tableAlerts ? window.__tableAlerts[s.table_id] : null;
-            // Suppress the DB alert if it has already been seen!
-            const isBillReq = (s.status === 'bill_requested' && !seenSessions.has(s.id)) || tableAlert?.type === 'bill_requested';
+            const isSeen = seenSessions.has(s.id);
+            // Suppress the alert completely if it has been seen
+            const isBillReq = (s.status === 'bill_requested' && !isSeen) || (tableAlert?.type === 'bill_requested' && !isSeen);
             const isNewGreen = !isBillReq && tableAlert && ['new_order', 'added_items', 'new_session'].includes(tableAlert.type);
             const tableNo = escapeHtml(tables.find(t => t.id === s.table_id)?.table_no ?? "—");
             
@@ -1405,6 +1419,7 @@ async function renderAdminWorkspace(mount) {
           const session = sessions.find(x => x.id === row.dataset.manageSession);
           const table = tables.find(x => x.id === session?.table_id);
           if (table && session) {
+              if (window.__tableAlerts) delete window.__tableAlerts[table.id];
               if (window.clearTableAlert) window.clearTableAlert(table.id);
               openAdminTableManager(table, session);
               renderOverview();
@@ -1413,6 +1428,7 @@ async function renderAdminWorkspace(mount) {
 
       if (viewBill) {
           const tableId = viewBill.dataset.viewBillOrder;
+          if (window.__tableAlerts) delete window.__tableAlerts[tableId];
           if (window.clearTableAlert) window.clearTableAlert(tableId);
           window.__autoOpenOrderTableId = tableId;
           section = "orders";
@@ -1788,10 +1804,14 @@ async function renderAdminWorkspace(mount) {
     list.innerHTML = tables.length ? tables.map(t => {
       const openSession = activeSessions.find(s => s.table_id === t.id);
       const seenSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
-      const tableAlert = window.__tableAlerts ? window.__tableAlerts[t.id] : null;
-      // Suppress the DB alert if it has already been seen!
-      const isBillReq = (openSession?.status === "bill_requested" && !seenSessions.has(openSession.id)) || tableAlert?.type === "bill_requested";
-      const isNewGreen = !isBillReq && tableAlert && ["new_order", "added_items", "new_session"].includes(tableAlert.type);
+      
+      // 1. Ghost Session Fix: Ignore all memory alerts if the database confirms there is no open session!
+      const tableAlert = openSession && window.__tableAlerts ? window.__tableAlerts[t.id] : null;
+      const isSeen = openSession && seenSessions.has(openSession.id);
+      
+      // 2. Clear Bill Request: Suppress the bill request highlight once it has been viewed!
+      const isBillReq = openSession && ((openSession.status === "bill_requested" && !isSeen) || (tableAlert?.type === "bill_requested" && !isSeen));
+      const isNewGreen = openSession && !isBillReq && tableAlert && ["new_order", "added_items", "new_session"].includes(tableAlert.type);
 
       let cardStyle = "";
       if (isBillReq) cardStyle = "background: var(--gold-100); border-color: var(--gold-400); box-shadow: 0 4px 16px rgba(201,164,90,0.25);";
@@ -1853,6 +1873,7 @@ async function renderAdminWorkspace(mount) {
         const t = tables.find(x => x.id === manageTbl.dataset.manageTable);
         const s = activeSessions.find(x => x.table_id === t.id);
         if (t && s) {
+            if (window.__tableAlerts) delete window.__tableAlerts[t.id];
             if (window.clearTableAlert) window.clearTableAlert(t.id);
             openAdminTableManager(t, s);
             renderTables(); // instantly clear the UI highlight behind modal
@@ -1861,6 +1882,7 @@ async function renderAdminWorkspace(mount) {
       
       if (viewBill) {
           const tableId = viewBill.dataset.viewBillOrder;
+          if (window.__tableAlerts) delete window.__tableAlerts[tableId];
           if (window.clearTableAlert) window.clearTableAlert(tableId);
           window.__autoOpenOrderTableId = tableId;
           section = "orders";
