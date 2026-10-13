@@ -3,18 +3,6 @@ import { DEFAULT_SETTINGS, versionedAsset } from "../core/config.js";
 import { createPOSState } from "../core/posState.js";
 import { escapeHtml, money, mountNavigation, openAppModal, showToast } from "../components/navigation.js";
 
-// --- INSTANT URL SCRUBBER (LIGHTNING FAST) ---
-const _initParams = new URLSearchParams(window.location.search);
-const _initTable = _initParams.get("table") || _initParams.get("t");
-const _initScan = _initParams.get("scan");
-
-if (_initTable && _initScan && _initScan.toLowerCase() === "true") {
-    localStorage.removeItem(`fourflavours.session.${_initTable}`);
-    localStorage.removeItem(`rms.session.${_initTable}`);
-    const _cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + "?table=" + _initTable + window.location.hash;
-    window.history.replaceState({ path: _cleanUrl }, '', _cleanUrl);
-}
-
 export async function render({ mount }) {
   if (!supabase) {
     mount.innerHTML = `<section class="access-screen dark-access"><div class="access-card"><div class="access-logo" style="display:grid; place-items:center; color:var(--forest-900); background:#fff;"><i class="ph-bold ph-warning-circle" style="font-size:32px;"></i></div><h1>RMS Cloud POS</h1><p>Supabase configuration is missing.</p></div></section>`;
@@ -105,19 +93,23 @@ export async function render({ mount }) {
       return () => {};
     }
     
-    const sessionKey = `rms.session.${currentTableObj.id}`;
+const sessionKey = `rms.session.${currentTableObj.id}`;
     const legacySessionKey = `fourflavours.session.${currentTableObj.id}`;
+    const tabSessionKey = `rms.tab.${currentTableObj.id}`;
     
+    // 1. Physical Scan Check: Wipe old tokens and scrub URL immediately
     if (isPhysicalScan) {
         localStorage.removeItem(sessionKey);
         localStorage.removeItem(legacySessionKey);
+        sessionStorage.removeItem(tabSessionKey);
         const hash = window.location.hash;
         const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + "?table=" + qrTableId + hash;
         window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
     }
 
-    const existingToken = localStorage.getItem(sessionKey) || localStorage.getItem(legacySessionKey);
+    let existingToken = localStorage.getItem(sessionKey) || localStorage.getItem(legacySessionKey);
 
+    // 2. Validate Existing Token
     if (existingToken) {
         const { data: mySession } = await supabase.from("dining_sessions")
             .select("status, updated_at")
@@ -126,6 +118,11 @@ export async function render({ mount }) {
             .maybeSingle();
 
         if (mySession) {
+            // Bind active sessions strictly to this specific browser tab
+            if (["open", "bill_requested", "bill_ready"].includes(mySession.status)) {
+                sessionStorage.setItem(tabSessionKey, existingToken);
+            }
+
             if (mySession.status === "bill_requested" || mySession.status === "bill_ready") {
                 mount.innerHTML = `
                   <style>
@@ -150,13 +147,9 @@ export async function render({ mount }) {
                   </div>
                 `;
 
-                // Real-time listener for admin payment confirmation
                 const pendingChannel = supabase.channel(`pending-tab-${currentTableObj.id}`)
                   .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${currentTableObj.id}` }, payload => {
                      if (payload.new?.status === "closed") {
-                         // CRITICAL FIX: Do NOT delete localStorage tokens! 
-                         // This preserves the session so "Back" and "Refresh" hits the Session Expired trap.
-                         
                          const scr = document.getElementById("live-pending-screen");
                          if (scr) {
                              scr.innerHTML = `
@@ -180,6 +173,10 @@ export async function render({ mount }) {
                                   <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
                                 </div>
                              `;
+                             
+                             // Prevent going back from initial pending screen
+                             window.history.pushState({ locked: true }, "", window.location.href);
+                             window.addEventListener("popstate", () => { window.location.reload(); });
                          }
                          supabase.removeChannel(pendingChannel);
                      }
@@ -189,93 +186,140 @@ export async function render({ mount }) {
             }
 
             if (mySession.status === "closed") {
-                const closedDate = new Date(mySession.updated_at || Date.now());
-                const hoursSinceClosed = (Date.now() - closedDate.getTime()) / (1000 * 60 * 60);
+                const tabToken = sessionStorage.getItem(tabSessionKey);
+                const isRecentTab = (tabToken === existingToken) || (window.history.state?.locked === true);
 
-                if (hoursSinceClosed < 12) {
-                    const timeString = closedDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-                    const dateString = closedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-                    
-                    mount.innerHTML = `
-                      <style>
-                        @keyframes lockSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-                        @keyframes lockPulse { 0% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0.1); transform: scale(1); } 50% { box-shadow: 0 0 0 15px rgba(18, 34, 22, 0); transform: scale(1.05); } 100% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0); transform: scale(1); } }
-                        .premium-lock-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--paper, #FCFCF9); padding: 24px; font-family: inherit; }
-                        .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 24px; padding: 40px 32px; box-shadow: 0 12px 40px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-                        .premium-lock-icon { width: 90px; height: 90px; background: transparent; border: none; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; animation: lockPulse 3s infinite ease-in-out; }
-                        .premium-lock-title { font-size: 1.75rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
-                        .premium-lock-desc { color: var(--forest-700); font-size: 0.95rem; line-height: 1.5; margin: 0 0 32px 0; }
-                        .premium-lock-notice { background: #f8faf9; border-radius: 16px; border: 1px solid rgba(18,34,22,0.08); padding: 20px; display: flex; gap: 14px; text-align: left; align-items: flex-start; }
-                        .premium-lock-notice i { color: var(--forest-900); font-size: 22px; margin-top: 2px; }
-                        .premium-lock-notice strong { display: block; color: var(--forest-950); font-size: 0.9rem; margin-bottom: 4px; }
-                        .premium-lock-notice span { color: var(--forest-700); font-size: 0.85rem; line-height: 1.5; }
-                      </style>
-                      <main class="premium-lock-screen">
-                        <div class="premium-lock-card">
-                          <div class="premium-lock-icon">
-                            <img src="${versionedAsset("assets/images/ses_exp.svg")}" alt="Session Expired" style="width: 100%; height: 100%; object-fit: contain;">
-                          </div>
-                          <h1 class="premium-lock-title">Session Expired</h1>
-                          <p class="premium-lock-desc">Your dining session for <strong>Table ${currentTableObj.table_no}</strong> was completed on <br><strong style="color: var(--forest-950);">${dateString} at${timeString}</strong>.</p>
-                          <div class="premium-lock-notice">
-                              <i class="ph-bold ph-shield-check"></i>
-                              <div>
-                                <strong>Security Lock Active</strong>
-                                <span>To prevent remote ordering, this link is locked. To start a new order, please rescan the QR code on your table.</span>
+                if (isRecentTab) {
+                    // Lock the Back button / Ghost refresh!
+                    const closedDate = new Date(mySession.updated_at || Date.now());
+                    const hoursSinceClosed = (Date.now() - closedDate.getTime()) / (1000 * 60 * 60);
+
+                    if (hoursSinceClosed < 12) {
+                        const timeString = closedDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+                        const dateString = closedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                        
+                        mount.innerHTML = `
+                          <style>
+                            @keyframes lockSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+                            @keyframes lockPulse { 0% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0.1); transform: scale(1); } 50% { box-shadow: 0 0 0 15px rgba(18, 34, 22, 0); transform: scale(1.05); } 100% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0); transform: scale(1); } }
+                            .premium-lock-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--paper, #FCFCF9); padding: 24px; font-family: inherit; }
+                            .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 24px; padding: 40px 32px; box-shadow: 0 12px 40px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+                            .premium-lock-icon { width: 90px; height: 90px; background: transparent; border: none; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; animation: lockPulse 3s infinite ease-in-out; }
+                            .premium-lock-title { font-size: 1.75rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
+                            .premium-lock-desc { color: var(--forest-700); font-size: 0.95rem; line-height: 1.5; margin: 0 0 32px 0; }
+                            .premium-lock-notice { background: #f8faf9; border-radius: 16px; border: 1px solid rgba(18,34,22,0.08); padding: 20px; display: flex; gap: 14px; text-align: left; align-items: flex-start; }
+                            .premium-lock-notice i { color: var(--forest-900); font-size: 22px; margin-top: 2px; }
+                            .premium-lock-notice strong { display: block; color: var(--forest-950); font-size: 0.9rem; margin-bottom: 4px; }
+                            .premium-lock-notice span { color: var(--forest-700); font-size: 0.85rem; line-height: 1.5; }
+                          </style>
+                          <main class="premium-lock-screen">
+                            <div class="premium-lock-card">
+                              <div class="premium-lock-icon">
+                                <img src="${versionedAsset("assets/images/ses_exp.svg")}" alt="Session Expired" style="width: 100%; height: 100%; object-fit: contain;">
                               </div>
-                          </div>
-                        </div>
-                      </main>
-                    `;
-                    return () => {};
+                              <h1 class="premium-lock-title">Session Expired</h1>
+                              <p class="premium-lock-desc">Your dining session for <strong>Table ${currentTableObj.table_no}</strong> was completed on <br><strong style="color: var(--forest-950);">${dateString} at ${timeString}</strong>.</p>
+                              <div class="premium-lock-notice">
+                                  <i class="ph-bold ph-shield-check"></i>
+                                  <div>
+                                    <strong>Security Lock Active</strong>
+                                    <span>To prevent remote ordering, this link is locked. To start a new order, please rescan the QR code on your table.</span>
+                                  </div>
+                              </div>
+                            </div>
+                          </main>
+                        `;
+                        return () => {};
+                    } else {
+                        localStorage.removeItem(sessionKey);
+                        localStorage.removeItem(legacySessionKey);
+                        sessionStorage.removeItem(tabSessionKey);
+                        existingToken = null;
+                    }
                 } else {
+                    // Stale token from a previous visit that this tab didn't initiate. Wipe it and ignore.
                     localStorage.removeItem(sessionKey);
                     localStorage.removeItem(legacySessionKey);
+                    existingToken = null;
                 }
             }
+        } else {
+            // Token is invalid/orphaned
+            localStorage.removeItem(sessionKey);
+            localStorage.removeItem(legacySessionKey);
+            existingToken = null;
         }
     }
 
-    const { data: activeTableSession } = await supabase.from("dining_sessions")
-        .select("session_token")
-        .eq("table_id", currentTableObj.id)
-        .eq("restaurant_id", activeTenantId) /* 🔒 EXPLICIT TENANT ISOLATION */
-        .neq("status", "closed")
-        .maybeSingle();
-    
-    if (activeTableSession && activeTableSession.session_token !== localStorage.getItem(sessionKey)) {
+    // 3. SECURE ENFORCEMENT: No Token + No Physical Scan = Block Remote Ordering
+    if (!existingToken && !isPhysicalScan) {
         mount.innerHTML = `
           <style>
             @keyframes lockSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-            @keyframes pulseDanger { 0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(225, 29, 72, 0); } 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); } }
-            @keyframes shakeIcon { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px) rotate(-4deg); } 40% { transform: translateX(4px) rotate(4deg); } 60% { transform: translateX(-4px) rotate(-4deg); } 80% { transform: translateX(4px) rotate(4deg); } }
             .premium-lock-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--paper, #FCFCF9); padding: 24px; font-family: inherit; }
-            .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 28px; padding: 48px 32px; box-shadow: 0 24px 48px rgba(18,34,22,0.06), 0 0 0 1px rgba(18,34,22,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-            .premium-lock-icon-danger { width: 96px; height: 96px; background: linear-gradient(135deg, #ff4b4b 0%, #e11d48 100%); border-radius: 28px; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; color: #ffffff; animation: pulseDanger 2.5s infinite, shakeIcon 0.6s ease-in-out 0.2s; box-shadow: 0 12px 24px rgba(225, 29, 72, 0.25); }
-            .premium-lock-title { font-size: 1.85rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
-            .premium-lock-desc { color: var(--forest-700); font-size: 1rem; line-height: 1.5; margin: 0 0 32px 0; }
-            .try-again-btn { width: 100%; border-radius: 12px; height: 52px; display: flex; align-items: center; justify-content: center; gap: 8px; background: #ffffff; border: 1px solid var(--line); color: var(--forest-900); font-size: 1rem; font-weight: 800; cursor: pointer; transition: background 0.2s, transform 0.1s; }
-            .try-again-btn:active { transform: scale(0.98); }
+            .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 24px; padding: 40px 32px; box-shadow: 0 12px 40px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+            .premium-lock-icon-danger { width: 90px; height: 90px; border-radius: 24px; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; }
+            .premium-lock-title { font-size: 1.75rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
+            .premium-lock-desc { color: var(--forest-700); font-size: 0.95rem; line-height: 1.5; margin: 0 0 32px 0; }
           </style>
           <main class="premium-lock-screen">
             <div class="premium-lock-card">
-              <div class="premium-lock-icon-danger"><i class="ph-fill ph-hand-palm" style="font-size: 48px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.2));"></i></div>
-              <h1 class="premium-lock-title">Table Occupied</h1>
-              <p class="premium-lock-desc">Table ${currentTableObj.table_no} is currently in use by another guest's device.</p>
-              <button class="try-again-btn" onclick="window.location.reload()"><i class="ph-bold ph-arrows-clockwise" style="font-size: 20px;"></i> Try Again</button>
+              <div class="premium-lock-icon-danger" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); box-shadow: 0 12px 24px rgba(217, 119, 6, 0.25);"><i class="ph-bold ph-qr-code" style="font-size: 48px; color: #fff;"></i></div>
+              <h1 class="premium-lock-title">Scan Required</h1>
+              <p class="premium-lock-desc">To access the menu and start ordering, please scan the QR code securely located on your table.</p>
             </div>
           </main>
         `;
         return () => {};
     }
 
+    // 4. Validate Table Availability
+    const { data: activeTableSession } = await supabase.from("dining_sessions")
+        .select("session_token")
+        .eq("table_id", currentTableObj.id)
+        .eq("restaurant_id", activeTenantId)
+        .neq("status", "closed")
+        .maybeSingle();
+    
+    // If the table is occupied by someone else, block them UNLESS they physically scanned the QR code (Multi-Device Support)
+    if (activeTableSession && activeTableSession.session_token !== existingToken) {
+        if (!isPhysicalScan) {
+            mount.innerHTML = `
+              <style>
+                @keyframes lockSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+                @keyframes pulseDanger { 0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(225, 29, 72, 0); } 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); } }
+                @keyframes shakeIcon { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px) rotate(-4deg); } 40% { transform: translateX(4px) rotate(4deg); } 60% { transform: translateX(-4px) rotate(-4deg); } 80% { transform: translateX(4px) rotate(4deg); } }
+                .premium-lock-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--paper, #FCFCF9); padding: 24px; font-family: inherit; }
+                .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 28px; padding: 48px 32px; box-shadow: 0 24px 48px rgba(18,34,22,0.06), 0 0 0 1px rgba(18,34,22,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+                .premium-lock-icon-danger { width: 96px; height: 96px; background: linear-gradient(135deg, #ff4b4b 0%, #e11d48 100%); border-radius: 28px; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; color: #ffffff; animation: pulseDanger 2.5s infinite, shakeIcon 0.6s ease-in-out 0.2s; box-shadow: 0 12px 24px rgba(225, 29, 72, 0.25); }
+                .premium-lock-title { font-size: 1.85rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
+                .premium-lock-desc { color: var(--forest-700); font-size: 1rem; line-height: 1.5; margin: 0 0 32px 0; }
+                .try-again-btn { width: 100%; border-radius: 12px; height: 52px; display: flex; align-items: center; justify-content: center; gap: 8px; background: #ffffff; border: 1px solid var(--line); color: var(--forest-900); font-size: 1rem; font-weight: 800; cursor: pointer; transition: background 0.2s, transform 0.1s; }
+                .try-again-btn:active { transform: scale(0.98); }
+              </style>
+              <main class="premium-lock-screen">
+                <div class="premium-lock-card">
+                  <div class="premium-lock-icon-danger"><i class="ph-fill ph-hand-palm" style="font-size: 48px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.2));"></i></div>
+                  <h1 class="premium-lock-title">Table Occupied</h1>
+                  <p class="premium-lock-desc">Table ${currentTableObj.table_no} is currently in use by another guest's device.</p>
+                  <button class="try-again-btn" onclick="window.location.reload()"><i class="ph-bold ph-arrows-clockwise" style="font-size: 20px;"></i> Try Again</button>
+                </div>
+              </main>
+            `;
+            return () => {};
+        }
+    }
+
+    // 5. Ensure the Database Session (Creates new OR joins existing active table if physically scanned)
     const { data: sessionBootstrap, error: sessionError } = await supabase.rpc("ensure_customer_session", { p_table_id: currentTableObj.id });
     if (sessionError) throw sessionError;
     
     customerSessionToken = (sessionBootstrap?.[0] ?? sessionBootstrap)?.session_token;
-    if (customerSessionToken) localStorage.setItem(sessionKey, customerSessionToken);
+    if (customerSessionToken) {
+        localStorage.setItem(sessionKey, customerSessionToken);
+        sessionStorage.setItem(tabSessionKey, customerSessionToken);
+    }
   }
-
   const state = createPOSState({ settings });
   const adminAlertChannel = supabase.channel('ff-admin-alerts');
   adminAlertChannel.subscribe();
@@ -1509,6 +1553,10 @@ export async function render({ mount }) {
                                               <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
                                             </div>
                                          `;
+                                         
+                                         // TRAP 3: Prevent going back from active bill modal
+                                         window.history.pushState({ locked: true }, "", window.location.href);
+                                         window.addEventListener("popstate", () => { window.location.reload(); });
                                      }
                                      supabase.removeChannel(pendingChannel);
                                  }
