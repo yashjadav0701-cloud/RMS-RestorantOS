@@ -529,6 +529,36 @@ async function fetchWorkspace() {
 }
 
 async function renderAdminWorkspace(mount) {
+  // 1. HARDWARE AUDIO ENGINE: Generates a perfect 880Hz POS 'Ding' without needing MP3 files
+  const playDing = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator(); const gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.type = 'bell'; osc.frequency.setValueAtTime(880, ctx.currentTime);
+      gain.gain.setValueAtTime(0.6, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
+      osc.start(ctx.currentTime); osc.stop(ctx.currentTime + 0.6);
+    } catch(e) { console.warn("Audio disabled by browser auto-play policy."); }
+  };
+
+  // 2. ENTERPRISE AUTO-LOCK: Securely logs out the admin if the tablet is untouched for 15 minutes
+  let inactivityTimer;
+  const resetLock = () => {
+      clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(async () => {
+          await supabase.auth.signOut();
+          window.__ACTIVE_TENANT__ = null;
+          window.location.reload();
+      }, 15 * 60 * 1000); // 15 mins
+  };
+  ['touchstart', 'mousemove', 'keydown'].forEach(e => document.addEventListener(e, resetLock, { passive: true }));
+  resetLock();
+
+  // 3. NETWORK DROP RESILIENCE: Alerts staff immediately if the WiFi dies
+  window.addEventListener('offline', () => showToast("Network Offline", "Live sync paused. Check your router.", "error"));
+  window.addEventListener('online', () => showToast("Network Restored", "Live sync is back online.", "success"));
+
   let { settings, products, tables, sessions, cuisines } = await fetchWorkspace();
   window.__FF_TABLES__ = tables;
   let section = "overview";
@@ -664,6 +694,13 @@ async function renderAdminWorkspace(mount) {
     
     updateNavUI();
     renderSection();
+    
+    // NATIVE APP BEHAVIOR: Instantly snap the page back to the absolute top
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    
+    // Failsafe: Reset the internal flex container if it caught any scroll momentum
+    const adminContent = mount.querySelector(".admin-content");
+    if (adminContent) adminContent.scrollTop = 0;
   });
 
   async function reload() {
@@ -682,211 +719,215 @@ async function renderAdminWorkspace(mount) {
   }
 
   async function renderOrders() {
+    // Default to 'today' as it is the most relevant for an active POS dashboard
+    const currentFilter = area.dataset.orderFilter || 'today';
+    const customDate = area.dataset.customDate || '';
+
     area.innerHTML = `
-      <style>
-        .export-excel-wrapper { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
-        @media (max-width: 720px) { .export-excel-wrapper { position: static; transform: none; margin-top: 14px; } }
-      </style>
-      <section class="section-title-row" style="position: relative; width: 100%; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+      <section class="section-title-row">
         <div>
           <span class="eyebrow">Order History</span>
           <h1>All past bills.</h1>
-          <p>View, reprint, or permanently delete historical receipts from the database.</p>
+          <p>View, reprint, or delete historical receipts.</p>
         </div>
-        <div class="export-excel-wrapper">
-          <button class="btn btn-primary" id="export-excel-btn" style="border-radius: 99px; font-size: 0.85rem; height: 40px; padding: 0 16px; gap: 8px; box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25); background: #16a34a; border: 1px solid #15803d; color: white;">
-            <i class="ph-bold ph-download-simple" style="font-size: 18px;"></i> To Excel
-          </button>
-        </div>
+        <button class="btn btn-primary" id="export-excel-btn" style="background: #16a34a; border-color: #15803d; color: white; box-shadow: 0 4px 12px rgba(22, 163, 74, 0.25);">
+          <i class="ph-bold ph-download-simple"></i> Excel
+        </button>
       </section>
+      
+      <!-- ANALYTICS DATE FILTERS -->
+      <div class="pos-toolbar-row" id="order-date-filters" style="justify-content: flex-start; margin: 0 0 16px 0; overflow-x: auto; padding-bottom: 4px; gap: 8px;">
+         <button class="pos-toolbar-pill ${currentFilter === 'today' ? 'active' : ''}" data-range="today"><span>Today</span></button>
+         <button class="pos-toolbar-pill ${currentFilter === 'all' ? 'active' : ''}" data-range="all"><span>All</span></button>
+         
+         <!-- Native OS Calendar Picker (PC Fix with showPicker API) -->
+         <div style="position: relative; display: inline-flex;">
+           <button class="pos-toolbar-pill ${currentFilter === 'custom' ? 'active' : ''}" style="padding-right: 14px;" onclick="try { document.getElementById('custom-date-picker').showPicker(); } catch(e) {}">
+             <i class="ph-bold ph-calendar-blank"></i>
+             <span>${currentFilter === 'custom' && customDate ? new Date(customDate).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'}) : 'Date'}</span>
+           </button>
+           <input type="date" id="custom-date-picker" value="${customDate}" style="position: absolute; left: 0; bottom: 0; width: 0; height: 0; opacity: 0; pointer-events: none;">
+         </div>
+      </div>
+
       <section class="admin-panel">
         <div class="admin-list-scroll" id="orders-list">
-          <div class="empty-state"><i class="ph ph-spinner-gap"></i><strong>Loading orders...</strong></div>
+          <div class="empty-state"><i class="ph ph-spinner-gap ph-spin"></i><strong>Loading orders...</strong></div>
         </div>
       </section>`;
     
-    const list = area.querySelector("#orders-list");
-    
-    // ==========================================
-    // EXPORT TO EXCEL LOGIC (Dynamic SheetJS)
-    // ==========================================
-    const exportBtn = area.querySelector("#export-excel-btn");
-    if (exportBtn) {
-      exportBtn.addEventListener("click", async () => {
-        const ogHtml = exportBtn.innerHTML;
-        exportBtn.disabled = true;
-        exportBtn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Exporting...`;
+    // Attach Filter Listeners
+    area.querySelectorAll("#order-date-filters button[data-range]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            area.dataset.orderFilter = btn.dataset.range;
+            renderOrders(); // Re-render with new filter
+        });
+    });
 
-        try {
-          // 1. Fetch fresh order data securely for this specific restaurant
-          const { data: ordersData, error } = await supabase
-            .from("orders")
-            .select("*, order_items(*), dining_sessions(table_id)")
-            .eq("restaurant_id", window.__ACTIVE_TENANT__.id)
-            .order("created_at", { ascending: false });
-
-          if (error) throw error;
-          if (!ordersData || ordersData.length === 0) throw new Error("There are no orders to export yet.");
-
-          // 2. Format Data specifically for Excel Columns
-          const excelData = ordersData.map(o => {
-             let tableStr = "Takeaway";
-             if (o.dining_sessions?.table_id && typeof tables !== 'undefined') {
-                const t = tables.find(x => x.id === o.dining_sessions.table_id);
-                if (t) tableStr = `Table ${t.table_no}`;
-             }
-
-             // Format items nicely: "2x Pizza, 1x Coke"
-             const itemsStr = (o.order_items || [])
-                .map(i => `${i.quantity}x ${i.name_snapshot || i.product_name || i.name}`)
-                .join(", ");
-
-             return {
-                "Order #": o.order_number,
-                "Date": new Date(o.created_at).toLocaleDateString('en-IN'),
-                "Time": new Date(o.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
-                "Order Type": tableStr,
-                "Items": itemsStr,
-                "Subtotal (₹)": Number(o.subtotal || 0),
-                "CGST (₹)": Number(o.cgst || 0),
-                "SGST (₹)": Number(o.sgst || 0),
-                "Rounding (₹)": Number(o.rounding || 0),
-                "Grand Total (₹)": Number(o.grand_total || 0),
-                "Status": String(o.status || "Completed").toUpperCase()
-             };
-          });
-
-          // 3. Dynamically load SheetJS (Prevents slowing down the website's initial load)
-          if (!window.XLSX) {
-             await new Promise((resolve, reject) => {
-                const script = document.createElement("script");
-                script.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
-                script.onload = resolve;
-                script.onerror = reject;
-                document.head.appendChild(script);
-             });
-          }
-
-          // 4. Build Excel Workbook
-          const wb = window.XLSX.utils.book_new();
-          const ws = window.XLSX.utils.json_to_sheet(excelData);
-          
-          // Adjust Column Widths for readability
-          ws['!cols'] = [
-             { wch: 10 }, { wch: 15 }, { wch: 12 }, { wch: 18 }, { wch: 55 },
-             { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 15 }
-          ];
-
-          // 5. Sanitize Sheet Name (Excel has strict rules: max 31 chars, no symbols)
-          let safeSheetName = (window.__ACTIVE_TENANT__?.name || "Orders").substring(0, 31);
-          safeSheetName = safeSheetName.replace(/[\\\/\?\*\[\]\:]/g, ''); 
-          
-          window.XLSX.utils.book_append_sheet(wb, ws, safeSheetName);
-          
-          // 6. Download File
-          const cleanFileName = `${safeSheetName.replace(/\s+/g, '_')}_Orders.xlsx`;
-          window.XLSX.writeFile(wb, cleanFileName);
-          
-          showToast("Export Successful", "Excel file downloaded securely.");
-        } catch (err) {
-          console.error(err);
-          showToast("Export Failed", err.message, "error");
-        } finally {
-          exportBtn.disabled = false;
-          exportBtn.innerHTML = ogHtml;
-        }
-      });
+    const datePicker = area.querySelector("#custom-date-picker");
+    if (datePicker) {
+        datePicker.addEventListener("change", (e) => {
+            if (e.target.value) {
+                area.dataset.orderFilter = 'custom';
+                area.dataset.customDate = e.target.value;
+                renderOrders();
+            }
+        });
     }
 
-    const exportWrapper = area.querySelector(".export-excel-wrapper");
+    const list = area.querySelector("#orders-list");
+    const exportBtn = area.querySelector("#export-excel-btn");
 
-      try {
-        // Fetch orders, nested items, AND the status of their associated dining session
-        const { data: rawOrders, error } = await supabase.from("orders")
+    try {
+        // 1. Build Query with Strict Time Range Logic
+        let query = supabase.from("orders")
           .select("*, order_items(*), dining_sessions(status)")
-          .eq("restaurant_id", window.__ACTIVE_TENANT__.id) 
-          .order("created_at", { ascending: false })
-          .limit(150);
-          
+          .eq("restaurant_id", window.__ACTIVE_TENANT__.id);
+
+        if (currentFilter === 'today') {
+            const start = new Date(); start.setHours(0,0,0,0);
+            query = query.gte("created_at", start.toISOString());
+        } else if (currentFilter === 'custom' && customDate) {
+            const start = new Date(customDate); start.setHours(0,0,0,0);
+            const end = new Date(customDate); end.setHours(23,59,59,999);
+            query = query.gte("created_at", start.toISOString()).lte("created_at", end.toISOString());
+        }
+
+        // Adjust limits: Allow massive pulls for custom dates, keep 'all' fast to prevent crashing
+        if (currentFilter === 'all') query = query.limit(150);
+        else query = query.limit(2000); 
+
+        const { data: rawOrders, error } = await query.order("created_at", { ascending: false });
         if (error) throw error;
-        
-        // Ensure requested bills show up in Orders so Admins can settle them securely
+
+        // 2. Filter out open sessions that haven't requested bills yet
         const orders = rawOrders.filter(o => 
             o.order_type === 'takeaway' || 
             (o.dining_sessions && ['closed', 'bill_requested', 'bill_ready'].includes(o.dining_sessions.status))
         );
-        
+
+        // ==========================================
+        // EXPORT TO EXCEL LOGIC (WYSIWYG: Only exports what is filtered!)
+        // ==========================================
+        if (exportBtn) {
+            if (!orders || orders.length === 0) {
+                exportBtn.style.display = "none";
+            } else {
+                exportBtn.style.display = "flex";
+                exportBtn.addEventListener("click", async () => {
+                    const ogHtml = exportBtn.innerHTML;
+                    exportBtn.disabled = true;
+                    exportBtn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Exporting...`;
+
+                    try {
+                        const excelData = orders.map(o => {
+                            let tableStr = "Takeaway";
+                            if (o.dining_sessions?.table_id && typeof tables !== 'undefined') {
+                                const t = tables.find(x => x.id === o.dining_sessions.table_id);
+                                if (t) tableStr = `Table ${t.table_no}`;
+                            }
+                            const itemsStr = (o.order_items || []).map(i => `${i.quantity}x ${i.name_snapshot || i.product_name || i.name}`).join(", ");
+                            return {
+                                "Order #": o.order_number,
+                                "Date": new Date(o.created_at).toLocaleDateString('en-IN'),
+                                "Time": new Date(o.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+                                "Order Type": tableStr,
+                                "Items": itemsStr,
+                                "Subtotal (₹)": Number(o.subtotal || 0),
+                                "CGST (₹)": Number(o.cgst || 0),
+                                "SGST (₹)": Number(o.sgst || 0),
+                                "Rounding (₹)": Number(o.rounding || 0),
+                                "Grand Total (₹)": Number(o.grand_total || 0),
+                                "Status": String(o.status || "Completed").toUpperCase()
+                            };
+                        });
+
+                        if (!window.XLSX) {
+                            await new Promise((resolve, reject) => {
+                                const script = document.createElement("script");
+                                script.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+                                script.onload = resolve; script.onerror = reject;
+                                document.head.appendChild(script);
+                            });
+                        }
+
+                        const wb = window.XLSX.utils.book_new();
+                        const ws = window.XLSX.utils.json_to_sheet(excelData);
+                        ws['!cols'] = [{ wch: 10 }, { wch: 15 }, { wch: 12 }, { wch: 18 }, { wch: 55 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 15 }, { wch: 15 }];
+                        
+                        let safeSheetName = (window.__ACTIVE_TENANT__?.name || "Orders").substring(0, 31).replace(/[\\\/\?\*\[\]\:]/g, ''); 
+                        window.XLSX.utils.book_append_sheet(wb, ws, safeSheetName);
+                        
+                        let rangeStr = currentFilter === 'all' ? 'All_Time' : currentFilter.toUpperCase();
+                        window.XLSX.writeFile(wb, `${safeSheetName.replace(/\s+/g, '_')}_Orders_${rangeStr}.xlsx`);
+                        
+                        showToast("Export Successful", "Excel file downloaded securely.", "success");
+                    } catch (err) {
+                        showToast("Export Failed", err.message, "error");
+                    } finally {
+                        exportBtn.disabled = false;
+                        exportBtn.innerHTML = ogHtml;
+                    }
+                });
+            }
+        }
+
         if (!orders || orders.length === 0) {
-          list.innerHTML = `<div class="empty-state"><i class="ph ph-receipt"></i><strong>No completed bills yet</strong><span>Once a table is closed and paid, its final receipt will appear here.</span></div>`;
-          if (exportWrapper) exportWrapper.style.display = "none"; // Hides the Excel button
-          return;
+            list.innerHTML = `<div class="empty-state"><i class="ph ph-receipt"></i><strong>No bills found</strong><span>There are no completed orders in this date range.</span></div>`;
+            return;
         }
 
-        if (exportWrapper) exportWrapper.style.display = "block"; // Shows the Excel button
+        const seenOrders = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_orders") || "[]"));
+        const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60000);
 
-      // 1. Load the list of bills the Admin has already clicked on from local memory
-      const seenOrders = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_orders") || "[]"));
-      
-      // 2. We will flag any UNSEEN order generated in the last 12 hours
-      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60000);
+        // 3. Render list with Gold/Green Highlight states
+        list.innerHTML = orders.map(o => {
+            const orderDate = new Date(o.created_at);
+            const isUnpaidTable = o.dining_sessions && ['bill_requested', 'bill_ready'].includes(o.dining_sessions.status);
+            const isNew = isUnpaidTable || (orderDate > twelveHoursAgo && !seenOrders.has(o.id));
+            
+            return `
+            <article class="admin-order-data-row" style="${isNew ? 'border-color: var(--gold-400); background: var(--gold-100); box-shadow: 0 4px 16px rgba(201,164,90,0.2);' : ''}">
+              <div class="order-cell-id" style="display: flex; align-items: center; gap: 8px;">
+                <span style="${isNew ? 'color: var(--gold-600);' : ''}">Order #${escapeHtml(o.order_number)}</span>
+                ${isNew ? `<span style="background: var(--gold-500); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase;">New Bill</span>` : ''}
+              </div>
+              <div class="order-cell-date">${orderDate.toLocaleString('en-IN', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</div>
+              <div class="order-cell-type">${o.order_type === 'dine_in' ? `Dine-in · Table ${tables.find(t => t.id === o.table_id)?.table_no || 'Unknown'}` : 'Takeaway'} · ${o.order_items.length} ${o.order_items.length === 1 ? 'item' : 'items'}</div>
+              <div class="order-cell-price">${money(o.grand_total, settings.currency_symbol)}</div>
+              <div class="order-cell-actions">
+                <button class="icon-btn icon-btn-light" data-view-order="${o.id}" title="View Receipt" style="${isNew ? 'background: #fff; border-color: var(--gold-400); color: var(--forest-900);' : ''}"><i class="ph-bold ph-printer"></i></button>
+                <button class="icon-btn icon-btn-danger" data-delete-order="${o.id}" title="Delete Order"><i class="ph-bold ph-trash"></i></button>
+              </div>
+            </article>
+          `}).join("");
 
-      list.innerHTML = orders.map(o => {
-        const orderDate = new Date(o.created_at);
-        
-        // HIGHLIGHT FIX: Unpaid table bills stay "New" until 'Paid' is clicked and the table closes.
-        const isUnpaidTable = o.dining_sessions && ['bill_requested', 'bill_ready'].includes(o.dining_sessions.status);
-        const isNew = isUnpaidTable || (orderDate > twelveHoursAgo && !seenOrders.has(o.id));
-        
-        return `
-        <article class="admin-order-data-row" style="${isNew ? 'border-color: var(--gold-400); background: var(--gold-100); box-shadow: 0 4px 16px rgba(201,164,90,0.2);' : ''}">
-          <div class="order-cell-id" style="display: flex; align-items: center; gap: 8px;">
-            <span style="${isNew ? 'color: var(--gold-600);' : ''}">Order #${escapeHtml(o.order_number)}</span>
-            ${isNew ? `<span style="background: var(--gold-500); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase;">New Bill</span>` : ''}
-          </div>
-          <div class="order-cell-date">${orderDate.toLocaleString('en-IN', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</div>
-          <div class="order-cell-type">${o.order_type === 'dine_in' ? `Dine-in · Table ${tables.find(t => t.id === o.table_id)?.table_no || 'Unknown'}` : 'Takeaway'} · ${o.order_items.length} ${o.order_items.length === 1 ? 'item' : 'items'}</div>
-          <div class="order-cell-price">${money(o.grand_total, settings.currency_symbol)}</div>
-          <div class="order-cell-actions">
-            <button class="icon-btn icon-btn-light" data-view-order="${o.id}" title="View Receipt" style="${isNew ? 'background: #fff; border-color: var(--gold-400); color: var(--forest-900);' : ''}"><i class="ph-bold ph-printer"></i></button>
-            <button class="icon-btn icon-btn-danger" data-delete-order="${o.id}" title="Delete Order"><i class="ph-bold ph-trash"></i></button>
-          </div>
-        </article>
-      `}).join("");
+        list.addEventListener("click", e => {
+            const view = e.target.closest("[data-view-order]");
+            const del = e.target.closest("[data-delete-order]");
+            
+            if (view) {
+              const orderId = view.dataset.viewOrder;
+              const updatedSeen = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_orders") || "[]"));
+              updatedSeen.add(orderId);
+              localStorage.setItem("fourflavours.seen_orders", JSON.stringify([...updatedSeen]));
+              
+              showAdminReceiptPreview(orders.find(x => x.id === orderId));
+              renderOrders(); 
+            }
+            if (del) deleteOrder(orders.find(x => x.id === del.dataset.deleteOrder));
+        });
 
-      list.addEventListener("click", e => {
-        const view = e.target.closest("[data-view-order]");
-        const del = e.target.closest("[data-delete-order]");
-        
-        if (view) {
-          const orderId = view.dataset.viewOrder;
-          
-          // 3. Mark the bill as SEEN the moment the admin clicks it
-          const updatedSeen = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_orders") || "[]"));
-          updatedSeen.add(orderId);
-          localStorage.setItem("fourflavours.seen_orders", JSON.stringify([...updatedSeen]));
-          
-          // Show the receipt modal and instantly refresh the list to drop the Gold highlight
-          showAdminReceiptPreview(orders.find(x => x.id === orderId));
-          renderOrders(); 
+        if (window.__autoOpenOrderTableId) {
+            const targetTableId = window.__autoOpenOrderTableId;
+            window.__autoOpenOrderTableId = null;
+            const latestOrder = orders.find(o => o.table_id === targetTableId || o.dining_sessions?.table_id === targetTableId);
+            if (latestOrder) showAdminReceiptPreview(latestOrder);
+            else showToast("Order Not Found", "No items were added to this table's session.", "error");
         }
-        
-        if (del) deleteOrder(orders.find(x => x.id === del.dataset.deleteOrder));
-      });
-
-      // THE AUTO-OPEN HANDOFF: Automatically opens the receipt if navigated from an Amber Table Alert
-      if (window.__autoOpenOrderTableId) {
-          const targetTableId = window.__autoOpenOrderTableId;
-          window.__autoOpenOrderTableId = null;
-          const latestOrder = orders.find(o => o.table_id === targetTableId || o.dining_sessions?.table_id === targetTableId);
-          if (latestOrder) {
-               showAdminReceiptPreview(latestOrder);
-          } else {
-               showToast("Order Not Found", "No items were added to this table's session.", "error");
-          }
-      }
 
     } catch (err) {
-      list.innerHTML = `<div class="empty-state"><i class="ph ph-warning-circle"></i><strong>Error loading orders</strong><span>${escapeHtml(err.message)}</span></div>`;
+        list.innerHTML = `<div class="empty-state"><i class="ph ph-warning-circle"></i><strong>Error loading orders</strong><span>${escapeHtml(err.message)}</span></div>`;
     }
   }
 
@@ -1080,9 +1121,13 @@ async function renderAdminWorkspace(mount) {
 
   function renderCuisines() {
     area.innerHTML = `
-      <section class="section-title-row" style="align-items: center;">
-        <div style="flex: 1;"><span class="eyebrow">Menu Categories</span><h1>Manage your categories.</h1><p>Add new menu categories, organize their sort order, and upload their background images for the POS.</p></div>
-        <button class="btn btn-primary" id="add-cuisine" style="height: 44px; border-radius: 12px; font-weight: 800; flex-shrink: 0;"><i class="ph-bold ph-plus"></i> Add category</button>
+      <section class="section-title-row">
+        <div>
+          <span class="eyebrow">Menu Categories</span>
+          <h1>Manage categories.</h1>
+          <p>Add categories and upload background images.</p>
+        </div>
+        <button class="btn btn-primary" id="add-cuisine"><i class="ph-bold ph-plus"></i> Add</button>
       </section>
       <section class="admin-panel"><div class="admin-list-scroll" id="cuisine-list"></div></section>`;
     
@@ -1345,15 +1390,15 @@ async function renderAdminWorkspace(mount) {
 
   function renderMenu() {
     area.innerHTML = `
-      <section class="section-title-row" style="flex-wrap: wrap; gap: 16px;">
-        <div style="flex: 1; min-width: 280px;">
+      <section class="section-title-row">
+        <div>
           <span class="eyebrow">Menu management</span>
-          <h1>Every dish, neatly managed.</h1>
-          <p>Long lists stay inside a contained vertical workspace instead of stretching the entire page.</p>
+          <h1>Every dish, managed.</h1>
+          <p>Organize your entire restaurant menu.</p>
         </div>
-        <div style="display: flex !important; flex-direction: row !important; gap: 12px !important; flex-wrap: nowrap !important; align-items: center; justify-content: flex-start; width: auto !important;">
-          <button class="btn btn-quiet" id="generate-menu-pdf" style="height: 44px; border-radius: 10px; font-weight: 800; padding: 0 20px; white-space: nowrap; border: 1px solid var(--forest-900); color: var(--forest-900); background: #ffffff; box-shadow: 0 2px 6px rgba(0,0,0,0.05); flex: 0 0 auto !important; width: auto !important;"><i class="ph-bold ph-file-pdf"></i> Full Menu PDF</button>
-          <button class="btn btn-primary" id="add-product" style="height: 44px; border-radius: 10px; font-weight: 800; padding: 0 20px; white-space: nowrap; flex: 0 0 auto !important; width: auto !important;"><i class="ph-bold ph-plus"></i> Add dish</button>
+        <div class="header-action-group">
+          <button class="btn btn-quiet" id="generate-menu-pdf"><i class="ph-bold ph-file-pdf"></i> PDF</button>
+          <button class="btn btn-primary" id="add-product"><i class="ph-bold ph-plus"></i> Add</button>
         </div>
       </section>
       <section class="admin-panel"><div class="panel-toolbar"><div class="search-wrap light"><i class="ph ph-magnifying-glass"></i><input class="search-input" id="product-search" type="search" placeholder="Search dishes or categories"></div><span class="soft-badge">${products.length} dishes</span></div><div class="admin-list-scroll" id="product-list"></div></section>`;
@@ -1671,7 +1716,14 @@ async function renderAdminWorkspace(mount) {
 
   function renderTables() {
     area.innerHTML = `
-      <section class="section-title-row"><div><span class="eyebrow">Floor layout</span><h1>Live Table Management.</h1><p>Monitor occupied tables, force-close abandoned sessions, and manage your floor plan.</p></div><button class="btn btn-primary" id="add-table"><i class="ph-bold ph-plus"></i>Add table</button></section>
+      <section class="section-title-row">
+        <div>
+          <span class="eyebrow">Floor layout</span>
+          <h1>Live Tables.</h1>
+          <p>Monitor tables and generate QR codes.</p>
+        </div>
+        <button class="btn btn-primary" id="add-table"><i class="ph-bold ph-plus"></i> Add</button>
+      </section>
       <section class="admin-panel"><div class="panel-toolbar"><span class="soft-badge">${tables.length} tables</span><span class="panel-help"><i class="ph ph-qr-code"></i> Production QR Available</span></div><div class="admin-table-scroll" id="table-list"></div></section>`;
     
     const list = area.querySelector("#table-list");
@@ -2118,13 +2170,13 @@ async function renderAdminWorkspace(mount) {
       if (!restData) return;
 
       area.innerHTML = `
-        <section class="section-title-row" style="flex-direction: row !important; justify-content: space-between !important; align-items: flex-end !important; text-align: left !important;">
-          <div style="align-items: flex-start !important; text-align: left !important;">
+        <section class="section-title-row">
+          <div>
             <span class="eyebrow">Restaurant settings</span>
-            <h1 style="text-align: left !important; margin: 6px 0;">Keep the bill precise.</h1>
-            <p style="text-align: left !important;">Database-verified tax, totals, and branding.</p>
+            <h1>Keep the bill precise.</h1>
+            <p>Database-verified tax, totals, and branding.</p>
           </div>
-          <button class="btn btn-quiet" id="admin-lock-workspace" style="border-color: var(--forest-900); color: var(--forest-900); font-weight: 800; flex-shrink: 0;"><i class="ph-bold ph-lock-key"></i>Lock & Return to POS</button>
+          <button class="btn btn-quiet" id="admin-lock-workspace"><i class="ph-bold ph-lock-key"></i> Lock Workspace</button>
         </section>
         
         <!-- Branding Section -->
@@ -2201,6 +2253,26 @@ async function renderAdminWorkspace(mount) {
             <div class="settings-wide">
               <button class="btn btn-primary" type="submit" id="save-billing-btn" style="height: 48px; border-radius: 12px; font-size: 15px; transition: all 0.2s ease;">
                 <i class="ph ph-floppy-disk"></i>Save billing settings
+              </button>
+            </div>
+          </form>
+        </section>
+        
+        <!-- Payment Gateway Section -->
+        <section class="admin-panel settings-panel" style="margin-top: 16px;">
+          <div class="panel-head" style="margin-bottom: 16px;">
+            <div><span class="eyebrow">Online Payments</span><h2>Razorpay Gateway</h2></div>
+          </div>
+          <form id="gateway-form" class="settings-form-grid" autocomplete="off">
+            <label class="switch-field settings-wide"><input type="checkbox" name="gateway_active" ${settings.gateway_active ? "checked" : ""}><span class="switch-ui"></span><span><strong>Enable Razorpay Checkout</strong><small>Allow customers to pay via UPI/Cards directly from their phone when they request the bill.</small></span></label>
+            
+            <!-- FIX: Added autocomplete="new-password" to force browsers to keep these fields empty -->
+            <label class="field"><span>Key ID</span><input class="field-input" name="razorpay_key" value="${escapeHtml(settings.razorpay_key || "")}" placeholder="rzp_live_..." autocomplete="new-password"></label>
+            <label class="field"><span>Key Secret</span><input class="field-input" type="password" name="razorpay_secret" value="${escapeHtml(settings.razorpay_secret || "")}" placeholder="••••••••••••" autocomplete="new-password"></label>
+            
+            <div class="settings-wide" style="margin-top: 8px;">
+              <button class="btn btn-primary" type="submit" id="save-gateway-btn" style="background: #0284c7; border-color: #0284c7; height: 48px; border-radius: 12px; font-size: 15px;">
+                <i class="ph-bold ph-credit-card"></i> Save Gateway
               </button>
             </div>
           </form>
@@ -2414,6 +2486,39 @@ async function renderAdminWorkspace(mount) {
 
         } catch (error) { 
           showToast("Could not save settings", error.message, "error"); 
+          btn.innerHTML = ogText;
+          btn.disabled = false;
+        }
+      });
+
+      // --- RAZORPAY GATEWAY SAVER ---
+      area.querySelector("#gateway-form").addEventListener("submit", async e => {
+        e.preventDefault();
+        const form = e.currentTarget;
+        const btn = form.querySelector("#save-gateway-btn");
+        const ogText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Saving...`;
+
+        const fd = new FormData(form);
+        const payload = {
+          restaurant_id: window.__ACTIVE_TENANT__.id,
+          gateway_active: fd.get("gateway_active") === "on",
+          razorpay_key: String(fd.get("razorpay_key") || "").trim(),
+          razorpay_secret: String(fd.get("razorpay_secret") || "").trim()
+        };
+
+        try {
+          const { error } = await supabase.from("app_settings").upsert(payload, { onConflict: 'restaurant_id' });
+          if (error) throw error;
+          
+          Object.assign(settings, payload);
+          showToast("Gateway Saved", "Razorpay settings updated successfully.", "success");
+          btn.innerHTML = `<i class="ph-bold ph-check"></i> Saved`;
+          
+          setTimeout(() => { btn.innerHTML = ogText; btn.disabled = false; }, 2500);
+        } catch (error) {
+          showToast("Update Failed", error.message, "error");
           btn.innerHTML = ogText;
           btn.disabled = false;
         }
@@ -2720,6 +2825,7 @@ async function renderAdminWorkspace(mount) {
           const tableNo = window.__FF_TABLES__?.find(t => t.id === payload.new.table_id)?.table_no || "Unknown";
           if (window.setTableAlert) window.setTableAlert(payload.new.table_id, "new_order", "New Order Received");
           showToast("New Order", `Table ${tableNo} placed an order!`, "success");
+          try { playDing(); } catch(e){} // AUDIO ALERT
       }
       
       if (section === "orders") renderOrders();
@@ -2736,6 +2842,7 @@ async function renderAdminWorkspace(mount) {
       if (payload.eventType === 'UPDATE' && payload.new?.status === "bill_requested" && payload.old?.status !== "bill_requested") {
          if (window.setTableAlert) window.setTableAlert(payload.new.table_id, "bill_requested", "Bill Requested");
          showToast("Bill Requested", `Table ${tableNo} finalized their meal!`, "success");
+         try { playDing(); playDing(); } catch(e){} // DOUBLE AUDIO ALERT FOR BILLS
          
          const ordersNavBtn = mount.querySelector('[data-section="orders"]');
          if (ordersNavBtn) {
@@ -2751,17 +2858,27 @@ async function renderAdminWorkspace(mount) {
           setTimeout(async () => await reload(), 150);
       }
     })
-    .subscribe(status => {
-      const btn = mount.querySelector("#admin-refresh i");
-      if (btn) {
-         if (status === "SUBSCRIBED") btn.style.color = "var(--success)";
-         else btn.style.color = "";
-      }
-    });
+    .subscribe();
+
+  // MAGIC BINDING: Automatically finds the list on the current screen and applies physics
+  function triggerPhysics() {
+      setTimeout(() => {
+          const list = mount.querySelector(".admin-list-scroll, .admin-table-scroll");
+          if (list && !list.dataset.physicsAttached) {
+              attachTactilePhysics(list);
+              list.dataset.physicsAttached = "true";
+          }
+      }, 150);
+  }
+
+  // Intercept the bottom nav clicks to attach physics to the newly rendered pages
+  mount.querySelector("#admin-section-nav").addEventListener("click", triggerPhysics);
 
   renderSection();
+  triggerPhysics(); // Fire immediately on first load
   
   return () => {
+    mount.querySelector("#admin-section-nav")?.removeEventListener("click", triggerPhysics);
     navCleanup?.();
     window.removeEventListener("ff_admin_alert_received", adminAlertHandler);
     if (realtimeChannel) supabase.removeChannel(realtimeChannel);
@@ -2770,4 +2887,52 @@ async function renderAdminWorkspace(mount) {
 
 function metricCard(icon, value, label) {
   return `<article class="metric-card"><div class="metric-icon"><i class="ph ${icon}"></i></div><strong>${Number(value || 0)}</strong><span>${escapeHtml(label)}</span></article>`;
+}
+
+// ==========================================================================
+// UNIVERSAL iOS TACTILE CARD SEPARATION PHYSICS ENGINE
+// ==========================================================================
+export function attachTactilePhysics(scroller, grid = scroller) {
+    if (!scroller || !grid) return;
+    let touchStartY = 0;
+    let isAtBottom = false;
+
+    scroller.addEventListener("touchstart", e => {
+        const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+        isAtBottom = scroller.scrollTop >= maxScroll - 5;
+        if (isAtBottom) {
+            touchStartY = e.touches[0].clientY;
+            Array.from(grid.children).forEach(child => child.style.transition = 'none');
+        }
+    }, { passive: true });
+
+    scroller.addEventListener("touchmove", e => {
+        if (!isAtBottom) return;
+        const deltaY = touchStartY - e.touches[0].clientY; 
+        if (deltaY > 0) {
+            const children = Array.from(grid.children);
+            const total = children.length;
+            children.forEach((child, index) => {
+                const factor = Math.pow((index + 1) / total, 1.5); 
+                const stretch = deltaY * factor * 0.45;
+                child.style.transform = `translateY(-${stretch}px)`;
+            });
+        }
+    }, { passive: true });
+
+    scroller.addEventListener("touchend", () => {
+        if (isAtBottom) {
+            Array.from(grid.children).forEach(child => {
+                child.style.transition = 'transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
+                child.style.transform = 'translateY(0px)';
+            });
+            setTimeout(() => {
+                Array.from(grid.children).forEach(child => {
+                    child.style.transition = '';
+                    child.style.transform = '';
+                });
+            }, 600);
+            isAtBottom = false;
+        }
+    }, { passive: true });
 }

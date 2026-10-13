@@ -755,7 +755,8 @@ h3{font-size:clamp(1rem,2vw+.8rem,1.25rem)!important}
 /* --- Premium Scroll & Image Containment --- */
 .pos-product-container, .customer-product-scroll {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior-y: contain;
+  /* 🔓 Unlocks the native iOS/Android rubber-banding stretch physics! */
+  overscroll-behavior-y: auto !important; 
 }
 
 .pos-product-media img {
@@ -1175,22 +1176,26 @@ html, body {
   padding-bottom: 160px !important; /* Massive padding to clear the bottom action cart */
 }
 
-/* 5. VISUAL END OF PAGE INDICATOR */
+/* 5. PREMIUM HORIZON GLOW (END OF PAGE) */
 .pos-product-grid::after,
-.admin-list-scroll::after,
 .customer-product-grid::after,
+.admin-list-scroll::after,
 .admin-table-scroll::after,
 .cuisine-hero-grid::after {
-    content: "• • •";
+    content: "";
     grid-column: 1 / -1;
     display: block;
-    text-align: center;
-    color: var(--muted);
-    font-size: 28px;
-    letter-spacing: 12px;
-    padding: 40px 0 60px 0;
-    opacity: 0.3;
     width: 100%;
+    height: 140px; /* Deep padding to allow the OS to stretch beautifully */
+    clear: both;
+    margin-top: 35px;
+    
+    /* Draws a razor-thin, elegant glowing line that fades out perfectly at the edges */
+    background: radial-gradient(ellipse at center, var(--forest-500) 0%, transparent 60%);
+    background-size: 160px 2px;
+    background-position: center top;
+    background-repeat: no-repeat;
+    opacity: 0.4;
 }
 
 /* --- Admin Header Alignment & Logo Scaling --- */
@@ -1500,8 +1505,8 @@ html, body {
   width: 100% !important;
 }
 
-/* --- Center All Admin Page Headings --- */
-.section-title-row, .admin-hero {
+/* --- Center Admin Hero ONLY --- */
+.admin-hero {
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
@@ -1510,14 +1515,14 @@ html, body {
   width: 100% !important;
 }
 
-.section-title-row > div, .admin-hero > div {
+.admin-hero > div {
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
   text-align: center !important;
 }
 
-.section-title-row > div > *, .admin-hero > div > * {
+.admin-hero > div > * {
   text-align: center !important;
 }
 
@@ -2581,7 +2586,25 @@ html, body { overscroll-behavior-y: auto !important; overflow: visible !importan
     max-height: none !important;
     padding-bottom: 160px !important; 
 }
-.pos-product-grid::after, .customer-product-grid::after, .admin-list-scroll::after, .admin-table-scroll::after, .cuisine-hero-grid::after { content: "• • •"; grid-column: 1 / -1; display: block; text-align: center; color: var(--forest-900); font-size: 28px; font-weight: 900; letter-spacing: 12px; padding: 40px 0 80px 0; opacity: 0.15; width: 100%; clear: both; }
+/* 5. PREMIUM HORIZON GLOW (END OF PAGE) */
+.pos-product-grid::after,
+.customer-product-grid::after,
+.admin-list-scroll::after,
+.admin-table-scroll::after,
+.cuisine-hero-grid::after {
+    content: "";
+    grid-column: 1 / -1;
+    display: block;
+    width: 100%;
+    height: 140px; /* Deep padding to allow the OS to stretch beautifully */
+    clear: both;
+    margin-top: 35px;
+    background: radial-gradient(ellipse at center, var(--forest-500) 0%, transparent 60%);
+    background-size: 160px 2px;
+    background-position: center top;
+    background-repeat: no-repeat;
+    opacity: 0.4;
+}
 
 /* ==========================================================================
    ENTERPRISE RESPONSIVENESS & THEME LOCK (ADDED IN BATCH 3)
@@ -2692,11 +2715,6 @@ h3 {
   .app-topbar { padding: 0 12px !important; height: 56px !important; min-height: 56px !important; }
   .topbar-left img { height: 32px !important; }
   
-  /* Stack Title Rows vertically to prevent squishing */
-  .section-title-row { flex-direction: column !important; align-items: flex-start !important; gap: 16px !important; }
-  .section-title-row > div { width: 100% !important; }
-  .section-title-row button { width: 100% !important; justify-content: center !important; }
-  
   /* Wrap Admin Product rows so action buttons drop below the text */
   .admin-product-row { flex-wrap: wrap !important; gap: 12px !important; padding: 16px 12px !important; }
   .admin-product-actions { flex-direction: row !important; width: 100% !important; justify-content: flex-end !important; border-left: none !important; padding-left: 0 !important; border-top: 1px solid var(--line) !important; padding-top: 12px !important; margin-top: 4px !important; margin-left: 0 !important; }
@@ -2771,23 +2789,149 @@ h3 {
     #parity-unified-header, .pos-search-overlay { top: 56px !important; }
 }
 
-/* 5. VISUAL END OF PAGE INDICATOR (• • •) */
-.pos-product-grid::after,
-.customer-product-grid::after,
-.admin-list-scroll::after,
-.admin-table-scroll::after,
-.cuisine-hero-grid::after {
-    content: "• • •";
-    grid-column: 1 / -1;
-    display: block;
-    text-align: center;
-    color: var(--forest-900);
-    font-size: 28px;
-    font-weight: 900;
-    letter-spacing: 12px;
-    padding: 30px 0 80px 0;
-    margin-bottom: 20px;
-    opacity: 0.25;
-    width: 100%;
-    clear: both;
+/* 5. VISUAL END OF PAGE INDICATOR REMOVED */
+/* The Horizon Glow from Block 1 now controls this globally, so we leave this blank to prevent conflicts */
+
+/* ==========================================================================
+   ENTERPRISE HEADER ALIGNMENT (ABSOLUTE PERFECT FIT)
+========================================================================== */
+.section-title-row {
+    display: flex !important;
+    flex-direction: row !important; /* FORCES side-by-side */
+    justify-content: space-between !important;
+    align-items: center !important;
+    padding: 8px 14px !important; /* Tighter, cleaner padding */
+    margin: 0 0 14px 0 !important;
+    gap: 12px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    background: transparent !important;
+    border: none !important;
+}
+
+/* Left Text Block - Truncates elegantly */
+.section-title-row > div:first-child {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: flex-start !important;
+    text-align: left !important;
+    flex: 1 1 auto !important;
+    min-width: 0 !important; /* CRITICAL: allows text to truncate instead of pushing buttons off screen */
+    overflow: hidden !important;
+}
+
+/* Eyebrow Text */
+.section-title-row .eyebrow {
+    font-size: 0.65rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+    color: var(--gold-600) !important;
+    margin: 0 0 2px 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    width: 100% !important;
+    line-height: 1 !important;
+    text-align: left !important;
+}
+
+/* Main Bold Title */
+.section-title-row h1 {
+    font-size: clamp(1.05rem, 3.5vw, 1.3rem) !important; /* Compact, dynamic sizing */
+    font-weight: 900 !important;
+    color: var(--forest-950) !important;
+    margin: 0 !important;
+    line-height: 1.1 !important;
+    white-space: nowrap !important; /* Forces single line */
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    width: 100% !important;
+    text-align: left !important;
+}
+
+/* Subtitle Paragraph */
+.section-title-row p {
+    font-size: 0.75rem !important;
+    color: var(--forest-700) !important;
+    margin: 2px 0 0 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    width: 100% !important;
+    text-align: left !important;
+}
+
+/* Right Button Group Container */
+.section-title-row > button,
+.section-title-row .header-action-group,
+.section-title-row .export-excel-wrapper {
+    display: flex !important;
+    flex-direction: row !important; /* Always horizontal */
+    align-items: center !important;
+    justify-content: flex-end !important;
+    gap: 6px !important;
+    flex: 0 0 auto !important; /* Prevents stretching */
+    width: auto !important; 
+    margin: 0 !important;
+    position: static !important;
+    transform: none !important;
+}
+
+/* The Buttons */
+.section-title-row button,
+.section-title-row .header-action-group button,
+.section-title-row .export-excel-wrapper button,
+.section-title-row .btn-primary {
+    height: 36px !important; /* Compact app-like height */
+    padding: 0 14px !important;
+    font-size: 0.8rem !important;
+    font-weight: 800 !important;
+    border-radius: 8px !important;
+    white-space: nowrap !important;
+    width: auto !important; 
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 !important;
+    gap: 6px !important;
+}
+
+.section-title-row button i,
+.section-title-row .btn-primary i {
+    font-size: 16px !important;
+    margin: 0 !important;
+}
+
+/* MOBILE COMPACT OVERRIDES */
+@media (max-width: 550px) {
+    .section-title-row p {
+        display: none !important; /* Strip description to save vertical space */
+    }
+    
+    .section-title-row {
+        padding: 8px 10px !important;
+    }
+
+    /* The CSS Hack: Hide raw text inside buttons, show only icons for maximum space savings */
+    .section-title-row button span,
+    .section-title-row .header-action-group button span,
+    .section-title-row .export-excel-wrapper button span,
+    .section-title-row .btn-primary span {
+        display: none !important; 
+    }
+    
+    .section-title-row button,
+    .section-title-row .btn-primary {
+        font-size: 0 !important; /* Failsafe */
+        padding: 0 10px !important; /* Square-ish button */
+        gap: 0 !important;
+        width: 36px !important;
+    }
+    
+    .section-title-row button i,
+    .section-title-row .btn-primary i {
+        font-size: 18px !important; /* Restores icon visibility */
+    }
 }

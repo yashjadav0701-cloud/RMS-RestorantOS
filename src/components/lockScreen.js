@@ -206,8 +206,8 @@ export async function renderAdminLock({ mount, onUnlocked }) {
   const tenantName = tenant.name ? escapeHtml(tenant.name) : "RMS Workspace";
   const tenantIcon = tenant.icon_url ? versionedAsset(tenant.icon_url) : versionedAsset("assets/images/RMS_icon.svg");
 
-  // Check if this restaurant has set up their PIN yet
-  const { data: hasPin } = await supabase.rpc("check_admin_pin_exists");
+  // V2 ENGINE: Safely checks PIN existence with explicit tenant ID
+  const { data: hasPin } = await supabase.rpc("rms_check_pin_v2", { p_restaurant_id: tenant?.id || null });
 
   // Dynamically render either the "Setup" screen or the "Unlock" screen
   mount.innerHTML = `
@@ -251,18 +251,18 @@ export async function renderAdminLock({ mount, onUnlocked }) {
       const pin = mount.querySelector("#admin-pin").value.trim();
       
       if (!hasPin) {
-          // FIRST TIME SETUP
-          const { error } = await supabase.rpc("set_initial_admin_pin", { p_new_pin: pin });
-          if (error) throw error;
-          showToast("Workspace Secured", "Your master PIN has been saved.", "success");
-          onUnlocked();
-      } else {
-          // STANDARD LOGIN
-          const { data, error } = await supabase.rpc("verify_admin_pin", { p_pin: pin });
-          if (error) throw error;
-          if (data !== true) throw new Error("Invalid PIN or unauthorized.");
-          onUnlocked();
-      }
+            // FIRST TIME SETUP (V2)
+            const { error } = await supabase.rpc("rms_set_pin_v2", { p_restaurant_id: tenant?.id || null, p_new_pin: pin });
+            if (error) throw error;
+            showToast("Workspace Secured", "Your master PIN has been saved.", "success");
+            onUnlocked();
+        } else {
+            // STANDARD LOGIN (V2)
+            const { data, error } = await supabase.rpc("rms_verify_pin_v2", { p_restaurant_id: tenant?.id || null, p_pin: pin });
+            if (error) throw error;
+            if (data !== true) throw new Error("Invalid PIN or unauthorized.");
+            onUnlocked();
+        }
     } catch (error) {
       submitBtn.disabled = false;
       status.textContent = "";

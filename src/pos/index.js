@@ -127,18 +127,56 @@ export async function render({ mount }) {
 
         if (mySession) {
             if (mySession.status === "bill_requested" || mySession.status === "bill_ready") {
+                // 1. Show the Premium SVG Pending Screen
                 mount.innerHTML = `
-                  <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
+                  <style>
+                    @keyframes pulsePendingBlue { 0% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(2, 132, 199, 0); } 100% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0); } }
+                    @keyframes spinClock { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                  </style>
+                  <div class="thank-you-screen" id="live-pending-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
                     <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                      <div class="thank-you-icon" style="font-size: 5rem; color: var(--forest-900); margin-bottom: 24px; animation: float 3s ease-in-out infinite;"><i class="ph-fill ph-bell-ringing"></i></div>
-                      <h1 class="thank-you-title">Thank You!</h1>
-                      <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your bill is on the way to your table.</p>
+                      <div style="width: 104px; height: 104px; margin: 0 auto 28px; border-radius: 50%; background: linear-gradient(135deg, #38bdf8 0%, #0369a1 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(2, 132, 199, 0.3); animation: pulsePendingBlue 2s infinite cubic-bezier(0.16, 1, 0.3, 1);">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 56px; height: 56px;">
+                          <circle cx="50" cy="50" r="44" fill="none" stroke="#e0f2fe" stroke-width="8"/>
+                          <!-- Hour Hand (Shorter, slower spin: 12 seconds per rotation) -->
+                          <line x1="50" y1="50" x2="68" y2="50" stroke="#ffffff" stroke-width="8" stroke-linecap="round" style="transform-origin: 50px 50px; animation: spinClock 12s linear infinite;" />
+                          <!-- Minute Hand (Longer, faster spin: 1 second per rotation) -->
+                          <line x1="50" y1="50" x2="50" y2="24" stroke="#ffffff" stroke-width="8" stroke-linecap="round" style="transform-origin: 50px 50px; animation: spinClock 1s linear infinite;" />
+                          <circle cx="50" cy="50" r="6" fill="#ffffff" />
+                        </svg>
+                      </div>
+                      <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Pending</h1>
+                      <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your waiter will verify your payment and close the table shortly.</p>
                       <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                      <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">We hope you enjoyed your time at ${escapeHtml(restaurant.name)}.<br>Please wait while our staff attends to you.</p>
+                      <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}!</p>
                     </div>
                   </div>
                 `;
-                return () => {};
+
+                // 2. SUPER LIVE SYNC: If the customer refreshed during "Pending", we explicitly attach a mini WebSocket to listen for the "Closed" signal!
+                const pendingChannel = supabase.channel(`pending-tab-${currentTableObj.id}`)
+                  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${currentTableObj.id}` }, payload => {
+                     if (payload.new?.status === "closed") {
+                         localStorage.removeItem(sessionKey);
+                         localStorage.removeItem(legacySessionKey);
+                         
+                         const scr = document.getElementById("live-pending-screen");
+                         if (scr) {
+                             scr.innerHTML = `
+                                <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
+                                  <div class="thank-you-icon" style="font-size: 5rem; color: #16a34a; margin-bottom: 24px;"><i class="ph-fill ph-check-circle"></i></div>
+                                  <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Received</h1>
+                                  <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
+                                  <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                                  <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
+                                </div>
+                             `;
+                         }
+                         supabase.removeChannel(pendingChannel);
+                     }
+                  }).subscribe();
+
+                return () => { supabase.removeChannel(pendingChannel); };
             }
 
             if (mySession.status === "closed") {
@@ -146,39 +184,17 @@ export async function render({ mount }) {
                 const hoursSinceClosed = (Date.now() - closedDate.getTime()) / (1000 * 60 * 60);
 
                 if (hoursSinceClosed < 12) {
-                    const timeString = closedDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-                    const dateString = closedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-                    
+                    // Polite Hospitality: Show the Thank You screen on page refresh
                     mount.innerHTML = `
-                      <style>
-                        @keyframes lockSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-                        @keyframes lockPulse { 0% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0.1); transform: scale(1); } 50% { box-shadow: 0 0 0 15px rgba(18, 34, 22, 0); transform: scale(1.05); } 100% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0); transform: scale(1); } }
-                        .premium-lock-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--paper, #FCFCF9); padding: 24px; font-family: inherit; }
-                        .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 24px; padding: 40px 32px; box-shadow: 0 12px 40px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-                        .premium-lock-icon { width: 90px; height: 90px; background: transparent; border: none; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; animation: lockPulse 3s infinite ease-in-out; }
-                        .premium-lock-title { font-size: 1.75rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
-                        .premium-lock-desc { color: var(--forest-700); font-size: 0.95rem; line-height: 1.5; margin: 0 0 32px 0; }
-                        .premium-lock-notice { background: #f8faf9; border-radius: 16px; border: 1px solid rgba(18,34,22,0.08); padding: 20px; display: flex; gap: 14px; text-align: left; align-items: flex-start; }
-                        .premium-lock-notice i { color: var(--forest-900); font-size: 22px; margin-top: 2px; }
-                        .premium-lock-notice strong { display: block; color: var(--forest-950); font-size: 0.9rem; margin-bottom: 4px; }
-                        .premium-lock-notice span { color: var(--forest-700); font-size: 0.85rem; line-height: 1.5; }
-                      </style>
-                      <main class="premium-lock-screen">
-                        <div class="premium-lock-card">
-                          <div class="premium-lock-icon">
-                            <img src="${versionedAsset("assets/images/ses_exp.svg")}" alt="Session Expired" style="width: 100%; height: 100%; object-fit: contain;">
-                          </div>
-                          <h1 class="premium-lock-title">Session Expired</h1>
-                          <p class="premium-lock-desc">Your dining session for <strong>Table ${currentTableObj.table_no}</strong> was completed on <br><strong style="color: var(--forest-950);">${dateString} at ${timeString}</strong>.</p>
-                          <div class="premium-lock-notice">
-                              <i class="ph-bold ph-shield-check"></i>
-                              <div>
-                                <strong>Security Lock Active</strong>
-                                <span>To prevent remote ordering, this link is locked. To start a new order, please rescan the QR code on your table.</span>
-                              </div>
-                          </div>
+                      <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
+                        <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
+                          <div class="thank-you-icon" style="font-size: 5rem; color: #16a34a; margin-bottom: 24px;"><i class="ph-fill ph-check-circle"></i></div>
+                          <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Received</h1>
+                          <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
+                          <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                          <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
                         </div>
-                      </main>
+                      </div>
                     `;
                     return () => {};
                 } else {
@@ -406,7 +422,7 @@ export async function render({ mount }) {
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: tenantFilter }, payload => {
         
-        // 🔒 INSTANT LOCKOUT: If Admin closes the table, instantly boot the customer to the Session Expired screen
+        // 🔒 INSTANT UPDATE: If Admin clicks 'Paid', instantly show the polite Thank You screen via WebSocket
         if (isCustomerMode && payload.new?.status === "closed" && payload.new?.table_id === currentTableObj.id) {
            document.querySelectorAll('.app-modal').forEach(m => m.remove());
            document.body.classList.remove('modal-open');
@@ -415,40 +431,16 @@ export async function render({ mount }) {
            localStorage.removeItem(`rms.session.${currentTableObj.id}`);
            localStorage.removeItem(`fourflavours.session.${currentTableObj.id}`);
            
-           const closedDate = new Date(payload.new.updated_at || Date.now());
-           const timeString = closedDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-           const dateString = closedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-
            document.getElementById("app").innerHTML = `
-              <style>
-                @keyframes lockSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-                @keyframes lockPulse { 0% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0.1); transform: scale(1); } 50% { box-shadow: 0 0 0 15px rgba(18, 34, 22, 0); transform: scale(1.05); } 100% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0); transform: scale(1); } }
-                .premium-lock-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--paper, #FCFCF9); padding: 24px; font-family: inherit; }
-                .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 24px; padding: 40px 32px; box-shadow: 0 12px 40px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-                .premium-lock-icon { width: 90px; height: 90px; background: transparent; border: none; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; animation: lockPulse 3s infinite ease-in-out; }
-                .premium-lock-title { font-size: 1.75rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
-                .premium-lock-desc { color: var(--forest-700); font-size: 0.95rem; line-height: 1.5; margin: 0 0 32px 0; }
-                .premium-lock-notice { background: #f8faf9; border-radius: 16px; border: 1px solid rgba(18,34,22,0.08); padding: 20px; display: flex; gap: 14px; text-align: left; align-items: flex-start; }
-                .premium-lock-notice i { color: var(--forest-900); font-size: 22px; margin-top: 2px; }
-                .premium-lock-notice strong { display: block; color: var(--forest-950); font-size: 0.9rem; margin-bottom: 4px; }
-                .premium-lock-notice span { color: var(--forest-700); font-size: 0.85rem; line-height: 1.5; }
-              </style>
-              <main class="premium-lock-screen">
-                <div class="premium-lock-card">
-                  <div class="premium-lock-icon">
-                    <img src="${versionedAsset("assets/images/ses_exp.svg")}" alt="Session Expired" style="width: 100%; height: 100%; object-fit: contain;">
-                  </div>
-                  <h1 class="premium-lock-title">Session Expired</h1>
-                  <p class="premium-lock-desc">Your dining session for <strong>Table ${currentTableObj.table_no}</strong> was completed on <br><strong style="color: var(--forest-950);">${dateString} at ${timeString}</strong>.</p>
-                  <div class="premium-lock-notice">
-                      <i class="ph-bold ph-shield-check"></i>
-                      <div>
-                        <strong>Security Lock Active</strong>
-                        <span>To prevent remote ordering, this link is locked. To start a new order, please rescan the QR code on your table.</span>
-                      </div>
-                  </div>
+              <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
+                <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
+                  <div class="thank-you-icon" style="font-size: 5rem; color: #16a34a; margin-bottom: 24px;"><i class="ph-fill ph-check-circle"></i></div>
+                  <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Received</h1>
+                  <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
+                  <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                  <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
                 </div>
-              </main>
+              </div>
            `;
         }
         window.dispatchEvent(new Event("ff_live_update"));
@@ -864,24 +856,8 @@ export async function render({ mount }) {
     }
 
     const scroller = area.querySelector("#pos-product-container");
+    // Duplicate 'const grid' removed. The physics engine will securely use the 'grid' variable already declared above!
     if (scroller) {
-      // APP-LIKE PULL-TO-REFRESH GESTURE
-      let touchStartY = 0;
-      scroller.addEventListener("touchstart", e => {
-         if (scroller.scrollTop <= 0) touchStartY = e.touches[0].clientY;
-      }, { passive: true });
-
-      scroller.addEventListener("touchend", e => {
-         if (scroller.scrollTop <= 0 && touchStartY > 0) {
-            const touchEndY = e.changedTouches[0].clientY;
-            if (touchEndY - touchStartY > 120) { // If dragged down more than 120px
-                showToast("Refreshing...", "Syncing live menu.");
-                setTimeout(() => window.location.reload(), 400);
-            }
-         }
-         touchStartY = 0;
-      }, { passive: true });
-
       let lastScroll = 0;
       scroller.addEventListener("scroll", e => {
         const current = e.target.scrollTop;
@@ -896,6 +872,57 @@ export async function render({ mount }) {
         }
         lastScroll = current;
       }, { passive: true });
+
+      // --- iOS TACTILE CARD SEPARATION PHYSICS ---
+      if (grid) {
+          let touchStartY = 0;
+          let isAtBottom = false;
+
+          scroller.addEventListener("touchstart", e => {
+              // 1. Detect if we are at the absolute bottom of the menu
+              const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+              isAtBottom = scroller.scrollTop >= maxScroll - 5;
+              if (isAtBottom) {
+                  touchStartY = e.touches[0].clientY;
+                  // Strip transitions so the cards stick instantly to your finger
+                  Array.from(grid.children).forEach(child => child.style.transition = 'none');
+              }
+          }, { passive: true });
+
+          scroller.addEventListener("touchmove", e => {
+              if (!isAtBottom) return;
+              const deltaY = touchStartY - e.touches[0].clientY; 
+              if (deltaY > 0) { // If pulling UP past the boundary
+                  const children = Array.from(grid.children);
+                  const total = children.length;
+                  children.forEach((child, index) => {
+                      // 2. Exponential Math: Bottom cards pull away much faster than top cards
+                      const factor = Math.pow((index + 1) / total, 1.5); 
+                      const stretch = deltaY * factor * 0.45; // 0.45 controls the "spring stiffness"
+                      child.style.transform = `translateY(-${stretch}px)`;
+                  });
+              }
+          }, { passive: true });
+
+          scroller.addEventListener("touchend", () => {
+              if (isAtBottom) {
+                  Array.from(grid.children).forEach(child => {
+                      // 3. Apple-style cubic-bezier snap back
+                      child.style.transition = 'transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
+                      child.style.transform = 'translateY(0px)';
+                  });
+                  
+                  // 4. Safely return styles to normal so hover effects work again
+                  setTimeout(() => {
+                      Array.from(grid.children).forEach(child => {
+                          child.style.transition = '';
+                          child.style.transform = '';
+                      });
+                  }, 600);
+                  isAtBottom = false;
+              }
+          }, { passive: true });
+      }
     }
 
     renderProductQuantities();
@@ -984,7 +1011,19 @@ export async function render({ mount }) {
         host.querySelectorAll(".table-select-btn").forEach(btn => {
           btn.addEventListener("click", () => {
             const table = tables.find(t => t.id === btn.dataset.tableId) ?? null;
+            
+            // FIX: CART MEMORY. Securely cache the items before the table state changes!
+            const savedCartItems = JSON.parse(JSON.stringify(state.getState().items || []));
+            
             state.setTable(table);
+            
+            // Instantly inject the cached items back into the new table session
+            if (state.getState().items.length === 0 && savedCartItems.length > 0) {
+                savedCartItems.forEach(item => {
+                    for (let i = 0; i < item.quantity; i++) state.addProduct(item);
+                });
+            }
+            
             modal.close();
             onSelected?.(table);
           });
@@ -1133,11 +1172,161 @@ export async function render({ mount }) {
     const titleStr = current_state.orderType === "dine_in" ? `Table ${t ? t.table_no : "Unknown"} · Live Tab` : `Takeaway · Active Order`;
     
     let displayItems = [];
-    let aggregatedBill = { subtotal: 0, cgst: 0, sgst: 0, rounding: 0, grand_total: 0 };
+    // FIX: Pre-fill with the known order data so it never flashes 0.00!
+    let aggregatedBill = { 
+        subtotal: Number(order?.subtotal || 0), 
+        cgst: Number(order?.cgst || 0), 
+        sgst: Number(order?.sgst || 0), 
+        rounding: Number(order?.rounding || 0), 
+        grand_total: Number(order?.grand_total || 0) 
+    };
     let rootOrder = order;
     
     let isPrepAnimating = showPrepAnimation;
 
+    // --- RAZORPAY & UPI GATEWAY LOGIC ---
+    const isGatewayEnabled = isCustomerMode && settings.gateway_active && window.Razorpay;
+    const hasUpi = isCustomerMode && settings.upi_id;
+    const upiString = hasUpi ? `upi://pay?pa=${encodeURIComponent(settings.upi_id.trim())}&pn=${encodeURIComponent(settings.restaurant_name.trim())}&am=${Number(aggregatedBill.grand_total).toFixed(2)}&cu=INR&tn=${encodeURIComponent(`Table ${t ? t.table_no : "Unknown"}`)}` : '';
+
+    const handleCustomerPaymentRequest = async (ctx) => {
+        ctx.button.disabled = true;
+        ctx.button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i>`;
+        try {
+            const token = customerSessionToken || localStorage.getItem(`rms.session.${current_state.tableId}`) || localStorage.getItem(`fourflavours.session.${current_state.tableId}`);
+            const { error: rpcError } = await supabase.rpc("request_session_bill", { p_table_id: current_state.tableId, p_session_token: token });
+            if (rpcError) throw rpcError;
+            
+            adminAlertChannel.send({ type: 'broadcast', event: 'customer_bill', payload: { tableId: current_state.tableId } });
+            
+            ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
+            document.getElementById("app").innerHTML = `
+              <div class="thank-you-screen">
+                <div class="thank-you-card">
+                  <div class="thank-you-icon"><i class="ph-fill ph-bell-ringing"></i></div>
+                  <h1 class="thank-you-title">Thank You!</h1>
+                  <p class="thank-you-message">Your waiter has been notified and will bring the bill to your table.</p>
+                  <div class="thank-you-divider"></div>
+                  <p class="thank-you-footer">We hope you enjoyed your time at ${escapeHtml(restaurant.name)}.</p>
+                </div>
+              </div>`;
+        } catch(e) {
+            showToast("Action Failed", e.message, "error");
+            ctx.button.disabled = false;
+        }
+    };
+
+    // Build the side-by-side flexbox buttons dynamically
+    const generateBillActions = [];
+    if (hasUpi) {
+        generateBillActions.push({ 
+            label: "Pay via UPI App", 
+            icon: "ph-device-mobile", 
+            className: "btn-primary", 
+            style: "flex: 1; background: #0284c7; border-color: #0284c7;", 
+            onClick: (ctx) => {
+                window.location.href = upiString; // Try to launch Google Pay / PhonePe directly
+                handleCustomerPaymentRequest(ctx);
+            }
+        });
+    }
+
+    generateBillActions.push({ 
+        label: "Pay at Counter", 
+        className: "btn-quiet", 
+        style: "flex: 1;", 
+        onClick: (ctx) => handleCustomerPaymentRequest(ctx) 
+    });
+
+    if (isGatewayEnabled) {
+      // If Razorpay is enabled, we add it as a primary full-width button
+      generateBillActions.push({ label: "Pay Online Now", icon: "ph-credit-card", className: "btn-primary", style: "width: 100%; background: var(--forest-900); border-color: var(--forest-900); margin-top: 8px;", onClick: async (ctx) => {
+          ctx.button.disabled = true;
+          ctx.button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Processing...`;
+          try {
+             const { data: rzpKey } = await supabase.rpc("get_razorpay_key", { p_restaurant_id: activeTenantId });
+             if (!rzpKey) throw new Error("Payment gateway is temporarily unavailable.");
+
+             const { data: sess } = await supabase.from("dining_sessions").select("id").eq("table_id", current_state.tableId).in("status", ["open", "bill_requested"]).maybeSingle();
+             if (!sess) throw new Error("Dining session expired.");
+
+             const amountInPaise = Math.round(aggregatedBill.grand_total * 100);
+             
+             const options = {
+                 key: rzpKey,
+                 amount: amountInPaise,
+                 currency: "INR",
+                 name: settings.restaurant_name,
+                 description: `Table ${t ? t.table_no : "Unknown"} Bill`,
+                 image: restaurant.icon_url ? versionedAsset(restaurant.icon_url) : null,
+                 handler: async function (response) {
+                     try {
+                        const { error: updateError } = await supabase.rpc("complete_session_payment", { p_session_id: sess.id, p_payment_method: "online" });
+                        if (updateError) throw updateError;
+                        
+                        ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
+                        document.getElementById("app").innerHTML = `
+                          <div class="thank-you-screen">
+                            <div class="thank-you-card">
+                              <div class="thank-you-icon" style="color: #16a34a;"><i class="ph-fill ph-check-circle"></i></div>
+                              <h1 class="thank-you-title">Payment Successful</h1>
+                              <p class="thank-you-message">Your bill of ${money(aggregatedBill.grand_total, settings.currency_symbol)} has been paid!</p>
+                              <div class="thank-you-divider"></div>
+                              <p class="thank-you-footer">You are free to leave. We hope you enjoyed your time at ${escapeHtml(restaurant.name)}.</p>
+                            </div>
+                          </div>`;
+                     } catch(err) {
+                        showToast("System Sync Error", "Payment received, but failed to close table. Please show staff.", "error");
+                     }
+                 },
+                 prefill: { name: "Guest", email: "guest@example.com", contact: "9999999999" },
+                 theme: { color: restaurant.foreground_color || "#122216" }
+             };
+             
+             const rzp = new window.Razorpay(options);
+             rzp.on('payment.failed', function (response){
+                  showToast("Payment Failed", response.error.description, "error");
+                  ctx.button.disabled = false;
+                  ctx.button.innerHTML = `<i class="ph-bold ph-credit-card"></i> Pay Online Now`;
+             });
+             rzp.open();
+             
+          } catch(e) {
+             showToast("Gateway Error", e.message, "error");
+             ctx.button.disabled = false;
+             ctx.button.innerHTML = `<i class="ph-bold ph-credit-card"></i> Pay Online Now`;
+          }
+      }});
+    }
+
+    const adminGenerateBillAction = { label: "Yes, I'm Done", className: "btn-primary", onClick: async (ctx) => {
+        window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
+        ctx.button.disabled = true;
+        try {
+            const { data: sess } = await supabase.from("dining_sessions").select("id").eq("table_id", current_state.tableId).in("status", ["open", "bill_requested"]).maybeSingle();
+            if (sess) {
+                const { error: updateError } = await supabase.rpc("complete_session_payment", { p_session_id: sess.id, p_payment_method: "cash" });
+                if (updateError) throw updateError;
+            }
+        } catch(e) { 
+            showToast("Action Failed", e.message, "error");
+            ctx.button.disabled = false;
+            return; 
+        }
+        
+        ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
+        
+        showReceiptPreview({ 
+          order: {
+            ...rootOrder, subtotal: aggregatedBill.subtotal, cgst: aggregatedBill.cgst, sgst: aggregatedBill.sgst, rounding: aggregatedBill.rounding, grand_total: aggregatedBill.grand_total
+          }, 
+          items: displayItems, settings, current_state 
+        }); 
+    }};
+
+    const finalActionsList = isCustomerMode ? generateBillActions : [ { label: "No, Go Back", className: "btn-quiet", onClick: (ctx) => ctx.close() }, adminGenerateBillAction ];
+
+    // FIX: Renamed back to 'modal' to prevent the silent JavaScript reference crash!
     const modal = openAppModal({
       title: titleStr,
       subtitle: "Your live table tab. Add more items or request the final bill.",
@@ -1160,72 +1349,193 @@ export async function render({ mount }) {
       actions: [
         { label: "Keep Ordering", icon: "ph-plus-circle", className: "btn-quiet", onClick: ({ close }) => close() },
         { label: isCustomerMode ? "Request Bill" : "Complete Order", icon: "ph-receipt", className: "btn-primary", onClick: ({ close }) => {
-            openAppModal({
-              title: isCustomerMode ? "Request Final Bill?" : "Generate Final Bill?",
-              subtitle: isCustomerMode ? "Your waiter will bring the physical bill to your table." : "Confirm you are finished adding items to this table.",
-              body: `<div class="danger-confirm"><div class="danger-confirm-icon" style="background: var(--sage-200); color: var(--forest-900);"><i class="ph-bold ph-receipt"></i></div><h3>${isCustomerMode ? "Request Final Bill?" : "Generate Final Bill?"}</h3><p>${isCustomerMode ? "This will finalize your tab. Are you ready to pay?" : "This will finalize the tab and lock the table from further ordering."}</p></div>`,
-              actions: [
-                { label: "No, Go Back", className: "btn-quiet", onClick: (ctx) => ctx.close() },
-                { label: isCustomerMode ? "Yes, Request Bill" : "Yes, I'm Done", className: "btn-primary", onClick: async (ctx) => {
-                    if (!isCustomerMode) window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-                    ctx.button.disabled = true;
-                    try {
-                      if (current_state.orderType === "dine_in") {
-                        if (isCustomerMode) {
-                              const token = customerSessionToken || localStorage.getItem(`rms.session.${current_state.tableId}`) || localStorage.getItem(`fourflavours.session.${current_state.tableId}`);
-                              const { error: rpcError } = await supabase.rpc("request_session_bill", { p_table_id: current_state.tableId, p_session_token: token });
-                              if (rpcError) throw rpcError;
-                              
-                              adminAlertChannel.send({ type: 'broadcast', event: 'customer_bill', payload: { tableId: current_state.tableId } });
-                            } else {
-                          const { data: sess } = await supabase.from("dining_sessions").select("id").eq("table_id", current_state.tableId).in("status", ["open", "bill_requested"]).maybeSingle();
-                          if (sess) {
-                            // FAST-TRACK WORKFLOW: Generating the final bill as an Admin immediately settles and closes the table.
-                            const { error: updateError } = await supabase.rpc("complete_session_payment", { p_session_id: sess.id, p_payment_method: "cash" });
-                            if (updateError) throw updateError;
-                          }
-                        }
-                      }
-                    } catch(e) { 
-                      console.error("Failed to process bill request:", e); 
-                      showToast("Action Failed", e.message || "Could not process request.", "error");
-                      ctx.button.disabled = false;
-                      return; 
-                    }
+            
+            // --- DYNAMIC PAYMENT LOGIC (EVALUATED EXACTLY ON CLICK SO TOTAL IS FLAWLESS) ---
+            const finalTotal = aggregatedBill.grand_total;
+            const formattedTotal = money(finalTotal, settings.currency_symbol);
+            
+            const isGatewayEnabled = isCustomerMode && settings.gateway_active && window.Razorpay;
+            const hasUpi = isCustomerMode && settings.upi_id;
+            const dynamicUpiString = hasUpi ? `upi://pay?pa=${encodeURIComponent(settings.upi_id.trim())}&pn=${encodeURIComponent(settings.restaurant_name.trim())}&am=${Number(finalTotal).toFixed(2)}&cu=INR&tn=${encodeURIComponent(`Table ${t ? t.table_no : "Unknown"}`)}` : '';
+            
+            // SMART OS DETECTION: Determines if the customer is using a mobile phone
+            const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+            const handleCustomerPaymentRequest = async (ctx) => {
+                ctx.button.disabled = true;
+                ctx.button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i>`;
+                try {
+                    const token = customerSessionToken || localStorage.getItem(`rms.session.${current_state.tableId}`) || localStorage.getItem(`fourflavours.session.${current_state.tableId}`);
+                    const { error: rpcError } = await supabase.rpc("request_session_bill", { p_table_id: current_state.tableId, p_session_token: token });
+                    if (rpcError) throw rpcError;
                     
-                    ctx.close(); close(); 
-                    delete activeTableOrders[sessionKey];
+                    adminAlertChannel.send({ type: 'broadcast', event: 'customer_bill', payload: { tableId: current_state.tableId } });
                     
-                    if (isCustomerMode) {
-                      document.getElementById("app").innerHTML = `
-                        <div class="thank-you-screen">
-                          <div class="thank-you-card">
-                            <div class="thank-you-icon"><i class="ph-fill ph-bell-ringing"></i></div>
-                            <h1 class="thank-you-title">Thank You!</h1>
-                            <p class="thank-you-message">Your bill is on the way to your table.</p>
-                            <div class="thank-you-divider"></div>
-                            <p class="thank-you-footer">We hope you enjoyed your time at ${escapeHtml(restaurant.name)}.<br>Please wait while our staff attends to you.</p>
-                          </div>
+                    ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
+                    
+                    // FIX: MANUAL CHECKOUT UX - Politely informs the customer the admin is verifying payment
+                    document.getElementById("app").innerHTML = `
+                      <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
+                        <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
+                          <div class="thank-you-icon" style="font-size: 5rem; color: #0284c7; margin-bottom: 24px;"><i class="ph-fill ph-clock-countdown"></i></div>
+                          <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Pending</h1>
+                          <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your waiter will verify your payment and close the table shortly.</p>
+                          <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                          <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}!</p>
                         </div>
-                      `;
-                    } else {
-                      showReceiptPreview({ 
-                        order: {
-                          ...rootOrder,
-                          subtotal: aggregatedBill.subtotal,
-                          cgst: aggregatedBill.cgst,
-                          sgst: aggregatedBill.sgst,
-                          rounding: aggregatedBill.rounding,
-                          grand_total: aggregatedBill.grand_total
-                        }, 
-                        items: displayItems, 
-                        settings, 
-                        current_state 
-                      }); 
+                      </div>`;
+                } catch(e) {
+                    showToast("Action Failed", e.message, "error");
+                    ctx.button.disabled = false;
+                }
+            };
+
+            // Build the side-by-side flexbox buttons dynamically
+            const generateBillActions = [];
+            
+            // IF ON MOBILE: Show the "Pay via UPI App" button next to "Pay at Counter"
+            if (hasUpi && isMobileDevice) {
+                generateBillActions.push({ 
+                    label: "Pay via UPI App", 
+                    icon: "ph-device-mobile", 
+                    className: "btn-primary", 
+                    style: "flex: 1; background: #0284c7; border-color: #0284c7; white-space: nowrap; padding: 0 8px;", 
+                    onClick: (ctx) => {
+                        window.location.href = dynamicUpiString; // Instantly launch GPay / PhonePe
+                        setTimeout(() => handleCustomerPaymentRequest(ctx), 1200); // Trigger the pending screen in the background
                     }
-                }}
-              ]
+                });
+            }
+
+            generateBillActions.push({ 
+                label: "Pay at Counter", 
+                className: "btn-quiet", 
+                style: "flex: 1; white-space: nowrap; padding: 0 8px;", 
+                onClick: (ctx) => handleCustomerPaymentRequest(ctx) 
             });
+
+            if (isGatewayEnabled) {
+              generateBillActions.push({ label: "Pay Online Now", icon: "ph-credit-card", className: "btn-primary", style: "width: 100%; background: var(--forest-900); border-color: var(--forest-900); margin-top: 8px;", onClick: async (ctx) => {
+                  ctx.button.disabled = true;
+                  ctx.button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Processing...`;
+                  try {
+                     const { data: rzpKey } = await supabase.rpc("get_razorpay_key", { p_restaurant_id: activeTenantId });
+                     if (!rzpKey) throw new Error("Payment gateway is temporarily unavailable.");
+
+                     const { data: sess } = await supabase.from("dining_sessions").select("id").eq("table_id", current_state.tableId).in("status", ["open", "bill_requested"]).maybeSingle();
+                     if (!sess) throw new Error("Dining session expired.");
+
+                     const amountInPaise = Math.round(finalTotal * 100);
+                     
+                     const options = {
+                         key: rzpKey,
+                         amount: amountInPaise,
+                         currency: "INR",
+                         name: settings.restaurant_name,
+                         description: `Table ${t ? t.table_no : "Unknown"} Bill`,
+                         image: restaurant.icon_url ? versionedAsset(restaurant.icon_url) : null,
+                         handler: async function (response) {
+                             try {
+                                const { error: updateError } = await supabase.rpc("complete_session_payment", { p_session_id: sess.id, p_payment_method: "online" });
+                                if (updateError) throw updateError;
+                                
+                                ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
+                                // UNIFIED SUCCESS UI: Matches the WebSocket exact HTML to prevent flickering
+                                document.getElementById("app").innerHTML = `
+                                  <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
+                                    <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
+                                      <div class="thank-you-icon" style="font-size: 5rem; color: #16a34a; margin-bottom: 24px;"><i class="ph-fill ph-check-circle"></i></div>
+                                      <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Received</h1>
+                                      <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
+                                      <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                                      <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
+                                    </div>
+                                  </div>`;
+                             } catch(err) {
+                                showToast("System Sync Error", "Payment received, but failed to close table. Please show staff.", "error");
+                             }
+                         },
+                         prefill: { name: "Guest", email: "guest@example.com", contact: "9999999999" },
+                         theme: { color: restaurant.foreground_color || "#122216" }
+                     };
+                     
+                     const rzp = new window.Razorpay(options);
+                     rzp.on('payment.failed', function (response){
+                          showToast("Payment Failed", response.error.description, "error");
+                          ctx.button.disabled = false;
+                          ctx.button.innerHTML = `<i class="ph-bold ph-credit-card"></i> Pay Online Now`;
+                     });
+                     rzp.open();
+                     
+                  } catch(e) {
+                     showToast("Gateway Error", e.message, "error");
+                     ctx.button.disabled = false;
+                     ctx.button.innerHTML = `<i class="ph-bold ph-credit-card"></i> Pay Online Now`;
+                  }
+              }});
+            }
+
+            const adminGenerateBillAction = { label: "Yes, I'm Done", className: "btn-primary", onClick: async (ctx) => {
+                window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
+                ctx.button.disabled = true;
+                try {
+                    const { data: sess } = await supabase.from("dining_sessions").select("id").eq("table_id", current_state.tableId).in("status", ["open", "bill_requested"]).maybeSingle();
+                    if (sess) {
+                        const { error: updateError } = await supabase.rpc("complete_session_payment", { p_session_id: sess.id, p_payment_method: "cash" });
+                        if (updateError) throw updateError;
+                    }
+                } catch(e) { 
+                    showToast("Action Failed", e.message, "error");
+                    ctx.button.disabled = false;
+                    return; 
+                }
+                
+                ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
+                
+                showReceiptPreview({ 
+                  order: {
+                    ...rootOrder, subtotal: aggregatedBill.subtotal, cgst: aggregatedBill.cgst, sgst: aggregatedBill.sgst, rounding: aggregatedBill.rounding, grand_total: aggregatedBill.grand_total
+                  }, 
+                  items: displayItems, settings, current_state 
+                }); 
+            }};
+
+            const finalActionsList = isCustomerMode ? generateBillActions : [ { label: "No, Go Back", className: "btn-quiet", onClick: (ctx) => ctx.close() }, adminGenerateBillAction ];
+
+            const settleModal = openAppModal({
+              title: isCustomerMode ? "Settle Your Bill" : "Generate Final Bill?",
+              subtitle: isCustomerMode ? "Choose how you would like to pay." : "Confirm you are finished adding items to this table.",
+              body: `<div class="danger-confirm" style="text-align: center;">
+                ${isCustomerMode ? `
+                  ${hasUpi ? `
+                    <div style="margin: 10px auto 20px; padding: 24px; background: #ffffff; border: 1px solid var(--sage-200); border-radius: 24px; display: inline-block; box-shadow: 0 12px 32px rgba(18, 34, 22, 0.08);">
+                      <div id="customer-checkout-qr" style="display: flex; justify-content: center; width: 180px; height: 180px; margin: 0 auto; background: #fff;"></div>
+                      <div style="margin-top: 16px;">
+                        <p style="margin: 0; font-size: 13px; color: var(--muted); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;">Scan to Pay</p>
+                        <p style="margin: 4px 0 0; font-size: 24px; color: var(--forest-950); font-weight: 900;">${formattedTotal}</p>
+                      </div>
+                    </div>
+                  ` : `
+                    <div class="danger-confirm-icon" style="background: var(--sage-200); color: var(--forest-900);"><i class="ph-bold ph-receipt"></i></div>
+                    <h3>Ready to Pay?</h3>
+                    <p>Your total is <strong>${formattedTotal}</strong>.</p>
+                  `}
+                ` : `
+                  <div class="danger-confirm-icon" style="background: var(--sage-200); color: var(--forest-900);"><i class="ph-bold ph-receipt"></i></div>
+                  <h3>Generate Final Bill?</h3>
+                  <p>This will finalize the tab and lock the table from further ordering.</p>
+                `}
+              </div>`,
+              actions: finalActionsList
+            });
+
+            // Dynamically paint the QR code inside the modal body!
+            if (hasUpi && globalThis.QRCode) {
+                setTimeout(() => {
+                    const qrWrap = settleModal.root.querySelector("#customer-checkout-qr");
+                    if (qrWrap) new QRCode(qrWrap, { text: dynamicUpiString, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M, colorDark: "#122216", colorLight: "#ffffff" });
+                }, 50);
+            }
           }
         }
       ]
@@ -1394,8 +1704,8 @@ export async function render({ mount }) {
     if (isPrepAnimating) {
         setTimeout(() => {
             isPrepAnimating = false;
-            if (displayItems.length > 0) renderDash(); 
-        }, 2800);
+            renderDash(); // FIX: Unconditionally render the dash to clear the animation, even if the network is slow
+        }, 3200); // Wait exactly 3.2 seconds before transitioning
     }
     
     fetchLiveSession(); 
