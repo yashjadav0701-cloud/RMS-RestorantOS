@@ -2316,25 +2316,7 @@ async function renderAdminWorkspace(mount) {
           </form>
         </section>
         
-        <!-- Payment Gateway Section -->
-        <section class="admin-panel settings-panel" style="margin-top: 16px;">
-          <div class="panel-head" style="margin-bottom: 16px;">
-            <div><span class="eyebrow">Online Payments</span><h2>Razorpay Gateway</h2></div>
-          </div>
-          <form id="gateway-form" class="settings-form-grid" autocomplete="off">
-            <label class="switch-field settings-wide"><input type="checkbox" name="gateway_active" ${settings.gateway_active ? "checked" : ""}><span class="switch-ui"></span><span><strong>Enable Razorpay Checkout</strong><small>Allow customers to pay via UPI/Cards directly from their phone when they request the bill.</small></span></label>
-            
-            <!-- FIX: Added autocomplete="new-password" to force browsers to keep these fields empty -->
-            <label class="field"><span>Key ID</span><input class="field-input" name="razorpay_key" value="${escapeHtml(settings.razorpay_key || "")}" placeholder="rzp_live_..." autocomplete="new-password"></label>
-            <label class="field"><span>Key Secret</span><input class="field-input" type="password" name="razorpay_secret" value="${escapeHtml(settings.razorpay_secret || "")}" placeholder="••••••••••••" autocomplete="new-password"></label>
-            
-            <div class="settings-wide" style="margin-top: 8px;">
-              <button class="btn btn-primary" type="submit" id="save-gateway-btn" style="background: #0284c7; border-color: #0284c7; height: 48px; border-radius: 12px; font-size: 15px;">
-                <i class="ph-bold ph-credit-card"></i> Save Gateway
-              </button>
-            </div>
-          </form>
-        </section>`;
+        `;
 
       // 1. Add Instant Image Previews for the Uploaders
       area.querySelector("#icon_upload")?.addEventListener("change", e => {
@@ -2549,39 +2531,7 @@ async function renderAdminWorkspace(mount) {
         }
       });
 
-      // --- RAZORPAY GATEWAY SAVER ---
-      area.querySelector("#gateway-form").addEventListener("submit", async e => {
-        e.preventDefault();
-        const form = e.currentTarget;
-        const btn = form.querySelector("#save-gateway-btn");
-        const ogText = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Saving...`;
-
-        const fd = new FormData(form);
-        const payload = {
-          restaurant_id: window.__ACTIVE_TENANT__.id,
-          gateway_active: fd.get("gateway_active") === "on",
-          razorpay_key: String(fd.get("razorpay_key") || "").trim(),
-          razorpay_secret: String(fd.get("razorpay_secret") || "").trim()
-        };
-
-        try {
-          const { error } = await supabase.from("app_settings").upsert(payload, { onConflict: 'restaurant_id' });
-          if (error) throw error;
-          
-          Object.assign(settings, payload);
-          showToast("Gateway Saved", "Razorpay settings updated successfully.", "success");
-          btn.innerHTML = `<i class="ph-bold ph-check"></i> Saved`;
-          
-          setTimeout(() => { btn.innerHTML = ogText; btn.disabled = false; }, 2500);
-        } catch (error) {
-          showToast("Update Failed", error.message, "error");
-          btn.innerHTML = ogText;
-          btn.disabled = false;
-        }
-      });
-    }); 
+      }); 
   }
 
   function openTableEditor(table = null) {
