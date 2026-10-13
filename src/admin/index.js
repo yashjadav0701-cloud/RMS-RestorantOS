@@ -567,7 +567,7 @@ async function renderAdminWorkspace(mount) {
   const activeTenant = window.__ACTIVE_TENANT__ || {};
   const logoUrl = activeTenant.logo_url ? versionedAsset(activeTenant.logo_url) : null;
   const iconUrl = activeTenant.icon_url ? versionedAsset(activeTenant.icon_url) : null;
-  const tenantName = activeTenant.name || "RMS Cloud";
+  const tenantName = activeTenant.name || "Table Forge";
 
   mount.innerHTML = `
     <section class="admin-page">
@@ -1040,7 +1040,7 @@ async function renderAdminWorkspace(mount) {
         ` : ""}
         <footer class="thermal-foot">
           <p>${escapeHtml(settings.receipt_footer || 'Thank you for dining with us!')}</p>
-          <div class="thermal-software-tag">Powered by RMS Cloud</div>
+          <div class="thermal-software-tag">Powered by Table Forge System</div>
         </footer>
       </article>
     `;
@@ -2513,7 +2513,7 @@ async function renderAdminWorkspace(mount) {
           const drawerName = document.querySelector(".app-drawer .drawer-head strong");
           if (drawerName) drawerName.textContent = payload.restaurant_name;
           
-          document.title = `${payload.restaurant_name} | RMS`;
+          document.title = `${payload.restaurant_name} | Table Forge`;
 
           showToast("Settings saved", "Configuration updated."); 
           

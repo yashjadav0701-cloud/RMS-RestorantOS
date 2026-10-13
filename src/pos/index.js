@@ -5,7 +5,7 @@ import { escapeHtml, money, mountNavigation, openAppModal, showToast } from "../
 
 export async function render({ mount }) {
   if (!supabase) {
-    mount.innerHTML = `<section class="access-screen dark-access"><div class="access-card"><div class="access-logo" style="display:grid; place-items:center; color:var(--forest-900); background:#fff;"><i class="ph-bold ph-warning-circle" style="font-size:32px;"></i></div><h1>RMS Cloud POS</h1><p>Supabase configuration is missing.</p></div></section>`;
+    mount.innerHTML = `<section class="access-screen dark-access"><div class="access-card"><div class="access-logo" style="display:grid; place-items:center; color:var(--forest-900); background:#fff;"><i class="ph-bold ph-warning-circle" style="font-size:32px;"></i></div><h1>Table Forge System</h1><p>Supabase configuration is missing.</p></div></section>`;
     return () => {};
   }
 
@@ -57,7 +57,7 @@ export async function render({ mount }) {
   if (productsResult.error) throw productsResult.error;
   if (tablesResult.error) throw tablesResult.error;
 
-  const restaurant = window.__ACTIVE_TENANT__ || { name: "RMS POS", background_color: "#fcfbf7", foreground_color: "#122216" };
+  const restaurant = window.__ACTIVE_TENANT__ || { name: "Table Forge", background_color: "#fcfbf7", foreground_color: "#122216" };
   const settings = { ...DEFAULT_SETTINGS, ...(settingsResult.data ?? {}) };
   const products = productsResult.data ?? [];
   const cuisines = cuisinesResult.data ?? [];
@@ -147,42 +147,50 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
                   </div>
                 `;
 
-                const pendingChannel = supabase.channel(`pending-tab-${currentTableObj.id}`)
-                  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${currentTableObj.id}` }, payload => {
-                     if (payload.new?.status === "closed") {
-                         const scr = document.getElementById("live-pending-screen");
-                         if (scr) {
-                             scr.innerHTML = `
-                                <style>
-                                  @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
-                                  @keyframes drawCheck { to { stroke-dashoffset: 0; } }
-                                  @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
-                                </style>
-                                <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                                  
-                                  <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
-                                      <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
-                                      <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
-                                    </svg>
-                                  </div>
+                const showThankYouUI = () => {
+                     const scr = document.getElementById("live-pending-screen");
+                     if (!scr) return;
+                     scr.innerHTML = `
+                        <style>
+                          @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
+                          @keyframes drawCheck { to { stroke-dashoffset: 0; } }
+                          @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+                        </style>
+                        <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
+                          <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
+                              <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
+                              <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
+                            </svg>
+                          </div>
+                          <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
+                          <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
+                          <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                          <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
+                        </div>
+                     `;
+                     window.history.pushState({ locked: true }, "", window.location.href);
+                     window.addEventListener("popstate", () => { window.location.reload(); });
+                };
 
-                                  <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
-                                  <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
-                                  <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                                  <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
-                                </div>
-                             `;
-                             
-                             // Prevent going back from initial pending screen
-                             window.history.pushState({ locked: true }, "", window.location.href);
-                             window.addEventListener("popstate", () => { window.location.reload(); });
-                         }
+                const pendingChannel = supabase.channel(`pending-tab-${current_state.tableId}`)
+                  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${current_state.tableId}` }, payload => {
+                     if (payload.new?.status === "closed") {
+                         showThankYouUI();
                          supabase.removeChannel(pendingChannel);
                      }
                   }).subscribe();
+                  
+                const pollFallback = setInterval(async () => {
+                    const { data } = await supabase.from("dining_sessions").select("status").eq("table_id", current_state.tableId).order('created_at', {ascending: false}).limit(1).maybeSingle();
+                    if (data?.status === "closed") {
+                        clearInterval(pollFallback);
+                        showThankYouUI();
+                        supabase.removeChannel(pendingChannel);
+                    }
+                }, 3000);
 
-                return () => { supabase.removeChannel(pendingChannel); };
+                return () => { clearInterval(pollFallback); supabase.removeChannel(pendingChannel); };
             }
 
             if (mySession.status === "closed") {
@@ -1527,40 +1535,48 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
                               </div>`;
 
                             // Listen for admin approval. DO NOT delete localStorage tokens.
+                            const showThankYouUI = () => {
+                                 const scr = document.getElementById("live-pending-screen");
+                                 if (!scr) return;
+                                 scr.innerHTML = `
+                                    <style>
+                                      @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
+                                      @keyframes drawCheck { to { stroke-dashoffset: 0; } }
+                                      @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+                                    </style>
+                                    <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
+                                      <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
+                                          <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
+                                          <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
+                                        </svg>
+                                      </div>
+                                      <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
+                                      <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
+                                      <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                                      <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
+                                    </div>
+                                 `;
+                                 window.history.pushState({ locked: true }, "", window.location.href);
+                                 window.addEventListener("popstate", () => { window.location.reload(); });
+                            };
+
                             const pendingChannel = supabase.channel(`pending-tab-${current_state.tableId}`)
                               .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${current_state.tableId}` }, payload => {
                                  if (payload.new?.status === "closed") {
-                                     const scr = document.getElementById("live-pending-screen");
-                                     if (scr) {
-                                         scr.innerHTML = `
-                                            <style>
-                                              @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
-                                              @keyframes drawCheck { to { stroke-dashoffset: 0; } }
-                                              @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
-                                            </style>
-                                            <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                                              
-                                              <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
-                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
-                                                  <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
-                                                  <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
-                                                </svg>
-                                              </div>
-
-                                              <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
-                                              <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
-                                              <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                                              <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
-                                            </div>
-                                         `;
-                                         
-                                         // TRAP 3: Prevent going back from active bill modal
-                                         window.history.pushState({ locked: true }, "", window.location.href);
-                                         window.addEventListener("popstate", () => { window.location.reload(); });
-                                     }
+                                     showThankYouUI();
                                      supabase.removeChannel(pendingChannel);
                                  }
                               }).subscribe();
+                              
+                            const pollFallback = setInterval(async () => {
+                                const { data } = await supabase.from("dining_sessions").select("status").eq("table_id", current_state.tableId).order('created_at', {ascending: false}).limit(1).maybeSingle();
+                                if (data?.status === "closed") {
+                                    clearInterval(pollFallback);
+                                    showThankYouUI();
+                                    supabase.removeChannel(pendingChannel);
+                                }
+                            }, 3000);
                         } catch(e) {
                             showToast("Action Failed", e.message, "error");
                             ctx.button.disabled = false;
@@ -1838,7 +1854,7 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
         ` : ""}
         <footer class="thermal-foot">
           <p>${escapeHtml(settings.receipt_footer || 'Thank you for dining with us!')}</p>
-          <div class="thermal-software-tag">Powered by RMS Cloud</div>
+          <div class="thermal-software-tag">Powered by Table Forge System</div>
         </footer>
       </article>
     `;

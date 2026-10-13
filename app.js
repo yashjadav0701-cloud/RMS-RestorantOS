@@ -3,7 +3,7 @@ import { startRouter } from "./src/core/router.js";
 import { supabase } from "./src/core/supabase.js";
 
 // Global Platform Object
-window.RMS = Object.freeze({ name: "Restaurant Management System", APP_VERSION, build: APP_VERSION });
+window.RMS = Object.freeze({ name: "Table Forge System", APP_VERSION, build: APP_VERSION });
 const mount = document.querySelector("#app");
 if (!mount) throw new Error("RMS root #app was not found.");
 
@@ -43,7 +43,7 @@ async function bootSaaS() {
                 
                 // CRITICAL FIX: Store tenant data globally. This safely includes the 'id' which unlocks the POS!
                 window.__ACTIVE_TENANT__ = tenant;
-                document.title = `${tenant.name} | RMS`;
+                document.title = `${tenant.name} | Table Forge`;
             } else {
                 // Failsafe: 404 Restaurant Not Found or Invalid QR Code
                 mount.innerHTML = `<section style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; text-align: center; padding: 24px; font-family: system-ui, sans-serif; background: #fcfbf7;">
@@ -58,7 +58,7 @@ async function bootSaaS() {
         }
     } else {
         // Base URL (Global Platform Hub)
-        document.title = "RMS | Multi-Tenant Cloud POS";
+        document.title = "Table Forge System | Cloud POS";
     }
 
     // 4. Start the Application Router
