@@ -6,7 +6,10 @@ import { showToast, escapeHtml } from "./navigation.js";
 // TIER 1: SaaS PLATFORM LANDING & LOGIN
 // ==========================================
 export async function renderStaffLogin({ mount, onLogin }) {
-  if (!supabase) return () => {};
+  if (!supabase) {
+    mount.innerHTML = `<section class="access-screen"><div class="access-card"><div class="access-brand"><strong>Table Forge System</strong></div><h1>Connection not configured</h1><p class="access-copy">The application could not initialize its Supabase connection. Check the browser configuration and network connection, then reload.</p></div></section>`;
+    return () => {};
+  }
 
   mount.innerHTML = `
     <style>

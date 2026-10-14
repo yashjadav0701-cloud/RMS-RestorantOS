@@ -503,7 +503,11 @@ async function fetchWorkspace() {
   // This completely eliminates "Ghost State" where a previous login's data remains in memory across accounts.
   const { data: { user } } = await supabase.auth.getUser();
   if (user) {
-      const { data: rest } = await supabase.from("restaurants").select("*").eq("owner_id", user.id).maybeSingle();
+      const { data: rest } = await supabase
+        .from("restaurants")
+        .select("id, name, slug, icon_url, logo_url, background_color, foreground_color")
+        .eq("owner_id", user.id)
+        .maybeSingle();
       if (rest) {
           window.__ACTIVE_TENANT__ = rest;
       }
@@ -512,7 +516,11 @@ async function fetchWorkspace() {
   const activeTenantId = window.__ACTIVE_TENANT__?.id;
 
   const [settings, products, tables, sessions, cuisines] = await Promise.all([
-    supabase.from("app_settings").select("*").eq("restaurant_id", activeTenantId).maybeSingle(),
+    supabase
+      .from("app_settings")
+      .select("restaurant_id, restaurant_name, restaurant_address, gst_number, cgst_rate, sgst_rate, currency_symbol, receipt_footer, upi_id, daily_pin")
+      .eq("restaurant_id", activeTenantId)
+      .maybeSingle(),
     supabase.from("products").select("*").eq("restaurant_id", activeTenantId).order("sort_order", { ascending: true }).order("name", { ascending: true }),
     supabase.from("tables").select("*").eq("restaurant_id", activeTenantId).order("table_no", { ascending: true }),
     supabase.from("dining_sessions").select("*").eq("restaurant_id", activeTenantId).neq("status", "closed").order("bill_requested_at", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }),
@@ -569,13 +577,48 @@ async function renderAdminWorkspace(mount) {
   const iconUrl = activeTenant.icon_url ? versionedAsset(activeTenant.icon_url) : null;
   const tenantName = activeTenant.name || "Table Forge";
 
+  // 🛡️ PREMIUM ALERT CSS INJECTION: Elegant, smooth Gold ripple
+  if (!document.getElementById("premium-alert-styles")) {
+      const style = document.createElement("style");
+      style.id = "premium-alert-styles";
+      style.innerHTML = `
+          .hamburger-dot, .admin-drawer-dot, [data-drawer-alert-dot], .drawer-nav-dot {
+              position: absolute !important;
+              top: -1px !important;
+              right: -1px !important;
+              width: 12px !important;
+              height: 12px !important;
+              background: var(--gold-500, #c9a45a) !important;
+              border: 2px solid var(--paper) !important;
+              border-radius: 50% !important;
+              z-index: 10 !important;
+              pointer-events: none !important;
+              box-shadow: 0 2px 4px rgba(201, 164, 90, 0.3) !important;
+          }
+          .hamburger-dot::after, .admin-drawer-dot::after, [data-drawer-alert-dot]::after, .drawer-nav-dot::after {
+              content: '';
+              position: absolute;
+              inset: -4px;
+              border-radius: 50%;
+              border: 1.5px solid var(--gold-500, #c9a45a);
+              animation: premium-radar-sweep 2.5s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+              opacity: 0;
+          }
+          @keyframes premium-radar-sweep {
+              0% { transform: scale(0.6); opacity: 1; border-width: 1.5px; }
+              100% { transform: scale(2.4); opacity: 0; border-width: 0px; }
+          }
+      `;
+      document.head.appendChild(style);
+  }
+
   mount.innerHTML = `
     <section class="admin-page">
       <header class="app-topbar admin-topbar">
         <div class="topbar-side topbar-left" style="gap: 12px;">
           <button class="icon-btn icon-btn-dark" id="admin-menu" title="Menu" aria-label="Menu" style="position: relative;">
             <i class="ph ph-list"></i>
-            <span class="hamburger-dot" style="position: absolute; top: 4px; right: 4px; width: 8px; height: 8px; border-radius: 50%; background: #e11d48; display: none; border: 2px solid var(--paper);"></span>
+            <span class="hamburger-dot" style="display: none;"></span>
           </button>
           ${logoUrl 
             ? `<img src="${logoUrl}" alt="${escapeHtml(tenantName)}" style="height: 40px; max-width: 180px; object-fit: contain; object-position: left center;" />`
@@ -605,6 +648,37 @@ async function renderAdminWorkspace(mount) {
   const navCleanup = mountNavigation({ active: "admin" });
   const area = mount.querySelector("#admin-area");
 
+  // 🧠 THE ULTIMATE ALERT EVALUATOR: Calculates the true state of the restaurant and syncs ALL dots!
+  function evaluateGlobalAlerts() {
+      const seenSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
+      
+      // Ghost Purge: Automatically delete local alerts for tables that are no longer active
+      const activeTableIds = new Set((sessions || []).map(s => s.table_id));
+      if (window.__tableAlerts) {
+          Object.keys(window.__tableAlerts).forEach(tId => {
+              if (!activeTableIds.has(tId)) {
+                  delete window.__tableAlerts[tId];
+              }
+          });
+      }
+
+      const hasUnreadBills = (sessions || []).some(s => s.status === 'bill_requested' && !seenSessions.has(s.id));
+      const hasLocalAlerts = Object.keys(window.__tableAlerts || {}).length > 0;
+      
+      const isAlertActive = hasUnreadBills || hasLocalAlerts;
+
+      // Force-update all dots across the entire UI (Topbar + Drawer)
+      document.querySelectorAll(".hamburger-dot, .admin-drawer-dot, [data-drawer-alert-dot], .drawer-nav-dot").forEach(dot => {
+          dot.style.display = isAlertActive ? "block" : "none";
+      });
+      
+      // Synchronize with external navigation components if available
+      if (window.setGlobalNotification) {
+          if (isAlertActive) window.setGlobalNotification(true);
+          else window.clearGlobalNotification();
+      }
+  }
+
   // Dynamically swaps hollow icons to filled icons for the active tab
   function updateNavUI() {
     mount.querySelectorAll("[data-section]").forEach(el => {
@@ -617,10 +691,7 @@ async function renderAdminWorkspace(mount) {
       }
     });
     
-    // Toggle the Red Notification Dot purely based on active alerts
-    const hasAlerts = Object.keys(window.__tableAlerts || {}).length > 0;
-    const dot = document.querySelector(".hamburger-dot");
-    if (dot) dot.style.display = hasAlerts ? "block" : "none";
+    evaluateGlobalAlerts();
   }
 
   mount.querySelector("#admin-menu").addEventListener("click", () => window.__FOUR_FLAVOURS_NAV__?.open());
@@ -672,9 +743,12 @@ async function renderAdminWorkspace(mount) {
     if (!b) return;
     section = b.dataset.section;
     
-    // Clear notification highlight when the admin views the Orders tab
-    if (section === "orders") {
+    // PREMIUM UX: Automatically clear "New Activity" ghost alerts when the admin checks the dashboard!
+    if (section === "orders" || section === "overview" || section === "tables") {
       b.style.color = "";
+      b.classList.remove("qty-pulse");
+      window.__tableAlerts = {}; // Wipe local temporary alerts
+      if (window.clearGlobalNotification) window.clearGlobalNotification();
     }
     
     updateNavUI();
@@ -691,6 +765,7 @@ async function renderAdminWorkspace(mount) {
   async function reload() {
     ({ settings, products, tables, sessions, cuisines } = await fetchWorkspace());
     window.__FF_TABLES__ = tables;
+    evaluateGlobalAlerts();
     renderSection();
   }
 
@@ -786,10 +861,48 @@ async function renderAdminWorkspace(mount) {
         if (error) throw error;
 
         // 2. Filter out open sessions that haven't requested bills yet
-        const orders = rawOrders.filter(o => 
+        const validOrders = rawOrders.filter(o => 
             o.order_type === 'takeaway' || 
             (o.dining_sessions && ['closed', 'bill_requested', 'bill_ready'].includes(o.dining_sessions.status))
         );
+
+        // 3. CONSOLIDATE ROUNDS INTO A SINGLE MASTER BILL
+        const groupedOrdersMap = new Map();
+        
+        validOrders.forEach(o => {
+            const key = o.session_id || o.id; 
+            if (!groupedOrdersMap.has(key)) {
+                groupedOrdersMap.set(key, {
+                    ...o,
+                    original_order_ids: [o.id],
+                    all_order_numbers: [Number(o.order_number)], // Track all numbers for the range
+                    subtotal: Number(o.subtotal || 0),
+                    cgst: Number(o.cgst || 0),
+                    sgst: Number(o.sgst || 0),
+                    rounding: Number(o.rounding || 0),
+                    grand_total: Number(o.grand_total || 0),
+                    order_items: [...(o.order_items || [])]
+                });
+            } else {
+                const master = groupedOrdersMap.get(key);
+                master.original_order_ids.push(o.id);
+                if (o.order_number) master.all_order_numbers.push(Number(o.order_number));
+                
+                master.subtotal += Number(o.subtotal || 0);
+                master.cgst += Number(o.cgst || 0);
+                master.sgst += Number(o.sgst || 0);
+                master.rounding += Number(o.rounding || 0);
+                master.grand_total += Number(o.grand_total || 0);
+                master.order_items.push(...(o.order_items || []));
+                
+                // Keep the timestamp anchored to their FIRST round (when they sat down)
+                if (new Date(o.created_at) < new Date(master.created_at)) {
+                    master.created_at = o.created_at;
+                }
+            }
+        });
+
+        const orders = Array.from(groupedOrdersMap.values());
 
         // ==========================================
         // EXPORT TO EXCEL LOGIC (WYSIWYG: Only exports what is filtered!)
@@ -873,14 +986,20 @@ async function renderAdminWorkspace(mount) {
             // FIX: If the bill is marked as seen, the gold tag is removed instantly, regardless of payment status.
             const isNew = !seenOrders.has(o.id) && (isUnpaidTable || orderDate > twelveHoursAgo);
             
+            // Use the original (first) order number to represent the entire unified Tab
+            let displayId = escapeHtml(o.order_number);
+            if (o.all_order_numbers && o.all_order_numbers.length > 0) {
+                displayId = Math.min(...o.all_order_numbers);
+            }
+
+            const roundIndicator = o.original_order_ids && o.original_order_ids.length > 1 ? `<span style="font-size: 11px; color: var(--muted); font-weight: 700; margin-left: 4px;">(${o.original_order_ids.length} Rounds)</span>` : '';
             return `
             <article class="admin-order-data-row" style="${isNew ? 'border-color: var(--gold-400); background: var(--gold-100); box-shadow: 0 4px 16px rgba(201,164,90,0.2);' : ''}">
               <div class="order-cell-id" style="display: flex; align-items: center; gap: 8px;">
-                <span style="${isNew ? 'color: var(--gold-600);' : ''}">Order #${escapeHtml(o.order_number)}</span>
-                ${isNew ? `<span style="background: var(--gold-500); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase;">New Bill</span>` : ''}
+                <span style="${isNew ? 'color: var(--gold-600);' : ''}">Ord #${displayId}</span>${isNew ? `<span style="background: var(--gold-500); color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase;">New Bill</span>` : ''}
               </div>
               <div class="order-cell-date">${orderDate.toLocaleString('en-IN', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})}</div>
-              <div class="order-cell-type">${o.order_type === 'dine_in' ? `Dine-in · Table ${tables.find(t => t.id === o.table_id)?.table_no || 'Unknown'}` : 'Takeaway'} · ${o.order_items.length} ${o.order_items.length === 1 ? 'item' : 'items'}</div>
+              <div class="order-cell-type">${o.order_type === 'dine_in' ? `Dine-in · Table ${tables.find(t => t.id === o.table_id)?.table_no || 'Unknown'}` : 'Takeaway'} ${roundIndicator} · ${o.order_items.length}${o.order_items.length === 1 ? 'item' : 'items'}</div>
               <div class="order-cell-price">${money(o.grand_total, settings.currency_symbol)}</div>
               <div class="order-cell-actions">
                 <button class="icon-btn icon-btn-light" data-view-order="${o.id}" title="View Receipt" style="${isNew ? 'background: #fff; border-color: var(--gold-400); color: var(--forest-900);' : ''}"><i class="ph-bold ph-printer"></i></button>
@@ -951,24 +1070,29 @@ async function renderAdminWorkspace(mount) {
 
   function deleteOrder(order) {
     openAppModal({
-      title: `Delete Order #${order.order_number}?`,
+      title: `Delete Ord #${order.order_number}?`,
       subtitle: "This will permanently remove the bill and its items from the database.",
       body: `<div class="danger-confirm"><div class="danger-confirm-icon"><i class="ph ph-trash"></i></div><h3>Delete this record?</h3><p>This action cannot be undone.</p></div>`,
       actions: [
         { label: "Cancel", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() },
         { label: "Delete", icon: "ph-trash", className: "btn-danger", onClick: async ({ close, button }) => {
           button.disabled = true;
+          button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Processing...`;
           try {
-            // Call our custom PostgreSQL function to bypass RLS and handle sequence resets
-            const { error } = await supabase.rpc("delete_pos_order", { p_order_id: order.id });
-            if (error) throw error;
+            // Safely iterate through all rounds that make up this Master Bill and delete them
+            const idsToDelete = order.original_order_ids || [order.id];
+            for (const id of idsToDelete) {
+                const { error } = await supabase.rpc("delete_pos_order", { p_order_id: id });
+                if (error) throw error;
+            }
             
-            showToast("Order deleted", `Order #${order.order_number} has been completely removed.`);
+            showToast("Record deleted", `Ord #${order.order_number} has been completely removed.`);
             close();
             renderOrders();
           } catch(err) {
             button.disabled = false;
             showToast("Error", err.message, "error");
+            button.innerHTML = `<i class="ph-trash"></i> Delete`;
           }
         }}
       ]
@@ -977,25 +1101,37 @@ async function renderAdminWorkspace(mount) {
 
   function showAdminReceiptPreview(order) {
     let tableString = "Takeaway";
+
     if (order.order_type === "dine_in" && order.table_id) {
-      const t = tables.find(x => x.id === order.table_id);
-      if (t) tableString = `Dine-in · Table ${t.table_no}`;
+      const table = tables.find(item => item.id === order.table_id);
+      if (table) tableString = `Dine-in · Table ${table.table_no}`;
     }
-    const date = new Date(order.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    const date = new Date(order.created_at).toLocaleString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
 
     const receiptHTML = `
       <article class="thermal-receipt" id="thermal-receipt-content">
         <header class="thermal-head">
-          ${window.__ACTIVE_TENANT__?.icon_url ? `<img class="thermal-logo" src="${versionedAsset(window.__ACTIVE_TENANT__.icon_url)}" alt="Logo">` : ''}
+          ${window.__ACTIVE_TENANT__?.icon_url
+            ? `<img class="thermal-logo" src="${versionedAsset(window.__ACTIVE_TENANT__.icon_url)}" alt="Restaurant logo">`
+            : ""}
           <h1>${escapeHtml(settings.restaurant_name)}</h1>
-          ${settings.restaurant_address ? `<p>${escapeHtml(settings.restaurant_address).replace(/\n/g, '<br>')}</p>` : ''}
-          ${settings.gst_number ? `<p><strong>GSTIN:</strong> ${escapeHtml(settings.gst_number)}</p>` : ''}
+          ${settings.restaurant_address ? `<p>${escapeHtml(settings.restaurant_address).replace(/\n/g, "<br>")}</p>` : ""}
+          ${settings.gst_number ? `<p><strong>GSTIN:</strong> ${escapeHtml(settings.gst_number)}</p>` : ""}
         </header>
+
         <div class="thermal-meta">
           <div><span>Order:</span> <strong>#${escapeHtml(order.order_number)}</strong></div>
           <div><span>Date:</span> <strong>${date}</strong></div>
           <div><span>Type:</span> <strong>${escapeHtml(tableString)}</strong></div>
         </div>
+
         <table class="thermal-items-table">
           <thead>
             <tr>
@@ -1005,138 +1141,237 @@ async function renderAdminWorkspace(mount) {
             </tr>
           </thead>
           <tbody>
-            ${order.order_items.map(i => `
+            ${(order.order_items || []).map(item => `
               <tr>
-                <td style="text-align: left;">${escapeHtml(i.name_snapshot)}<br><small>${money(i.unit_price, settings.currency_symbol)}</small></td>
-                <td style="text-align: center;">${i.quantity}</td>
-                <td style="text-align: right;">${money(Number(i.unit_price) * Number(i.quantity), settings.currency_symbol)}</td>
+                <td style="text-align: left;">${escapeHtml(item.name_snapshot)}<br><small>${money(item.unit_price, settings.currency_symbol)}</small></td>
+                <td style="text-align: center;">${item.quantity}</td>
+                <td style="text-align: right;">${money(Number(item.unit_price) * Number(item.quantity), settings.currency_symbol)}</td>
               </tr>
             `).join("")}
           </tbody>
         </table>
+
         <div class="thermal-totals-wrap">
           <div class="thermal-line"><span>Subtotal</span><strong>${money(order.subtotal, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line"><span>CGST (${order.subtotal > 0 ? parseFloat(((order.cgst / order.subtotal) * 100).toFixed(2)) : (settings.cgst_rate || 0)}%)</span><strong>${money(order.cgst, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line"><span>SGST (${order.subtotal > 0 ? parseFloat(((order.sgst / order.subtotal) * 100).toFixed(2)) : (settings.sgst_rate || 0)}%)</span><strong>${money(order.sgst, settings.currency_symbol)}</strong></div>
+          <div class="thermal-line"><span>CGST</span><strong>${money(order.cgst, settings.currency_symbol)}</strong></div>
+          <div class="thermal-line"><span>SGST</span><strong>${money(order.sgst, settings.currency_symbol)}</strong></div>
           <div class="thermal-line"><span>Rounding</span><strong>${money(order.rounding, settings.currency_symbol)}</strong></div>
           <div class="thermal-line thermal-grand"><span>GRAND TOTAL</span><strong>${money(order.grand_total, settings.currency_symbol)}</strong></div>
         </div>
+
         ${settings.upi_id ? `
           <div class="thermal-payment-block">
-            <div class="thermal-qr" id="admin-thermal-upi"></div>
+            <div class="thermal-qr" id="thermal-upi"></div>
             <div class="thermal-upi-note"><strong>Scan to pay</strong><br>Supported by all UPI apps</div>
           </div>
         ` : ""}
+
         <footer class="thermal-foot">
-          <p>${escapeHtml(settings.receipt_footer || 'Thank you for dining with us!')}</p>
+          <p>${escapeHtml(settings.receipt_footer || "Thank you for dining with us!")}</p>
           <div class="thermal-software-tag">Powered by Table Forge System</div>
         </footer>
       </article>
     `;
 
+    const isActiveBill = Boolean(
+      order.dining_sessions &&
+      ["bill_requested", "bill_ready"].includes(order.dining_sessions.status)
+    );
+
     const actionsList = [
-        { label: "PDF", icon: "ph-bold ph-download-simple", className: "btn-quiet", style: "color: var(--forest-950); font-weight: 900;", onClick: async ({ root, button }) => {
-            const element = root.querySelector("#thermal-receipt-content");
-            button.disabled = true;
-            const originalText = button.innerHTML;
-            button.innerHTML = `<i class="ph ph-spinner-gap"></i><span>Saving...</span>`;
-            try {
-              if (!window.html2pdf) {
-                await new Promise((resolve) => {
-                  const script = document.createElement("script");
-                  script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-                  script.onload = resolve;
-                  document.head.appendChild(script);
-                });
-              }
-              
-              // Temporarily remove shadow and margin so they don't push the PDF onto a second page
-              const oldShadow = element.style.boxShadow;
-              const oldMargin = element.style.margin;
-              element.style.boxShadow = "none";
-              element.style.margin = "0";
-              
-              // Use getBoundingClientRect for exact sub-pixel accuracy after stripping the margin
-              const exactHeight = element.getBoundingClientRect().height;
-              const heightInMM = (exactHeight * 0.264583) + 1; // Just 1mm buffer for absolute safety
-              
-              const opt = {
-                margin: 0,
-                filename: `${(settings.restaurant_name || 'Bill').replace(/\s+/g, '_')}_#${order.order_number}.pdf`,
-                image: { type: 'jpeg', quality: 1 },
-                html2canvas: { scale: 4, useCORS: true }, 
-                jsPDF: { unit: 'mm', format: [80, heightInMM], orientation: 'portrait' }
-              };
-              
-              await html2pdf().set(opt).from(element).save();
-              
-              // Restore UI styles instantly after generation
-              element.style.boxShadow = oldShadow;
-              element.style.margin = oldMargin;
-            } catch (err) {
-              console.error("PDF Generation failed:", err);
-            } finally {
-              button.disabled = false;
-              button.innerHTML = originalText;
+      {
+        label: "Save PDF",
+        icon: "ph-bold ph-download-simple",
+        className: "btn-quiet",
+        style: "color: var(--forest-950); font-weight: 900;",
+        onClick: async ({ root, button }) => {
+          const element = root.querySelector("#thermal-receipt-content");
+          if (!element) {
+            showToast("Could not save PDF", "The receipt preview is unavailable.", "error");
+            return;
+          }
+
+          button.disabled = true;
+          const originalHTML = button.innerHTML;
+          button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Saving...`;
+
+          const oldShadow = element.style.boxShadow;
+          const oldMargin = element.style.margin;
+
+          try {
+            if (!window.html2pdf) {
+              await new Promise((resolve, reject) => {
+                const script = document.createElement("script");
+                script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+                script.onload = resolve;
+                script.onerror = () => reject(new Error("The PDF library could not be loaded."));
+                document.head.appendChild(script);
+              });
             }
-        }},
-        { label: "Print", icon: "ph-bold ph-printer", className: "btn-primary", style: "background: var(--forest-950); border-color: var(--forest-950); font-weight: 900;", onClick: () => {
-            const host = document.querySelector("#receipt-print-host");
-            if (host) { host.innerHTML = modal.root.querySelector("#thermal-receipt-content").outerHTML; window.print(); }
-        }}
+
+            element.style.boxShadow = "none";
+            element.style.margin = "0";
+
+            const heightInMM = (element.getBoundingClientRect().height * 0.264583) + 1;
+
+            await window.html2pdf()
+              .set({
+                margin: 0,
+                filename: `${(settings.restaurant_name || "Bill").replace(/\s+/g, "_")}_order_${order.order_number}.pdf`,
+                image: { type: "jpeg", quality: 1 },
+                html2canvas: { scale: 6, useCORS: true }, // Ultra-HD Scale 6 configuration
+                jsPDF: { unit: "mm", format: [80, heightInMM], orientation: "portrait" }
+              })
+              .from(element)
+              .save();
+          } catch (error) {
+            console.error("PDF generation failed:", error);
+            showToast("Could not save PDF", error.message || "Please try again.", "error");
+          } finally {
+            element.style.boxShadow = oldShadow;
+            element.style.margin = oldMargin;
+            button.disabled = false;
+            button.innerHTML = originalHTML;
+          }
+        }
+      },
+      {
+        label: "Print Bill",
+        icon: "ph-bold ph-printer",
+        className: "btn-primary",
+        style: "background: var(--forest-950); border-color: var(--forest-950); font-weight: 900;",
+        onClick: ({ root }) => {
+          const receipt = root.querySelector("#thermal-receipt-content");
+          const printHost = document.querySelector("#receipt-print-host");
+
+          if (!receipt || !printHost) {
+            showToast("Could not print", "The receipt preview is unavailable.", "error");
+            return;
+          }
+
+          printHost.innerHTML = receipt.outerHTML;
+          window.print();
+        }
+      }
     ];
 
-    // THE CLOSING LOOPHOLE FIX: If the bill is actively requested, let Admin mark it paid securely right here!
-    if (order.dining_sessions && ['bill_requested', 'bill_ready'].includes(order.dining_sessions.status)) {
-        actionsList.push({
-             label: "Paid", 
-             icon: "ph-bold ph-check-circle", 
-             className: "btn-primary", 
-             style: "background: var(--success); border-color: var(--success); font-weight: 900;",
-             onClick: async ({ close, button }) => {
-                 button.disabled = true;
-                 const og = button.innerHTML;
-                 button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Processing...`;
-                 try {
-                     const { error } = await supabase.rpc("complete_session_payment", { p_session_id: order.session_id, p_payment_method: "cash" });
-                     if (error) throw error;
-                     showToast("Table Closed", `Payment recorded successfully.`, "success");
-                     close();
-                     reload();
-                 } catch(err) {
-                     showToast("Error", err.message, "error");
-                     button.disabled = false;
-                     button.innerHTML = og;
-                 }
-             }
-        });
+    if (isActiveBill) {
+      actionsList.push({
+        label: "Confirm Cash Received",
+        icon: "ph-bold ph-check-circle",
+        className: "btn-primary",
+        style: "background: var(--success); border-color: var(--success); font-weight: 900;",
+        onClick: async ({ close, button }) => {
+          const originalHTML = button.innerHTML;
+          button.disabled = true;
+          button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Recording...`;
+
+          try {
+            const { error } = await supabase.rpc("complete_session_payment", {
+              p_session_id: order.session_id,
+              p_payment_method: "cash"
+            });
+
+            if (error) throw error;
+
+            showToast("Payment recorded", "Cash payment was recorded and the table was closed.", "success");
+            close();
+            await reload();
+          } catch (error) {
+            showToast("Could not record payment", error.message || "Please try again.", "error");
+            button.disabled = false;
+            button.innerHTML = originalHTML;
+          }
+        }
+      });
     }
 
     const modal = openAppModal({
-      title: `Order #${order.order_number} Receipt`,
-      subtitle: order.dining_sessions && ['bill_requested', 'bill_ready'].includes(order.dining_sessions.status) ? "Review the customer's tab and close the table to accept payment." : "Reprint, download, or view historical bill details.",
+      title: `Order #${order.order_number} Bill`,
+      subtitle: isActiveBill
+        ? "Print the bill, collect cash in person, then confirm receipt to close the table."
+        : "View, save, or reprint this bill.",
       body: `<div class="receipt-preview-container">${receiptHTML}</div>`,
       actions: actionsList
     });
 
-    if (settings.upi_id && globalThis.QRCode) {
-      setTimeout(() => {
-        const qr = modal.root.querySelector("#admin-thermal-upi");
-        if (qr) {
-          qr.innerHTML = "";
-          
-          const pa = encodeURIComponent(settings.upi_id.trim());
-          const pn = encodeURIComponent(settings.restaurant_name.trim());
-          const am = Number(order.grand_total).toFixed(2);
-          const tn = encodeURIComponent(`Order #${order.order_number}`);
-          const upiString = `upi://pay?pa=${pa}&pn=${pn}&am=${am}&cu=INR&tn=${tn}`;
-          
-          new QRCode(qr, { text: upiString, width: 160, height: 160, correctLevel: QRCode.CorrectLevel.M });
+    // 🔗 DYNAMIC UPI QR INJECTION: Safely loads the library and renders the perfect UPI string
+    if (settings.upi_id) {
+        const renderQR = () => {
+            setTimeout(() => {
+                const qrNode = modal.root.querySelector("#thermal-upi");
+                if (qrNode) {
+                    qrNode.innerHTML = "";
+                    
+                    // 1. SANITIZATION: Forcefully strip zero-width spaces and invalid hidden characters
+                    const rawUpi = settings.upi_id.replace(/[^a-zA-Z0-9.\-@]/g, '');
+                    
+                    // 2. NAME CLEANUP: Strip weird symbols from the restaurant name
+                    const rawName = (settings.restaurant_name || "Restaurant").replace(/[^a-zA-Z0-9\s]/g, '').trim();
+                    
+                    // 3. THE '#' FIX: Completely remove the '#' symbol to prevent URI fragment corruption in banking apps
+                    const rawNote = `Bill ${order.order_number}`;
+                    
+                    const am = Number(order.grand_total).toFixed(2);
+                    
+                    // Encode spaces to %20 cleanly without breaking the core structure
+                    const upiString = encodeURI(`upi://pay?pa=${rawUpi}&pn=${rawName}&am=${am}&cu=INR&tn=${rawNote}`);
+                    
+                    // Ensure the node has relative positioning to hold the center logo
+                    qrNode.style.position = "relative";
+                    qrNode.style.display = "inline-block";
+                    
+                    new QRCode(qrNode, { 
+                        text: upiString, 
+                        width: 160, 
+                        height: 160, 
+                        // CRITICAL: Must use Level H (30% redundancy) to allow a logo in the center without breaking scans!
+                        correctLevel: QRCode.CorrectLevel.H 
+                    });
+
+                    // 💎 PREMIUM UPGRADE: Inject the Restaurant Icon perfectly into the center
+                    const iconUrl = window.__ACTIVE_TENANT__?.icon_url;
+                    if (iconUrl) {
+                        const logoImg = document.createElement("img");
+                        logoImg.src = versionedAsset(iconUrl);
+                        logoImg.style.position = "absolute";
+                        logoImg.style.top = "50%";
+                        logoImg.style.left = "50%";
+                        logoImg.style.transform = "translate(-50%, -50%)";
+                        
+                        // CRITICAL FIX: The logo must be exactly 20-25% of the total QR size to allow scanning
+                        logoImg.style.width = "36px"; 
+                        logoImg.style.height = "36px";
+                        logoImg.style.minWidth = "36px";
+                        logoImg.style.minHeight = "36px";
+                        logoImg.style.maxWidth = "36px";
+                        logoImg.style.maxHeight = "36px";
+                        
+                        logoImg.style.borderRadius = "8px";
+                        logoImg.style.border = "3px solid #ffffff";
+                        logoImg.style.backgroundColor = "#ffffff";
+                        logoImg.style.objectFit = "cover";
+                        logoImg.style.boxShadow = "0 2px 8px rgba(0,0,0,0.15)";
+                        logoImg.style.zIndex = "5"; // Ensure it sits strictly on top of the canvas
+                        
+                        qrNode.appendChild(logoImg);
+                    }
+                }
+            }, 50);
+        };
+
+        if (globalThis.QRCode) {
+            renderQR();
+        } else {
+            const script = document.createElement("script");
+            script.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+            script.onload = renderQR;
+            document.head.appendChild(script);
         }
-      }, 50);
     }
   }
 
+  
   function renderCuisines() {
     area.innerHTML = `
       <section class="section-title-row">
@@ -1313,7 +1548,7 @@ async function renderAdminWorkspace(mount) {
     // Erase the old standalone inbox, using native table rows instead
     area.innerHTML = `
       <section class="admin-hero" style="padding-top: 0;">
-        <div><span class="eyebrow">Control centre</span><h1>Everything in its place.</h1><p>Menu, tables, tax, UPI and table sessions in one restrained workspace.</p></div>
+        <div><span class="eyebrow">Control centre</span><h1>Everything in its place.</h1><p>Menu, tables, billing and live table sessions in one workspace.</p></div>
         <div class="admin-hero-mark">
           ${iconUrl 
             ? `<img src="${iconUrl}" alt="${escapeHtml(tenantName)}" style="width: 100%; height: 100%; object-fit: cover;">`
@@ -1323,7 +1558,7 @@ async function renderAdminWorkspace(mount) {
       </section>
       <section class="metric-grid">${metricCard("ph-fork-knife", activeProducts, "Active dishes")}${metricCard("ph-armchair", activeTables, "Active tables")}${metricCard("ph-bell", sessions.length, "Open sessions")}${metricCard("ph-receipt", billRequests, "Bill requests")}</section>
       <section class="admin-grid-two">
-        <article class="admin-panel"><div class="panel-head"><div><span class="eyebrow">Quick actions</span><h2>Run the floor</h2></div></div><div class="quick-action-grid"><button class="quick-action" data-go="tables"><i class="ph ph-armchair"></i><span><strong>Manage tables</strong><small>Add, edit, delete and print QR codes.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="menu"><i class="ph ph-fork-knife"></i><span><strong>Manage menu</strong><small>Names, descriptions, prices and visibility.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="settings"><i class="ph ph-gear"></i><span><strong>Tax & UPI</strong><small>Keep server-side billing settings current.</small></span><i class="ph ph-arrow-right"></i></button></div></article>
+        <article class="admin-panel"><div class="panel-head"><div><span class="eyebrow">Quick actions</span><h2>Run the floor</h2></div></div><div class="quick-action-grid"><button class="quick-action" data-go="tables"><i class="ph ph-armchair"></i><span><strong>Manage tables</strong><small>Add, edit, delete and print QR codes.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="menu"><i class="ph ph-fork-knife"></i><span><strong>Manage menu</strong><small>Names, descriptions, prices and visibility.</small></span><i class="ph ph-arrow-right"></i></button><button class="quick-action" data-go="settings"><i class="ph ph-gear"></i><span><strong>Billing & Branding</strong><small>Manage restaurant details, tax and receipts.</small></span><i class="ph ph-arrow-right"></i></button></div></article>
         <article class="admin-panel"><div class="panel-head"><div><span class="eyebrow">Dining sessions</span><h2>Open tables</h2></div><button class="btn btn-quiet btn-small" id="clear-admin-alerts" style="padding: 0 10px;">Clear Alerts</button></div><div class="session-mini-scroll" id="overview-session-list">
           ${sessions.length ? sessions.map(s => {
             // Check if the Admin has already opened this specific bill
@@ -1411,7 +1646,7 @@ async function renderAdminWorkspace(mount) {
       if (btn) btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Clearing...`;
 
       try {
-          if (window.clearGlobalNotification) window.clearGlobalNotification();
+          // Deep wipe of all alert states
           window.__tableAlerts = {};
           
           const seenSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
@@ -1420,6 +1655,9 @@ async function renderAdminWorkspace(mount) {
               localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...seenSessions]));
           }
 
+          // Force the global function to re-evaluate and hide the dots immediately across the entire DOM
+          evaluateGlobalAlerts();
+          
           await reload();
           showToast("Alerts Cleared", "All notifications and highlights have been reset.", "success");
       } catch (err) {
@@ -1862,6 +2100,19 @@ async function renderAdminWorkspace(mount) {
   }
 
   async function openAdminTableManager(table, session) {
+    // 🧠 GHOST DOT FIX: Instantly mark this session as seen and wipe local alerts
+    if (window.__tableAlerts) delete window.__tableAlerts[table.id];
+    if (window.clearTableAlert) window.clearTableAlert(table.id);
+    
+    if (session && session.id) {
+        const seenSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
+        seenSessions.add(session.id);
+        localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...seenSessions]));
+    }
+    
+    // Force the UI to evaluate the new clean memory state and hide the dot
+    evaluateGlobalAlerts();
+
     const modal = openAppModal({
       title: `Table ${table.table_no} Management`,
       subtitle: "Review the active table tab, add items, or close the table.",
@@ -1873,318 +2124,495 @@ async function renderAdminWorkspace(mount) {
     
     async function renderManager() {
       try {
-        // FETCH ALL ORDERS: Aggregate every round the customer ordered into one Master Tab
-        const { data: ordersList, error } = await supabase.from("orders").select("*, order_items(*)").eq("session_id", session.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id).neq("status", "cancelled").order("created_at", { ascending: true });
+        const { data: ordersList, error } = await supabase.from("orders").select("*, order_items(*)").eq("session_id", session.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id).neq("status", "cancelled").order("round_number", { ascending: true });
         if (error) throw error;
 
         if (!ordersList || ordersList.length === 0) {
           host.innerHTML = `
             <div style="display: flex; flex-direction: column; flex: 1;">
-              <div class="empty-state"><i class="ph ph-warning-circle"></i><strong>No active order found</strong><span>The table session was opened, but no items were sent to the kitchen.</span></div>
+              <div class="empty-state"><i class="ph ph-warning-circle"></i><strong>No active order found</strong></div>
               <div style="position: sticky; bottom: -17px; background: var(--paper); padding: 12px 0 0 0; margin-top: auto; border-top: 1px solid var(--line); display: flex; gap: 8px;">
-                <button class="btn btn-primary" id="admin-add-items" style="flex: 1;"><i class="ph-bold ph-plus"></i> Add Items</button> 
+                <button class="btn btn-primary" id="admin-add-items" style="flex: 1;"><i class="ph-bold ph-plus"></i> Add Round</button> 
                 <button class="btn btn-danger" id="force-close-empty" style="flex: 1;"><i class="ph-bold ph-power"></i> Close Table</button>
               </div>
             </div>`;
           
           host.querySelector("#force-close-empty").addEventListener("click", async () => {
-             await supabase.from("dining_sessions").update({ status: 'closed' }).eq("id", session.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id);
-             modal.close();
-             reload();
+            const button = host.querySelector("#force-close-empty");
+            const originalHTML = button.innerHTML;
+            button.disabled = true;
+            button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Closing...`;
+
+            try {
+              const tenantId = window.__ACTIVE_TENANT__?.id;
+              if (!tenantId) {
+                throw new Error("The active restaurant could not be verified.");
+              }
+
+              const { error } = await supabase.rpc("close_empty_dining_session", {
+                p_session_id: session.id
+              });
+
+              if (error) throw error;
+
+              modal.close();
+              await reload();
+            } catch (error) {
+              button.disabled = false;
+              button.innerHTML = originalHTML;
+              showToast("Could not close table", error?.message || "Please try again.", "error");
+            }
           });
           
           host.querySelector("#admin-add-items").addEventListener("click", () => {
-             modal.close();
-             window.__FOUR_FLAVOURS_POS_STATE__?.setOrderType('dine_in');
-             window.__FOUR_FLAVOURS_POS_STATE__?.setTable(table);
-             document.querySelector('[data-nav="pos"]')?.click();
+             modal.close(); window.__FOUR_FLAVOURS_POS_STATE__?.setOrderType('dine_in'); window.__FOUR_FLAVOURS_POS_STATE__?.setTable(table); document.querySelector('[data-nav="pos"]')?.click();
           });
           return;
         }
 
-        let tempMap = new Map();
+        let displayRounds = [];
         let grandTotal = 0, subtotal = 0, cgst = 0, sgst = 0, rounding = 0;
-        let latestOrder = ordersList[ordersList.length - 1]; // We append new items to the latest round
+        let latestOrder = ordersList[ordersList.length - 1]; 
 
-        ordersList.forEach(o => {
-          grandTotal += Number(o.grand_total || 0);
-          subtotal += Number(o.subtotal || 0);
-          cgst += Number(o.cgst || 0);
-          sgst += Number(o.sgst || 0);
-          rounding += Number(o.rounding || 0);
+        ordersList.forEach((o, index) => {
+          grandTotal += Number(o.grand_total || 0); subtotal += Number(o.subtotal || 0);
+          cgst += Number(o.cgst || 0); sgst += Number(o.sgst || 0); rounding += Number(o.rounding || 0);
           
-          // SORTING FIX: Force the items to sort by ID so Admin additions ALWAYS appear at the bottom!
-          const items = o.order_items || [];
-          items.sort((a, b) => a.id - b.id);
-          
-          items.forEach(oi => {
-            const pId = oi.product_id;
-            const qty = Number(oi.quantity);
-            if (tempMap.has(pId)) {
-               tempMap.get(pId).quantity += qty;
-            } else {
-               tempMap.set(pId, { id: pId, name: oi.name_snapshot, price: oi.unit_price, quantity: qty });
-            }
+          let roundItems = [];
+          (o.order_items || []).sort((a, b) => {
+              const dateDiff = new Date(a.created_at) - new Date(b.created_at);
+              return dateDiff !== 0 ? dateDiff : (a.id > b.id ? 1 : -1);
+          }).forEach(oi => {
+              roundItems.push({ id: oi.id, name: oi.name_snapshot, price: oi.unit_price, quantity: oi.quantity, status: oi.serving_status || 'pending' });
           });
+          displayRounds.push({ id: o.id, round_number: o.round_number || (index+1), items: roundItems, total: o.grand_total });
         });
 
-        const displayItems = Array.from(tempMap.values());
         const isBillReq = session.status === "bill_requested";
 
+        function cycleStatus(current) {
+            const sequence = ["pending", "preparing", "ready", "served"];
+            const index = sequence.indexOf(current);
+
+            // Never cycle a completed item back to pending.
+            if (index < 0 || index >= sequence.length - 1) return current;
+            return sequence[index + 1];
+        }
+
+        function getNextStatusLabel(status) {
+            const labels = {
+                pending: "START PREPARING",
+                preparing: "MARK READY",
+                ready: "MARK SERVED",
+                served: "SERVED"
+            };
+
+            return labels[status] || "PENDING";
+        }
+
+        function getStatusColor(status) {
+            if (status === "served") {
+                return "color: var(--success); background: transparent; border-color: transparent; box-shadow: none; padding-right: 2px;";
+            }
+            if (status === "ready") {
+                return "color: #166534; background: #dcfce7; border-color: #86efac; box-shadow: 0 2px 6px rgba(22,163,74,0.12);";
+            }
+            if (status === "preparing") {
+                return "color: var(--gold-700); background: var(--gold-100); border-color: var(--gold-400); box-shadow: 0 2px 6px rgba(201,164,90,0.2);";
+            }
+
+            return "color: var(--forest-900); background: #ffffff; border-color: var(--forest-900); box-shadow: 0 2px 6px rgba(25,50,28,0.08);";
+        }
+
+        const hasUnservedItems = displayRounds.some(round =>
+            round.items.some(item => item.status !== "served")
+        );
+
+        // 🧠 SCROLL LOCK FIX: Capture the exact scroll position before destroying the old HTML list
+        const scrollNode = host.querySelector(".dining-items-list");
+        const currentScroll = scrollNode ? scrollNode.scrollTop : 0;
+
         host.innerHTML = `
-          <div class="active-dining-dashboard" style="text-align: left; display: flex; flex-direction: column; flex: 1;">
-            <div class="dining-status-banner" style="${isBillReq ? 'background: var(--gold-100); color: var(--gold-600); border: 1px solid var(--gold-400);' : ''}">
+          <div class="active-dining-dashboard" style="text-align: left; display: flex; flex-direction: column; flex: 1; min-height: 0;">
+            <div class="dining-status-banner" style="flex-shrink: 0; ${isBillReq ? 'background: var(--gold-100); color: var(--gold-600); border: 1px solid var(--gold-400);' : ''}">
               <i class="ph-bold ph-${isBillReq ? 'bell-ringing qty-pulse' : 'receipt'}"></i>
               <div>
                 <strong style="${isBillReq ? 'color: var(--gold-600);' : ''}">${isBillReq ? 'Customer Requested Bill' : 'Table Tab is open'}</strong>
                 <span>Grand Total: ${money(grandTotal, settings.currency_symbol)}</span>
               </div>
             </div>
-            <h3 class="dining-section-title">Customer's Order Items</h3>
-            <div class="dining-items-list" style="max-height: 45vh; overflow-y: auto; margin-bottom: 0; padding-bottom: 12px;">
-              ${displayItems.map(i => `
-                <div class="dining-item-row" style="padding-right: 12px; align-items: center;">
-                  <div class="dining-item-info">
-                    <strong>${escapeHtml(i.name)} <span class="qty-badge">x${i.quantity}</span></strong>
-                    <span>${money(i.price, settings.currency_symbol)}</span>
+
+            <div class="dining-items-list" style="flex: 1; overflow-y: auto; min-height: 0; margin-top: 12px; padding-bottom: 24px; padding-right: 6px;">
+              ${displayRounds.map(round => `
+                <div style="flex-shrink: 0; margin-bottom: 16px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;">
+                  <div style="background: var(--cream-50); padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center;">
+                    <strong style="font-size: 13px; color: var(--forest-900);">Round ${round.round_number}</strong>
+                    <span style="font-size: 13px; font-weight: 800;">${money(round.total, settings.currency_symbol)}</span>
                   </div>
-                  <button class="btn-primary btn-sm admin-repeat-btn" data-id="${i.id}" data-name="${escapeHtml(i.name)}" data-price="${i.price}" style="padding: 4px 12px; font-size: 12px; border-radius: 6px;">
-                    <i class="ph-bold ph-arrow-counter-clockwise"></i> Repeat
-                  </button>
+
+                  <div style="display: flex; flex-direction: column; background: var(--paper);">
+                    ${round.items.map(item => `
+                      <div style="padding: 12px 14px; border-bottom: 1px solid var(--cream-200); display: flex; justify-content: space-between; align-items: center;">
+                        <div style="display: flex; flex-direction: column; gap: 6px;">
+                          <strong style="font-size: 14px;">
+                            ${escapeHtml(item.name)}
+                            <span class="qty-badge" style="background: var(--sage-200); color: var(--forest-900); padding: 2px 6px; border-radius: 6px; font-size: 11px;">x${item.quantity}</span>
+                          </strong>
+                          <span style="font-size: 13px; color: var(--muted);">${money(item.price, settings.currency_symbol)}</span>
+                        </div>
+
+                        <div style="display: flex; gap: 6px; align-items: center;">
+                          ${item.status === "pending" ? `
+                            <button class="admin-delete-item-btn icon-btn" data-delete-id="${item.id}" title="Remove pending item"
+                              style="width: 30px; height: 30px; border-radius: 8px; border: none; background: #fee2e2; color: #ef4444;">
+                              <i class="ph-bold ph-trash" style="font-size: 15px;"></i>
+                            </button>
+                          ` : ""}
+
+                          <button class="status-cycle-btn"
+                            data-item-id="${item.id}"
+                            data-current-status="${item.status}"
+                            title="${getNextStatusLabel(item.status)}"
+                            style="padding: 6px 12px; font-size: 11px; font-weight: 900; text-transform: uppercase; border-radius: 20px; border: 1px solid transparent; transition: all 0.15s ease; display: inline-flex; align-items: center; gap: 4px; ${getStatusColor(item.status)}${item.status === "served" ? "cursor: default; opacity: 0.95;" : "cursor: pointer;"}"
+                            ${item.status === "served" ? "disabled" : ""}>
+                            ${item.status === "served" ? '<i class="ph-bold ph-check" style="font-size: 14px;"></i> SERVED' : `${getNextStatusLabel(item.status)} <i class="ph-bold ph-caret-right" style="font-size: 12px;"></i>`}
+                          </button>
+                        </div>
+                      </div>
+                    `).join("")}
+                  </div>
                 </div>
               `).join("")}
+              <div style="height: 24px; flex-shrink: 0; width: 100%;"></div>
             </div>
-            
-            <!-- STICKY FOOTER (Merged Actions & Dead Space Eliminated) -->
+
             <div style="position: sticky; bottom: -17px; background: var(--paper); padding: 12px 0 0 0; margin-top: auto; border-top: 1px solid var(--line); display: flex; gap: 8px;">
-              <button class="btn btn-quiet" id="admin-add-items" style="flex: 1; padding: 0 4px; font-size: 12px;"><i class="ph-bold ph-plus"></i> Add Items</button>
-              <button class="btn btn-quiet" id="admin-view-bill" style="flex: 1; padding: 0 4px; font-size: 12px;"><i class="ph-bold ph-printer"></i> Bill</button>
-              <button class="btn btn-primary" id="admin-close-table" style="flex: 1.5; padding: 0 4px; font-size: 12px;"><i class="ph-bold ph-check-circle"></i> Close Table</button>
+              <button class="btn btn-quiet" id="admin-add-items" style="flex: 1; padding: 0 4px; font-size: 12px;">
+                <i class="ph-bold ph-plus"></i> Add Round
+              </button>
+              <button class="btn btn-quiet" id="admin-view-bill" style="flex: 1; padding: 0 4px; font-size: 12px;" ${hasUnservedItems ? "disabled" : ""}>
+                <i class="ph-bold ph-printer"></i> Bill
+              </button>
+              <button class="btn btn-primary" id="admin-close-table" style="flex: 1.5; padding: 0 4px; font-size: 12px;" ${hasUnservedItems ? "disabled" : ""}>
+                ${hasUnservedItems ? '<i class="ph-bold ph-clock"></i> Items Pending' : '<i class="ph-bold ph-check-circle"></i> Close Table'}
+              </button>
             </div>
           </div>
         `;
 
-        // REPEAT BUTTON LOGIC
-        host.querySelectorAll(".admin-repeat-btn").forEach(btn => {
-          btn.addEventListener("click", async () => {
-            window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-            btn.disabled = true;
-            btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i>`;
-            try {
-              // Intelligent Merge Sync: Fetch existing items to prevent wiping the bill
-              const { data: existingItems } = await supabase.from("order_items").select("*").eq("order_id", latestOrder.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id);
-              const mergedMap = new Map();
-              
-              if (existingItems) {
-                  existingItems.forEach(item => {
-                      mergedMap.set(item.product_id, {
-                          id: item.product_id, product_id: item.product_id,
-                          name: item.name_snapshot, name_snapshot: item.name_snapshot,
-                          price: item.unit_price, unit_price: item.unit_price, quantity: item.quantity
-                      });
-                  });
-              }
-              
-              const pId = btn.dataset.id;
-              if (mergedMap.has(pId)) {
-                  mergedMap.get(pId).quantity += 1;
-              } else {
-                  mergedMap.set(pId, { 
-                      id: pId, product_id: pId, 
-                      name: btn.dataset.name, name_snapshot: btn.dataset.name, 
-                      price: btn.dataset.price, unit_price: btn.dataset.price, quantity: 1 
-                  });
-              }
-              
-              const { error } = await supabase.rpc('sync_pos_order', { 
-                  p_order_id: latestOrder.id, 
-                  p_items: Array.from(mergedMap.values()) 
-              });
-              if (error) throw error;
-              
-              showToast("Item Repeated", `${btn.dataset.name} added to Table ${table.table_no}`);
-              renderManager(); // Refresh Admin drawer instantly
-            } catch (err) {
-              showToast("Error", err.message, "error");
-              btn.disabled = false;
-              btn.innerHTML = `<i class="ph-bold ph-arrow-counter-clockwise"></i> Repeat`;
+        // 🧠 SCROLL LOCK FIX: Instantly restore the scroll position on the newly generated HTML list
+        const newScrollNode = host.querySelector(".dining-items-list");
+        if (newScrollNode) newScrollNode.scrollTop = currentScroll;
+
+        // Delete only pending items. The database RPC must verify tenant ownership and recalculate the round totals.
+        host.querySelectorAll(".admin-delete-item-btn").forEach(button => {
+            button.addEventListener("click", async () => {
+                const itemId = button.dataset.deleteId;
+                const originalHTML = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = '<i class="ph-bold ph-spinner-gap ph-spin"></i>';
+
+                try {
+                    const { error } = await supabase.rpc("remove_order_item", {
+                        p_item_id: itemId
+                    });
+                    if (error) throw error;
+
+                    renderManager();
+                } catch (error) {
+                    button.disabled = false;
+                    button.innerHTML = originalHTML;
+                    showToast("Could not remove item", error.message, "error");
+                }
+            });
+        });
+
+        // The database validates both tenant ownership and the legal status transition.
+        host.querySelectorAll(".status-cycle-btn").forEach(button => {
+            button.addEventListener("click", async () => {
+                const itemId = button.dataset.itemId;
+                const nextStatus = cycleStatus(button.dataset.currentStatus);
+
+                if (nextStatus === button.dataset.currentStatus) return;
+
+                const originalHTML = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = '<i class="ph-bold ph-spinner-gap ph-spin"></i>';
+
+                try {
+                    const { error } = await supabase.rpc("set_order_item_status", {
+                        p_item_id: itemId,
+                        p_status: nextStatus
+                    });
+                    if (error) throw error;
+
+                    renderManager();
+                } catch (error) {
+                    button.disabled = false;
+                    button.innerHTML = originalHTML;
+                    showToast("Could not update item status", error.message, "error");
+                }
+            });
+        });
+
+        // Connects straight to the existing POS Cart mechanism without forcing a route change
+        host.querySelector("#admin-add-items").addEventListener("click", async () => {
+            
+            // PERFORMANCE FIX: Use the instantly available, globally cached products array instead of a slow database call!
+            const activeProducts = products.filter(p => p.is_active).sort((a, b) => a.name.localeCompare(b.name));
+            
+            if (!activeProducts || activeProducts.length === 0) { 
+                showToast("Error", "No active dishes found in the menu.", "error"); 
+                renderManager(); 
+                return; 
             }
-          });
-        });
 
-        // QUICK ADD ITEMS LOGIC (BATCH DRAFT MODE)
-        host.querySelector("#admin-add-items").addEventListener("click", () => {
-           const allActiveProducts = products.filter(p => p.is_active);
-           let draftAdditions = new Map(); // Local cart for the modal
-           let currentFilteredList = allActiveProducts; // Keeps track of search state
-           
-           function renderAdminItemList(list) {
-              if (!list || !list.length) return `<div class="empty-state compact"><i class="ph ph-magnifying-glass"></i><strong>No dishes found</strong></div>`;
-              return list.map(p => {
-                 const qty = draftAdditions.get(p.id)?.quantity || 0;
-                 return `
-                 <div style="display:flex; justify-content:space-between; align-items:center; padding: 14px 0; border-bottom: 1px solid var(--cream-200);">
-                    <div style="display:flex; flex-direction:column; gap:4px;">
-                       <strong style="font-size: 14px; color: var(--forest-950);">${escapeHtml(p.name)}</strong>
-                       <span style="font-size:12.5px; color:var(--muted);">${money(p.price, settings.currency_symbol)}</span>
-                    </div>
-                    ${qty > 0 ? `
-                        <div style="display: flex; align-items: center; justify-content: space-between; width: 96px; height: 36px; background: #ffffff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.04); flex-shrink: 0;">
-                           <button data-draft-dec="${p.id}" style="width: 34px; height: 100%; background: var(--forest-900); color: #fff; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s;"><i class="ph-bold ph-minus"></i></button>
-                           <span style="flex: 1; text-align: center; font-size: 14px; font-weight: 800; color: var(--forest-950);">${qty}</span>
-                           <button data-draft-inc="${p.id}" data-name="${escapeHtml(p.name)}" data-price="${p.price}" style="width: 34px; height: 100%; background: var(--forest-900); color: #fff; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.2s;"><i class="ph-bold ph-plus"></i></button>
+            const cuisinesList = ["All", ...new Set(activeProducts.map(p => (p.category || "Uncategorized").split(" - ")[0].trim()))];
+            
+            let localCart = new Map();
+            let searchQuery = "";
+            let selectedCuisine = "All";
+            let selectedSub = "All";
+
+            function getAvailableSubs() {
+                if (selectedCuisine === "All") return ["All"];
+                const subs = new Set();
+                activeProducts.forEach(p => {
+                    const parts = (p.category || "Uncategorized").split(" - ");
+                    if (parts[0].trim() === selectedCuisine) subs.add(parts[1]?.trim() || "Others");
+                });
+                return ["All", ...Array.from(subs)];
+            }
+
+            // The DOM Updater: Animates quantities & updates cart without destroying HTML nodes
+            function updateAdminCatalogQuantities() {
+                const cartTotal = Array.from(localCart.values()).reduce((sum, item) => sum + (item.product.price * item.qty), 0);
+                const cartCount = Array.from(localCart.values()).reduce((sum, item) => sum + item.qty, 0);
+
+                host.querySelectorAll("[data-catalog-control]").forEach(control => {
+                    const id = control.dataset.catalogControl;
+                    const qty = localCart.get(id)?.qty || 0;
+                    const valSpan = control.querySelector(".premium-qty-value");
+                    const incBtn = control.querySelector(".inc-btn");
+                    
+                    // Highlight the parent row when active
+                    const row = control.closest('.catalog-row');
+                    if (row) {
+                        row.style.background = qty > 0 ? "var(--cream-50)" : "#fff";
+                    }
+
+                    if (qty <= 0) {
+                        control.classList.remove("is-active");
+                        if (valSpan) valSpan.textContent = "0";
+                        if (incBtn) { incBtn.classList.remove("catalog-inc"); incBtn.classList.add("catalog-add"); }
+                    } else {
+                        control.classList.add("is-active");
+                        if (valSpan) valSpan.textContent = qty;
+                        if (incBtn) { incBtn.classList.remove("catalog-add"); incBtn.classList.add("catalog-inc"); }
+                    }
+                });
+
+                const footerWrap = host.querySelector("#catalog-footer-wrap");
+                if (footerWrap) {
+                    if (cartCount > 0) {
+                        footerWrap.style.display = "block";
+                        footerWrap.innerHTML = `
+                            <button class="btn btn-primary" id="confirm-new-round" style="width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 0 16px; height: 50px; border-radius: 12px; font-size: 15px; box-shadow: 0 8px 24px rgba(25, 50, 28, 0.25);">
+                                <span style="display: flex; align-items: center; gap: 10px;"><div style="background: rgba(255,255,255,0.25); width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 13px; font-weight: 900;">${cartCount}</div> Confirm Round</span>
+                                <span>${money(cartTotal, settings.currency_symbol)} <i class="ph-bold ph-arrow-right" style="margin-left: 6px; font-size: 16px;"></i></span>
+                            </button>
+                        `;
+                        
+                        const confirmBtn = footerWrap.querySelector("#confirm-new-round");
+                        confirmBtn.addEventListener("click", async () => {
+                            confirmBtn.disabled = true;
+                            confirmBtn.innerHTML = `<i class="ph-bold ph-spinner-gap ph-spin" style="font-size: 20px;"></i> <span>Sending to kitchen...</span>`;
+                            const itemsToSubmit = Array.from(localCart.values()).map(x => ({ id: x.product.id, quantity: x.qty }));
+                            try {
+                                const { error } = await supabase.rpc("create_pos_order", { 
+                                    p_restaurant_id: window.__ACTIVE_TENANT__.id,
+                                    p_order_type: 'dine_in', p_table_id: table.id, p_items: itemsToSubmit, p_note: "Admin Added Round" 
+                                });
+                                if (error) throw error;
+                                showToast("Round Added", "Items sent to kitchen successfully.", "success");
+                                renderManager(); 
+                            } catch(err) {
+                                showToast("Error", err.message, "error");
+                                confirmBtn.disabled = false;
+                                confirmBtn.innerHTML = `Try Again`;
+                            }
+                        });
+                    } else {
+                        footerWrap.style.display = "none";
+                        footerWrap.innerHTML = "";
+                    }
+                }
+            }
+
+            function renderCatalog() {
+                const visible = activeProducts.filter(p => {
+                    const parts = (p.category || "Uncategorized").split(" - ");
+                    const pCuisine = parts[0].trim();
+                    const pSub = parts[1]?.trim() || "Others";
+                    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || (p.category || "").toLowerCase().includes(searchQuery.toLowerCase());
+                    const matchesCuisine = selectedCuisine === "All" || pCuisine === selectedCuisine;
+                    const matchesSub = selectedSub === "All" || pSub === selectedSub;
+                    return matchesSearch && matchesCuisine && matchesSub;
+                });
+                
+                host.innerHTML = `
+                    <div style="display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--paper);">
+                        
+                        <!-- SINGLE LINE PERFECT ALIGNMENT HEADER -->
+                        <div style="padding: 12px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; background: #fff; z-index: 10; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;">
+                            <button class="icon-btn icon-btn-quiet" id="back-to-tab" style="width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0; background: var(--cream-50); border: 1px solid var(--line);"><i class="ph-bold ph-arrow-left"></i></button>
+                            <div style="flex: 1; position: relative; min-width: 150px;">
+                                <i class="ph-bold ph-magnifying-glass" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 18px;"></i>
+                                <input type="text" id="add-round-search" placeholder="Search dishes..." value="${escapeHtml(searchQuery)}" style="width: 100%; height: 44px; border-radius: 12px; border: 1px solid var(--line); padding: 0 12px 0 40px; font-size: 15px; font-weight: 700; color: var(--forest-950); background: var(--cream-50); outline: none; transition: border-color 0.2s;">
+                            </div>
+                            <div style="position: relative; width: 140px; flex-shrink: 0;">
+                                <select id="filter-cuisine" style="width: 100%; height: 44px; padding: 0 30px 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--cream-50); font-size: 14px; font-weight: 800; color: var(--forest-950); appearance: none; outline: none; cursor: pointer;">
+                                    ${cuisinesList.map(c => `<option value="${escapeHtml(c)}" ${c === selectedCuisine ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
+                                </select>
+                                <i class="ph-bold ph-caret-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--forest-900); pointer-events: none;"></i>
+                            </div>
+                            <div style="position: relative; width: 140px; flex-shrink: 0;">
+                                <select id="filter-sub" style="width: 100%; height: 44px; padding: 0 30px 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--cream-50); font-size: 14px; font-weight: 800; color: var(--forest-950); appearance: none; outline: none; cursor: pointer; opacity: ${selectedCuisine === 'All' ? '0.5' : '1'}; pointer-events: ${selectedCuisine === 'All' ? 'none' : 'auto'};">
+                                    ${getAvailableSubs().map(s => `<option value="${escapeHtml(s)}" ${s === selectedSub ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
+                                </select>
+                                <i class="ph-bold ph-caret-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--forest-900); pointer-events: none;"></i>
+                            </div>
                         </div>
-                    ` : `
-                        <button class="btn btn-quiet btn-small" data-draft-inc="${p.id}" data-name="${escapeHtml(p.name)}" data-price="${p.price}" style="border-radius: 12px; font-weight: 800; border-color: var(--line); color: var(--forest-900); padding: 0 16px; height: 36px;"><i class="ph-bold ph-plus"></i> Add</button>
-                    `}
-                 </div>
-              `}).join("");
-           }
 
-           function updateUI() {
-               host.querySelector("#admin-item-grid").innerHTML = renderAdminItemList(currentFilteredList);
-               const totalItems = Array.from(draftAdditions.values()).reduce((sum, i) => sum + i.quantity, 0);
-               const footer = host.querySelector("#admin-draft-footer");
-               if (totalItems > 0) {
-                   footer.style.display = "flex";
-                   host.querySelector("#draft-count").textContent = totalItems;
-               } else {
-                   footer.style.display = "none";
-               }
-           }
+                        <!-- COMPACT LIST VIEW -->
+                        <div id="catalog-list-container" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; align-content: flex-start; padding-bottom: 24px;">
+                            ${visible.map(p => {
+                                const isVeg = p.is_veg !== false;
+                                const markColor = isVeg ? "#16a34a" : "#dc2626";
 
-           host.innerHTML = `
-             <div class="admin-add-item-list" style="text-align: left; display: flex; flex-direction: column; min-height: 50vh;">
+                                return `
+                                <div class="catalog-row" style="display: flex; padding: 12px 16px; border-bottom: 1px solid var(--cream-200); background: #fff; align-items: center; gap: 14px; transition: background 0.3s ease;">
+                                    <!-- 4:3 Small Thumbnail -->
+                                    <div style="width: 64px; height: 48px; flex-shrink: 0; border-radius: 6px; overflow: hidden; background: var(--cream-200); position: relative;">
+                                        ${p.image_url ? `<img src="${versionedAsset(p.image_url)}" style="width: 100%; height: 100%; object-fit: cover;" alt="">` : `<i class="ph-bold ph-image" style="position: absolute; top:50%; left:50%; transform: translate(-50%, -50%); color: var(--muted); font-size: 20px;"></i>`}
+                                        <span style="position: absolute; top: 4px; right: 4px; width: 12px; height: 12px; background: #fff; border: 1px solid ${markColor}; border-radius: 2px; display: flex; align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,0.1);"><span style="width: 6px; height: 6px; background: ${markColor}; border-radius: 1px;"></span></span>
+                                    </div>
+                                    
+                                    <div style="flex: 1; min-width: 0;">
+                                        <h4 style="margin: 0 0 2px 0; font-size: 14px; font-weight: 800; color: var(--forest-950); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(p.name)}</h4>
+                                        <div style="font-size: 13px; font-weight: 800; color: var(--forest-700);">${money(p.price, settings.currency_symbol)}</div>
+                                    </div>
+                                    
+                                    <div style="flex-shrink: 0; display: flex; align-items: center;">
+                                        <!-- EXACT POS STYLE BUTTON -->
+                                        <div class="premium-qty-wrapper" style="margin: 0; box-shadow: 0 2px 8px rgba(0,0,0,0.06);" data-catalog-control="${p.id}">
+                                            <button class="premium-qty-btn dec-btn catalog-dec" data-id="${p.id}"><i class="ph-bold ph-minus"></i></button>
+                                            <span class="premium-qty-value">0</span>
+                                            <button class="premium-qty-btn inc-btn catalog-add" data-id="${p.id}"><i class="ph-bold ph-plus"></i></button>
+                                        </div>
+                                    </div>
+                                </div>
+                                `;
+                            }).join("") || `<div class="empty-state"><i class="ph-bold ph-magnifying-glass"></i><strong>No dishes found</strong><span>Try a different filter.</span></div>`}
+                        </div>
+
+                        <!-- ABSOLUTE STICKY FOOTER WRAPPER -->
+                        <div id="catalog-footer-wrap" style="position: sticky; bottom: -17px; background: var(--paper); padding: 12px 0 0 0; margin-top: auto; border-top: 1px solid var(--line); z-index: 100; display: none;"></div>
+                    </div>
+                `;
+
+                // Instantly inject quantities & activate footer without destroying DOM transitions
+                updateAdminCatalogQuantities();
+
+                // Bind Search Input
+                const searchInput = host.querySelector("#add-round-search");
+                if (searchInput) {
+                    searchInput.addEventListener("input", (e) => {
+                        searchQuery = e.target.value;
+                        renderCatalog();
+                        const restoredInput = host.querySelector("#add-round-search");
+                        if (restoredInput) { restoredInput.focus(); restoredInput.setSelectionRange(restoredInput.value.length, restoredInput.value.length); }
+                    });
+                }
+
+                // Bind Dropdowns
+                host.querySelector("#filter-cuisine")?.addEventListener("change", (e) => {
+                    selectedCuisine = e.target.value;
+                    selectedSub = "All"; 
+                    renderCatalog();
+                });
                 
-                <!-- NEW INLINE SEARCH BAR & BACK BUTTON -->
-                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-shrink: 0; width: 100%;">
-                   <button class="icon-btn icon-btn-light" id="back-to-manager" style="flex-shrink: 0; width: 44px; height: 44px; border-radius: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.04);">
-                     <i class="ph-bold ph-arrow-left" style="font-size: 18px;"></i>
-                   </button>
-                   
-                   <div class="search-input-wrap" style="flex: 1; margin: 0; height: 44px; border-radius: 14px; background: #ffffff; border: 1px solid var(--line); box-shadow: inset 0 2px 4px rgba(0,0,0,0.02), 0 2px 6px rgba(0,0,0,0.02); transition: all 0.2s ease;" 
-                        onfocusin="this.style.borderColor='var(--forest-500)'; this.style.boxShadow='0 0 0 3px rgba(76,110,75,0.12)';" 
-                        onfocusout="this.style.borderColor='var(--line)'; this.style.boxShadow='inset 0 2px 4px rgba(0,0,0,0.02), 0 2px 6px rgba(0,0,0,0.02)';">
-                     <i class="ph-bold ph-magnifying-glass" style="font-size: 18px; color: var(--forest-600);"></i>
-                     <input type="text" id="admin-item-search" placeholder="Search menu to add..." style="width: 100%; border: none; background: transparent; outline: none; font-size: 15px; font-weight: 700; color: var(--forest-950);">
-                   </div>
-                </div>
+                host.querySelector("#filter-sub")?.addEventListener("change", (e) => {
+                    selectedSub = e.target.value;
+                    renderCatalog();
+                });
 
-                <div id="admin-item-grid" style="flex: 1; max-height: 40vh; overflow-y: auto; padding-right: 8px; margin-bottom: 8px;">
-                  ${renderAdminItemList(allActiveProducts)}
-                </div>
-                
-                <!-- STICKY FOOTER FOR BATCH ADDING -->
-                <div id="admin-draft-footer" style="position: sticky; bottom: -17px; background: var(--paper); padding: 12px 0 0 0; margin-top: auto; border-top: 1px solid var(--line); display: none;">
-                  <button class="btn btn-primary" id="confirm-draft-btn" style="width: 100%; height: 48px; border-radius: 14px; font-size: 15px;">
-                    <i class="ph-bold ph-cooking-pot"></i> Send <span id="draft-count" style="margin: 0 4px;">0</span> Items to Kitchen
-                  </button>
-                </div>
-             </div>
-           `;
-           
-           host.querySelector("#back-to-manager").addEventListener("click", renderManager);
-           
-           host.querySelector("#admin-item-search").addEventListener("input", (e) => {
-              const q = e.target.value.toLowerCase();
-              currentFilteredList = allActiveProducts.filter(p => p.name.toLowerCase().includes(q));
-              updateUI();
-           });
+                // Bind Back
+                host.querySelector("#back-to-tab")?.addEventListener("click", () => renderManager());
 
-           // Event Delegation for Qty Adjustments
-           host.querySelector("#admin-item-grid").addEventListener("click", e => {
-              const inc = e.target.closest("[data-draft-inc]");
-              const dec = e.target.closest("[data-draft-dec]");
-              
-              if (inc) {
-                  const id = inc.dataset.draftInc;
-                  if (draftAdditions.has(id)) {
-                      draftAdditions.get(id).quantity++;
-                  } else {
-                      draftAdditions.set(id, {
-                          id: id, name: inc.dataset.name, price: inc.dataset.price, quantity: 1
-                      });
-                  }
-                  updateUI();
-              }
-              
-              if (dec) {
-                  const id = dec.dataset.draftDec;
-                  if (draftAdditions.has(id)) {
-                      const item = draftAdditions.get(id);
-                      item.quantity--;
-                      if (item.quantity <= 0) draftAdditions.delete(id);
-                      updateUI();
-                  }
-              }
-           });
+                // EVENT DELEGATION: Animates the POS pill buttons without refreshing HTML
+                const listContainer = host.querySelector("#catalog-list-container");
+                if (listContainer) {
+                    listContainer.addEventListener("click", (e) => {
+                        const addBtn = e.target.closest(".catalog-add");
+                        const incBtn = e.target.closest(".catalog-inc");
+                        const decBtn = e.target.closest(".catalog-dec");
 
-           // Batch Submit to Kitchen
-           host.querySelector("#confirm-draft-btn").addEventListener("click", async (e) => {
-              const btn = e.currentTarget;
-              window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-              btn.disabled = true;
-              btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Processing...`;
-              
-              try {
-                 // Intelligent Merge Sync
-                 const { data: existingItems } = await supabase.from("order_items").select("*").eq("order_id", latestOrder.id).eq("restaurant_id", window.__ACTIVE_TENANT__.id);
-                 const mergedMap = new Map();
-                 
-                 if (existingItems) {
-                     existingItems.forEach(item => {
-                         mergedMap.set(item.product_id, {
-                             id: item.product_id, product_id: item.product_id,
-                             name: item.name_snapshot, name_snapshot: item.name_snapshot,
-                             price: item.unit_price, unit_price: item.unit_price, quantity: item.quantity
-                         });
-                     });
-                 }
-                 
-                 draftAdditions.forEach(draft => {
-                     if (mergedMap.has(draft.id)) {
-                         mergedMap.get(draft.id).quantity += draft.quantity;
-                     } else {
-                         mergedMap.set(draft.id, { 
-                             id: draft.id, product_id: draft.id, 
-                             name: draft.name, name_snapshot: draft.name, 
-                             price: draft.price, unit_price: draft.price, quantity: draft.quantity 
-                         });
-                     }
-                 });
-                 
-                 const { error } = await supabase.rpc('sync_pos_order', { 
-                     p_order_id: latestOrder.id, 
-                     p_items: Array.from(mergedMap.values()) 
-                 });
-                 if (error) throw error;
-                 
-                 const totalItems = Array.from(draftAdditions.values()).reduce((sum, i) => sum + i.quantity, 0);
-                 showToast("Items Added", `${totalItems} new items sent to Table ${table.table_no}`);
-                 renderManager(); // Return to active dashboard
-              } catch (err) {
-                 showToast("Error", err.message, "error");
-                 btn.disabled = false;
-                 btn.innerHTML = `<i class="ph-bold ph-cooking-pot"></i> Send <span id="draft-count" style="margin: 0 4px;">${Array.from(draftAdditions.values()).reduce((sum, i) => sum + i.quantity, 0)}</span> Items to Kitchen`;
-              }
-           });
+                        if (addBtn || incBtn) {
+                            const btn = addBtn || incBtn;
+                            const id = btn.dataset.id;
+                            const p = products.find(x => x.id === id);
+                            const current = localCart.get(id) || { product: p, qty: 0 };
+                            current.qty += 1;
+                            localCart.set(id, current);
+                            
+                            updateAdminCatalogQuantities();
+                            
+                            const control = btn.closest("[data-catalog-control]");
+                            if (control) {
+                                control.classList.remove("qty-pulse");
+                                void control.offsetWidth;
+                                control.classList.add("qty-pulse");
+                            }
+                        }
+
+                        if (decBtn) {
+                            const id = decBtn.dataset.id;
+                            const current = localCart.get(id);
+                            if (current) {
+                                current.qty -= 1;
+                                if (current.qty <= 0) localCart.delete(id);
+                                else localCart.set(id, current);
+                                
+                                updateAdminCatalogQuantities();
+                                
+                                if (current.qty > 0) {
+                                    const control = decBtn.closest("[data-catalog-control]");
+                                    if (control) {
+                                        control.classList.remove("qty-pulse");
+                                        void control.offsetWidth;
+                                        control.classList.add("qty-pulse");
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+
+            renderCatalog();
         });
 
-        // VIEW FULL BILL LOGIC
         host.querySelector("#admin-view-bill").addEventListener("click", () => {
-           showAdminReceiptPreview({
-             ...latestOrder, 
-             order_items: displayItems.map(i => ({ name_snapshot: i.name, unit_price: i.price, quantity: i.quantity })),
-             subtotal, cgst, sgst, rounding, grand_total: grandTotal
-           });
+           let flatItems = []; displayRounds.forEach(r => r.items.forEach(i => flatItems.push({ name_snapshot: i.name, unit_price: i.price, quantity: i.quantity })));
+           showAdminReceiptPreview({ ...latestOrder, session_id: session.id, order_items: flatItems, subtotal, cgst, sgst, rounding, grand_total: grandTotal });
         });
 
-        // CLOSE TABLE LOGIC
         host.querySelector("#admin-close-table").addEventListener("click", () => {
            openAppModal({
               title: `Close Table ${table.table_no}?`,
-              subtitle: "This marks the session as paid and frees the table for the next customer.",
-              body: `<div class="danger-confirm"><div class="danger-confirm-icon" style="background: var(--success-soft); color: var(--success);"><i class="ph-bold ph-check-circle"></i></div><h3>Payment Received?</h3><p>Ensure the customer has paid ${money(grandTotal, settings.currency_symbol)} before closing.</p></div>`,
+              subtitle: "This marks the session as paid and frees the table.",
+              body: `<div class="danger-confirm"><div class="danger-confirm-icon" style="background: var(--success-soft); color: var(--success);"><i class="ph-bold ph-check-circle"></i></div><h3>Payment Received?</h3><p>Customer total is <strong>${money(grandTotal, settings.currency_symbol)}</strong>.</p></div>`,
               actions: [
                 { label: "Cancel", className: "btn-quiet", onClick: (ctx) => ctx.close() },
                 { label: "Yes, Close Table", className: "btn-primary", onClick: async (ctx) => {
@@ -2193,13 +2621,8 @@ async function renderAdminWorkspace(mount) {
                       const { error } = await supabase.rpc("complete_session_payment", { p_session_id: session.id, p_payment_method: "cash" });
                       if (error) throw error;
                       showToast("Table Closed", `Table ${table.table_no} is now available.`);
-                      ctx.close();
-                      modal.close();
-                      reload();
-                    } catch(err) {
-                      ctx.button.disabled = false;
-                      showToast("Error", err.message, "error");
-                    }
+                      ctx.close(); modal.close(); reload();
+                    } catch(err) { ctx.button.disabled = false; showToast("Error", err.message, "error"); }
                 }}
               ]
            });
@@ -2215,7 +2638,12 @@ async function renderAdminWorkspace(mount) {
 
   function renderSettings() {
     // Fetch current restaurant-level branding configuration securely
-    supabase.from("restaurants").select("*").maybeSingle().then(({ data: restData }) => {
+    supabase
+      .from("restaurants")
+      .select("id, name, icon_url, logo_url, background_color, foreground_color")
+      .eq("id", window.__ACTIVE_TENANT__?.id)
+      .maybeSingle()
+      .then(({ data: restData }) => {
       if (!restData) return;
 
       area.innerHTML = `
@@ -2292,11 +2720,12 @@ async function renderAdminWorkspace(mount) {
         <section class="admin-panel settings-panel">
           <form id="settings-form" class="settings-form-grid">
             <label class="field"><span>Restaurant name</span><input class="field-input" name="restaurant_name" value="${escapeHtml(settings.restaurant_name)}" required></label>
-            <label class="field"><span>UPI ID</span><input class="field-input" name="upi_id" value="${escapeHtml(settings.upi_id || "")}" placeholder="restaurant@upi"></label>
             <label class="field"><span>GSTIN (GST Number)</span><input class="field-input" name="gst_number" value="${escapeHtml(settings.gst_number || "")}" placeholder="22AAAAA0000A1Z5"></label>
             <label class="field settings-wide"><span>Restaurant Address (Prints on Bill)</span><textarea class="field-input textarea-input" name="restaurant_address" placeholder="123 Food Street, City, State" rows="2">${escapeHtml(settings.restaurant_address || "")}</textarea></label>
             <label class="field"><span>CGST %</span><input class="field-input" name="cgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.cgst_rate)}" required></label>
             <label class="field"><span>SGST %</span><input class="field-input" name="sgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.sgst_rate)}" required></label>
+            <label class="field settings-wide"><span>UPI ID (For Bill QR Code)</span><input class="field-input" name="upi_id" value="${escapeHtml(settings.upi_id || "")}" placeholder="yourname@bank"></label>
+            <label class="field settings-wide"><span>Daily Dining PIN (Physical QR Lock)</span><input class="field-input" name="daily_pin" value="${escapeHtml(settings.daily_pin || "")}" placeholder="e.g. 4092 (Leave blank to disable)"></label>
             <label class="field settings-wide"><span>Receipt footer</span><input class="field-input" name="receipt_footer" value="${escapeHtml(settings.receipt_footer || "")}"></label>
             <div class="settings-wide settings-preview"><div class="settings-preview-icon"><i class="ph ph-shield-check"></i></div><div><strong>Secure calculation</strong><span>Prices, tax rates and the final total are recalculated by PostgreSQL when the order is created.</span></div></div>
             <div class="settings-wide">
@@ -2469,15 +2898,16 @@ async function renderAdminWorkspace(mount) {
         btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Saving...`;
 
         const fd = new FormData(form);
-        const payload = { 
+        const payload = {
           restaurant_id: window.__ACTIVE_TENANT__.id,
-          restaurant_name: String(fd.get("restaurant_name") || "").trim(), 
-          upi_id: String(fd.get("upi_id") || "").trim(),
+          restaurant_name: String(fd.get("restaurant_name") || "").trim(),
           gst_number: String(fd.get("gst_number") || "").trim(),
           restaurant_address: String(fd.get("restaurant_address") || "").trim(),
-          cgst_rate: Number(fd.get("cgst_rate")), 
-          sgst_rate: Number(fd.get("sgst_rate")), 
-          receipt_footer: String(fd.get("receipt_footer") || "").trim() 
+          cgst_rate: Number(fd.get("cgst_rate")),
+          sgst_rate: Number(fd.get("sgst_rate")),
+          upi_id: String(fd.get("upi_id") || "").trim(),
+          daily_pin: String(fd.get("daily_pin") || "").trim(),
+          receipt_footer: String(fd.get("receipt_footer") || "").trim()
         };
         
         try { 
@@ -2570,11 +3000,23 @@ async function renderAdminWorkspace(mount) {
       title: `Table ${escapeHtml(table.table_no)} QR`,
       subtitle: "This QR always opens the live menu for this specific table.",
       body: `
-        <div class="qr-preview-panel">
-          <div class="qr-preview" id="table-qr"></div>
+        <div class="qr-preview-panel" style="position: relative;">
+          <div class="qr-preview" id="table-qr" style="position: relative; display: inline-block;"></div>
           <div class="qr-table-title">Table ${escapeHtml(table.table_no)}</div>
           <div class="qr-url">${escapeHtml(url)}</div>
-          <div class="qr-safety-note">
+
+          <!-- Elegant Inline PIN Display -->
+          <div style="margin: 20px auto 0; display: inline-flex; align-items: center; justify-content: center; gap: 12px; background: var(--cream-50); padding: 8px 16px 8px 20px; border-radius: 30px; border: 1px solid var(--line);">
+            <div style="display: flex; flex-direction: column; align-items: flex-start; justify-content: center;">
+                <span style="font-size: 10px; font-weight: 800; color: var(--forest-600); text-transform: uppercase; letter-spacing: 0.05em; line-height: 1; margin-bottom: 2px;">Today's PIN</span>
+                <span id="display-table-pin" style="font-size: 18px; font-weight: 900; color: var(--forest-950); letter-spacing: 0.1em; line-height: 1;"><i class="ph ph-spinner-gap ph-spin" style="font-size: 14px;"></i></span>
+            </div>
+            <button id="regenerate-pin-btn" class="icon-btn icon-btn-quiet" title="Regenerate PIN" style="width: 32px; height: 32px; border-radius: 50%; background: #ffffff; border: 1px solid var(--line); box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+                <i class="ph-bold ph-arrows-clockwise" style="font-size: 16px;"></i>
+            </button>
+          </div>
+
+          <div class="qr-safety-note" style="margin-top: 16px;">
             <i class="ph ph-shield-check"></i>
             <span>Production QR · Opens only the customer menu for this table.</span>
           </div>
@@ -2616,12 +3058,68 @@ async function renderAdminWorkspace(mount) {
       ]
     });
 
-    setTimeout(() => {
+    setTimeout(async () => {
+      // 1. Fetch the Live PIN from the Database
+      try {
+          const { data, error } = await supabase.rpc("get_table_daily_pin", { p_table_id: table.id });
+          if (!error && data) {
+             modal.root.querySelector("#display-table-pin").textContent = data;
+          } else {
+             modal.root.querySelector("#display-table-pin").textContent = "----";
+          }
+      } catch(e) {
+          modal.root.querySelector("#display-table-pin").textContent = "ERR";
+      }
+
+      // 2. Render the QR with the Premium Branding Center Logo
       if (globalThis.QRCode) {
         const container = modal.root.querySelector("#table-qr");
         container.innerHTML = ""; 
-        new QRCode(container, { text: url, width: 256, height: 256, correctLevel: QRCode.CorrectLevel.M });
+        
+        new QRCode(container, { 
+            text: url, 
+            width: 256, 
+            height: 256, 
+            correctLevel: QRCode.CorrectLevel.H // MUST be High for center logo to scan properly
+        });
+
+        const iconUrl = window.__ACTIVE_TENANT__?.icon_url;
+        if (iconUrl) {
+            const logoImg = document.createElement("img");
+            logoImg.src = versionedAsset(iconUrl);
+            
+            // CRITICAL FIX: Use cssText with !important to completely block external stylesheets from stretching the image!
+            logoImg.style.cssText = "position: absolute !important; top: 50% !important; left: 50% !important; transform: translate(-50%, -50%) !important; width: 48px !important; height: 48px !important; min-width: 48px !important; min-height: 48px !important; max-width: 48px !important; max-height: 48px !important; border-radius: 10px !important; border: 4px solid #ffffff !important; background-color: #ffffff !important; object-fit: cover !important; z-index: 20 !important; box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;";
+            
+            container.appendChild(logoImg);
+        }
       }
+
+      // 3. Handle Manual Regeneration (Increments the Salt)
+      modal.root.querySelector("#regenerate-pin-btn").addEventListener("click", async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          const pinDisplay = modal.root.querySelector("#display-table-pin");
+          pinDisplay.innerHTML = `<i class="ph ph-spinner-gap ph-spin" style="font-size: 20px;"></i>`;
+          
+          try {
+              // Increment the salt in the database
+              const newSalt = Math.floor(Math.random() * 100000);
+              await supabase.from("tables").update({ pin_salt: newSalt }).eq("id", table.id);
+              
+              // Refetch the new mathematically generated PIN
+              const { data, error } = await supabase.rpc("get_table_daily_pin", { p_table_id: table.id });
+              if (!error && data) {
+                 pinDisplay.textContent = data;
+                 showToast("PIN Updated", "The table PIN was manually regenerated.");
+              }
+          } catch (err) {
+              pinDisplay.textContent = "ERR";
+          } finally {
+              btn.disabled = false;
+          }
+      });
+
     }, 50);
   }
 

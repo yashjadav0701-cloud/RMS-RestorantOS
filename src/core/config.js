@@ -37,7 +37,6 @@ export function getCustomerTableUrl(tableId) {
 
 export const DEFAULT_SETTINGS = Object.freeze({
   restaurant_name: "Table Forge System",
-  upi_id: "",
   cgst_rate: 2.5,
   sgst_rate: 2.5,
   currency_symbol: "₹",

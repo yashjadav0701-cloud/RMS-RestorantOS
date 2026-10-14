@@ -3,6 +3,42 @@ import { DEFAULT_SETTINGS, versionedAsset } from "../core/config.js";
 import { createPOSState } from "../core/posState.js";
 import { escapeHtml, money, mountNavigation, openAppModal, showToast } from "../components/navigation.js";
 
+// Ensure global CSS animation is injected safely to avoid browser blocking
+const ensureGlobalPulse = () => {
+    if (!document.getElementById("premium-squircle-styles")) {
+        const style = document.createElement("style");
+        style.id = "premium-squircle-styles";
+        style.innerHTML = `
+            /* Premium iOS-style Squircle Engine */
+            .premium-squircle {
+                width: 104px; height: 104px; border-radius: 32px;
+                display: flex; align-items: center; justify-content: center;
+                margin: 0 auto 32px auto; color: #ffffff; position: relative;
+                box-shadow: 0 16px 32px var(--sq-glow);
+                background: var(--sq-bg);
+            }
+            .premium-squircle i { font-size: 52px; z-index: 2; }
+            
+            /* Color Themes */
+            .sq-amber { --sq-bg: linear-gradient(135deg, #f59e0b, #ea580c); --sq-glow: rgba(234, 88, 12, 0.35); }
+            .sq-blue  { --sq-bg: linear-gradient(135deg, #38bdf8, #0284c7); --sq-glow: rgba(2, 132, 199, 0.35); }
+            .sq-green { --sq-bg: linear-gradient(135deg, #4ade80, #16a34a); --sq-glow: rgba(22, 163, 74, 0.35); }
+            .sq-red   { --sq-bg: linear-gradient(135deg, #fb7185, #e11d48); --sq-glow: rgba(225, 29, 72, 0.35); }
+            .sq-slate { --sq-bg: linear-gradient(135deg, #94a3b8, #475569); --sq-glow: rgba(71, 85, 105, 0.35); }
+
+            /* Cinematic Animations */
+            @keyframes sqFloat { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+            @keyframes sqPop { 0% { transform: scale(0.6); opacity: 0; } 60% { transform: scale(1.15); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+            @keyframes sqPulseGlow { 0%, 100% { box-shadow: 0 16px 32px var(--sq-glow); } 50% { box-shadow: 0 24px 48px var(--sq-glow); transform: scale(1.02); } }
+            
+            .anim-float { animation: sqFloat 4s ease-in-out infinite; }
+            .anim-pop { animation: sqPop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
+            .anim-pulse { animation: sqPulseGlow 3s ease-in-out infinite; }
+        `;
+        document.head.appendChild(style);
+    }
+};
+
 export async function render({ mount }) {
   if (!supabase) {
     mount.innerHTML = `<section class="access-screen dark-access"><div class="access-card"><div class="access-logo" style="display:grid; place-items:center; color:var(--forest-900); background:#fff;"><i class="ph-bold ph-warning-circle" style="font-size:32px;"></i></div><h1>Table Forge System</h1><p>Supabase configuration is missing.</p></div></section>`;
@@ -14,7 +50,11 @@ export async function render({ mount }) {
   if (!activeTenant) {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-          const { data: rest } = await supabase.from("restaurants").select("*").eq("owner_id", user.id).maybeSingle();
+          const { data: rest } = await supabase
+            .from("restaurants")
+            .select("id, name, slug, icon_url, logo_url, background_color, foreground_color")
+            .eq("owner_id", user.id)
+            .maybeSingle();
           if (rest) {
               activeTenant = rest;
               window.__ACTIVE_TENANT__ = rest;
@@ -47,7 +87,11 @@ export async function render({ mount }) {
   const activeTenantId = activeTenant.id;
 
   const [settingsResult, productsResult, tablesResult, cuisinesResult] = await Promise.all([
-    supabase.from("app_settings").select("*").eq("restaurant_id", activeTenantId).maybeSingle(),
+    supabase
+      .from("app_settings")
+      .select("restaurant_id, restaurant_name, restaurant_address, gst_number, cgst_rate, sgst_rate, currency_symbol, receipt_footer")
+      .eq("restaurant_id", activeTenantId)
+      .maybeSingle(),
     supabase.from("products").select("*").eq("restaurant_id", activeTenantId).eq("is_active", true).order("sort_order", { ascending: true }).order("name", { ascending: true }),
     supabase.from("tables").select("id, table_no, capacity, is_active").eq("restaurant_id", activeTenantId).eq("is_active", true).order("table_no", { ascending: true }),
     supabase.from("cuisines").select("*").eq("restaurant_id", activeTenantId).order("sort_order", { ascending: true })
@@ -88,16 +132,17 @@ export async function render({ mount }) {
   const currentTableObj = isCustomerMode ? tables.find(t => t.id === qrTableId) : null;
 
   if (isCustomerMode) {
+    ensureGlobalPulse();
+    
     if (!currentTableObj) {
       mount.innerHTML = `<main class="customer-page"><section class="customer-message"><div class="message-mark"><i class="ph ph-qr-code"></i></div><span class="eyebrow">${escapeHtml(restaurant.name)}</span><h1>Table unavailable</h1><p>This QR code is invalid or no longer active.</p></section></main>`;
       return () => {};
     }
     
-const sessionKey = `rms.session.${currentTableObj.id}`;
+    const sessionKey = `rms.session.${currentTableObj.id}`;
     const legacySessionKey = `fourflavours.session.${currentTableObj.id}`;
     const tabSessionKey = `rms.tab.${currentTableObj.id}`;
     
-    // 1. Physical Scan Check: Wipe old tokens and scrub URL immediately
     if (isPhysicalScan) {
         localStorage.removeItem(sessionKey);
         localStorage.removeItem(legacySessionKey);
@@ -109,219 +154,127 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
 
     let existingToken = localStorage.getItem(sessionKey) || localStorage.getItem(legacySessionKey);
 
-    // 2. Validate Existing Token
     if (existingToken) {
-        const { data: mySession } = await supabase.from("dining_sessions")
-            .select("status, updated_at")
-            .eq("session_token", existingToken)
-            .eq("restaurant_id", activeTenantId) /* 🔒 EXPLICIT TENANT ISOLATION */
-            .maybeSingle();
+        const { data: sessionState, error: sessionStateError } = await supabase.rpc("get_customer_session_state", {
+            p_table_id: currentTableObj.id,
+            p_session_token: existingToken
+        });
+        const mySession = sessionStateError ? null : (sessionState?.[0] ?? sessionState);
 
         if (mySession) {
-            // Bind active sessions strictly to this specific browser tab
             if (["open", "bill_requested", "bill_ready"].includes(mySession.status)) {
                 sessionStorage.setItem(tabSessionKey, existingToken);
             }
 
             if (mySession.status === "bill_requested" || mySession.status === "bill_ready") {
                 mount.innerHTML = `
-                  <style>
-                    @keyframes pulsePendingBlue { 0% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(2, 132, 199, 0); } 100% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0); } }
-                    @keyframes spinClock { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-                  </style>
-                  <div class="thank-you-screen" id="live-pending-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
-                    <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                      <div style="width: 104px; height: 104px; margin: 0 auto 28px; border-radius: 50%; background: linear-gradient(135deg, #38bdf8 0%, #0369a1 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(2, 132, 199, 0.3); animation: pulsePendingBlue 2s infinite cubic-bezier(0.16, 1, 0.3, 1);">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 56px; height: 56px;">
-                          <circle cx="50" cy="50" r="44" fill="none" stroke="#e0f2fe" stroke-width="8"/>
-                          <line x1="50" y1="50" x2="68" y2="50" stroke="#ffffff" stroke-width="8" stroke-linecap="round" style="transform-origin: 50px 50px; animation: spinClock 12s linear infinite;" />
-                          <line x1="50" y1="50" x2="50" y2="24" stroke="#ffffff" stroke-width="8" stroke-linecap="round" style="transform-origin: 50px 50px; animation: spinClock 1s linear infinite;" />
-                          <circle cx="50" cy="50" r="6" fill="#ffffff" />
-                        </svg>
+                  <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
+                    <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
+                      <div class="premium-squircle sq-blue anim-pulse">
+                        <i class="ph-bold ph-hourglass-high"></i>
                       </div>
-                      <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Pending</h1>
-                      <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your bill has been requested. Please wait while our staff verifies payment at your table.</p>
+                      <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Pending</h1>
+                      <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Your bill has been requested. Please wait while our staff verifies payment at your table.</p>
                       <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
                       <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}!</p>
                     </div>
-                  </div>
+                  </main>
                 `;
 
-                // The True Server-Side Verification Engine
                 const checkServerForPayment = async () => {
-                  const { data, error } = await supabase.from("dining_sessions")
-                      .select("status")
-                      .eq("session_token", token)
-                      .eq("restaurant_id", window.__ACTIVE_TENANT__.id)
-                      .maybeSingle();
-                      
-                  if (data?.status === "closed" || (!error && !data)) {
-                      clearInterval(pollFallback);
-                      document.removeEventListener("visibilitychange", visibilityCheck);
-                      supabase.removeChannel(pendingChannel);
-                      window.location.reload();
-                  }
-              };
-
-              const pendingChannel = supabase.channel(`pending-tab-${current_state.tableId}`)
-                .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${current_state.tableId}` }, () => checkServerForPayment()).subscribe();
-                
-              const pollFallback = setInterval(checkServerForPayment, 3000);
-              const visibilityCheck = () => { if (document.visibilityState === 'visible') checkServerForPayment(); };
-              document.addEventListener("visibilitychange", visibilityCheck);
-              checkServerForPayment();
+                    const { data, error } = await supabase.rpc("get_customer_session_state", { p_table_id: currentTableObj.id, p_session_token: existingToken });
+                    const sessionState = data?.[0] ?? data;
+                    if (!error && sessionState?.status === "closed") {
+                        clearInterval(pollFallback); document.removeEventListener("visibilitychange", visibilityCheck); supabase.removeChannel(pendingChannel);
+                        window.location.reload();
+                    }
+                };
+                const pendingChannel = supabase.channel(`pending-tab-${currentTableObj.id}`).on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${currentTableObj.id}` }, () => checkServerForPayment()).subscribe();
+                const pollFallback = setInterval(checkServerForPayment, 3000);
+                const visibilityCheck = () => { if (document.visibilityState === 'visible') checkServerForPayment(); };
+                document.addEventListener("visibilitychange", visibilityCheck); checkServerForPayment();
 
                 return () => { clearInterval(pollFallback); document.removeEventListener("visibilitychange", visibilityCheck); supabase.removeChannel(pendingChannel); };
             }
 
             if (mySession.status === "closed") {
-                const tabToken = sessionStorage.getItem(tabSessionKey);
-                const isRecentTab = (tabToken === existingToken) || (window.history.state?.locked === true);
-
-                if (isRecentTab) {
-                    const closedDate = new Date(mySession.updated_at || Date.now());
-                    const minutesSinceClosed = (Date.now() - closedDate.getTime()) / (1000 * 60);
-                    const hoursSinceClosed = minutesSinceClosed / 60;
-
-                    // 1. SERVER-SIDE SUCCESS CHECK: If the table was closed less than 15 minutes ago, 
-                    // the database confirms they just paid! Show the Thank You screen instantly.
-                    if (minutesSinceClosed < 15) {
-                        mount.innerHTML = `
-                          <style>
-                            @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
-                            @keyframes drawCheck { to { stroke-dashoffset: 0; } }
-                            @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
-                          </style>
-                          <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
-                            <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                              <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
-                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
-                                  <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
-                                  <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
-                                </svg>
-                              </div>
-                              <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
-                              <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
-                              <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                              <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
-                            </div>
+                // 🧠 INSTANT EXPIRATION: Immediately wipe memory and lock them out permanently!
+                sessionStorage.removeItem(tabSessionKey);
+                localStorage.removeItem(sessionKey);
+                localStorage.removeItem(legacySessionKey);
+                existingToken = null;
+                
+                const closedDate = new Date(mySession.closed_at || Date.now());
+                const timeString = closedDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+                
+                mount.innerHTML = `
+                  <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
+                    <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
+                      <div class="premium-squircle sq-slate anim-float">
+                        <i class="ph-bold ph-lock-key"></i>
+                      </div>
+                      <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Session Expired</h1>
+                      <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Your dining session for Table ${currentTableObj.table_no} was closed at ${timeString}.</p>
+                      <div class="premium-lock-notice" style="background: #f8faf9; border-radius: 16px; border: 1px solid rgba(18,34,22,0.08); padding: 20px; display: flex; gap: 14px; text-align: left; align-items: flex-start;">
+                          <i class="ph-bold ph-shield-check" style="color: var(--forest-900); font-size: 22px;"></i>
+                          <div>
+                            <strong style="display: block; color: var(--forest-950); font-size: 0.9rem; margin-bottom: 4px;">Security Lock Active</strong>
+                            <span style="color: var(--forest-700); font-size: 0.85rem; line-height: 1.5;">To prevent remote ordering, this link is locked. To start a new order, please rescan the QR code on your table.</span>
                           </div>
-                        `;
-                        window.history.pushState({ locked: true }, "", window.location.href);
-                        window.addEventListener("popstate", () => { window.location.reload(); });
-                        return () => {};
-                    }
-
-                    // 2. OLD SESSION LOCK: If it's been closed for a while, lock the screen completely
-                    if (hoursSinceClosed < 12) {
-                        const timeString = closedDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-                        const dateString = closedDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-                        
-                        mount.innerHTML = `
-                          <style>
-                            @keyframes lockSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-                            @keyframes lockPulse { 0% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0.1); transform: scale(1); } 50% { box-shadow: 0 0 0 15px rgba(18, 34, 22, 0); transform: scale(1.05); } 100% { box-shadow: 0 0 0 0 rgba(18, 34, 22, 0); transform: scale(1); } }
-                            .premium-lock-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--paper, #FCFCF9); padding: 24px; font-family: inherit; }
-                            .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 24px; padding: 40px 32px; box-shadow: 0 12px 40px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-                            .premium-lock-icon { width: 90px; height: 90px; background: transparent; border: none; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; animation: lockPulse 3s infinite ease-in-out; }
-                            .premium-lock-title { font-size: 1.75rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
-                            .premium-lock-desc { color: var(--forest-700); font-size: 0.95rem; line-height: 1.5; margin: 0 0 32px 0; }
-                            .premium-lock-notice { background: #f8faf9; border-radius: 16px; border: 1px solid rgba(18,34,22,0.08); padding: 20px; display: flex; gap: 14px; text-align: left; align-items: flex-start; }
-                            .premium-lock-notice i { color: var(--forest-900); font-size: 22px; margin-top: 2px; }
-                            .premium-lock-notice strong { display: block; color: var(--forest-950); font-size: 0.9rem; margin-bottom: 4px; }
-                            .premium-lock-notice span { color: var(--forest-700); font-size: 0.85rem; line-height: 1.5; }
-                          </style>
-                          <main class="premium-lock-screen">
-                            <div class="premium-lock-card">
-                              <div class="premium-lock-icon">
-                                <img src="${versionedAsset("assets/images/ses_exp.svg")}" alt="Session Expired" style="width: 100%; height: 100%; object-fit: contain;">
-                              </div>
-                              <h1 class="premium-lock-title">Session Expired</h1>
-                              <p class="premium-lock-desc">Your dining session for <strong>Table ${currentTableObj.table_no}</strong> was completed on <br><strong style="color: var(--forest-950);">${dateString} at ${timeString}</strong>.</p>
-                              <div class="premium-lock-notice">
-                                  <i class="ph-bold ph-shield-check"></i>
-                                  <div>
-                                    <strong>Security Lock Active</strong>
-                                    <span>To prevent remote ordering, this link is locked. To start a new order, please rescan the QR code on your table.</span>
-                                  </div>
-                              </div>
-                            </div>
-                          </main>
-                        `;
-                        return () => {};
-                    } else {
-                        localStorage.removeItem(sessionKey);
-                        localStorage.removeItem(legacySessionKey);
-                        sessionStorage.removeItem(tabSessionKey);
-                        existingToken = null;
-                    }
-                } else {
-                    // Stale token from a previous visit that this tab didn't initiate. Wipe it and ignore.
-                    localStorage.removeItem(sessionKey);
-                    localStorage.removeItem(legacySessionKey);
-                    existingToken = null;
-                }
+                      </div>
+                    </div>
+                  </main>
+                `;
+                window.history.replaceState({ locked: true }, "", window.location.href);
+                return () => {};
             }
         } else {
-            // Token is invalid/orphaned
             localStorage.removeItem(sessionKey);
             localStorage.removeItem(legacySessionKey);
             existingToken = null;
         }
     }
 
-    // 3. SECURE ENFORCEMENT: No Token + No Physical Scan = Block Remote Ordering
     if (!existingToken && !isPhysicalScan) {
         mount.innerHTML = `
-          <style>
-            @keyframes lockSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-            .premium-lock-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--paper, #FCFCF9); padding: 24px; font-family: inherit; }
-            .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 24px; padding: 40px 32px; box-shadow: 0 12px 40px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-            .premium-lock-icon-danger { width: 90px; height: 90px; border-radius: 24px; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; }
-            .premium-lock-title { font-size: 1.75rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
-            .premium-lock-desc { color: var(--forest-700); font-size: 0.95rem; line-height: 1.5; margin: 0 0 32px 0; }
-          </style>
-          <main class="premium-lock-screen">
-            <div class="premium-lock-card">
-              <div class="premium-lock-icon-danger" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); box-shadow: 0 12px 24px rgba(217, 119, 6, 0.25);"><i class="ph-bold ph-qr-code" style="font-size: 48px; color: #fff;"></i></div>
-              <h1 class="premium-lock-title">Scan Required</h1>
-              <p class="premium-lock-desc">To access the menu and start ordering, please scan the QR code securely located on your table.</p>
+          <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
+            <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
+              <div class="premium-squircle sq-amber anim-float">
+                <i class="ph-bold ph-qr-code"></i>
+              </div>
+              <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Scan Required</h1>
+              <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">To access the menu and start ordering, please scan the QR code securely located on your table.</p>
             </div>
           </main>
         `;
         return () => {};
     }
 
-    // 4. Validate Table Availability
-    const { data: activeTableSession } = await supabase.from("dining_sessions")
-        .select("session_token")
-        .eq("table_id", currentTableObj.id)
-        .eq("restaurant_id", activeTenantId)
-        .neq("status", "closed")
-        .maybeSingle();
-    
-    // If the table is occupied by someone else, block them UNLESS they physically scanned the QR code (Multi-Device Support)
-    if (activeTableSession && activeTableSession.session_token !== existingToken) {
+    const { data: tableAccessData, error: tableAccessError } = await supabase.rpc(
+        "get_customer_table_access",
+        {
+            p_table_id: currentTableObj.id,
+            p_session_token: existingToken
+        }
+    );
+
+    if (tableAccessError) throw tableAccessError;
+
+    const tableAccess = Array.isArray(tableAccessData)
+        ? tableAccessData[0]
+        : tableAccessData;
+
+    if (tableAccess?.is_occupied && !tableAccess?.token_matches) {
         if (!isPhysicalScan) {
             mount.innerHTML = `
-              <style>
-                @keyframes lockSlideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-                @keyframes pulseDanger { 0% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(225, 29, 72, 0); } 100% { box-shadow: 0 0 0 0 rgba(225, 29, 72, 0); } }
-                @keyframes shakeIcon { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-4px) rotate(-4deg); } 40% { transform: translateX(4px) rotate(4deg); } 60% { transform: translateX(-4px) rotate(-4deg); } 80% { transform: translateX(4px) rotate(4deg); } }
-                .premium-lock-screen { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--paper, #FCFCF9); padding: 24px; font-family: inherit; }
-                .premium-lock-card { background: #ffffff; max-width: 440px; width: 100%; border-radius: 28px; padding: 48px 32px; box-shadow: 0 24px 48px rgba(18,34,22,0.06), 0 0 0 1px rgba(18,34,22,0.02); text-align: center; animation: lockSlideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-                .premium-lock-icon-danger { width: 96px; height: 96px; background: linear-gradient(135deg, #ff4b4b 0%, #e11d48 100%); border-radius: 28px; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; color: #ffffff; animation: pulseDanger 2.5s infinite, shakeIcon 0.6s ease-in-out 0.2s; box-shadow: 0 12px 24px rgba(225, 29, 72, 0.25); }
-                .premium-lock-title { font-size: 1.85rem; font-weight: 900; color: var(--forest-950); letter-spacing: -0.02em; margin: 0 0 12px 0; }
-                .premium-lock-desc { color: var(--forest-700); font-size: 1rem; line-height: 1.5; margin: 0 0 32px 0; }
-                .try-again-btn { width: 100%; border-radius: 12px; height: 52px; display: flex; align-items: center; justify-content: center; gap: 8px; background: #ffffff; border: 1px solid var(--line); color: var(--forest-900); font-size: 1rem; font-weight: 800; cursor: pointer; transition: background 0.2s, transform 0.1s; }
-                .try-again-btn:active { transform: scale(0.98); }
-              </style>
-              <main class="premium-lock-screen">
-                <div class="premium-lock-card">
-                  <div class="premium-lock-icon-danger"><i class="ph-fill ph-hand-palm" style="font-size: 48px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.2));"></i></div>
-                  <h1 class="premium-lock-title">Table Occupied</h1>
-                  <p class="premium-lock-desc">Table ${currentTableObj.table_no} is currently in use by another guest's device.</p>
-                  <button class="try-again-btn" onclick="window.location.reload()"><i class="ph-bold ph-arrows-clockwise" style="font-size: 20px;"></i> Try Again</button>
+              <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
+                <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
+                  <div class="premium-squircle sq-red anim-pulse">
+                    <i class="ph-bold ph-hand-palm"></i>
+                  </div>
+                  <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Table Occupied</h1>
+                  <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Table ${currentTableObj.table_no} is currently in use by another guest's device.</p>
+                  <button class="try-again-btn" onclick="window.location.reload()" style="width: 100%; border-radius: 12px; height: 52px; display: flex; align-items: center; justify-content: center; gap: 8px; background: #ffffff; border: 1px solid var(--line); color: var(--forest-900); font-size: 1rem; font-weight: 800; cursor: pointer;"><i class="ph-bold ph-arrows-clockwise" style="font-size: 20px;"></i> Try Again</button>
                 </div>
               </main>
             `;
@@ -329,9 +282,244 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
         }
     }
 
-    // 5. Ensure the Database Session (Creates new OR joins existing active table if physically scanned)
-    const { data: sessionBootstrap, error: sessionError } = await supabase.rpc("ensure_customer_session", { p_table_id: currentTableObj.id });
-    if (sessionError) throw sessionError;
+    let sessionBootstrap, sessionError;
+    
+    // 🧠 THE INFINITE LOOP FIX: If the user already unlocked the table and holds the valid token, skip the PIN check entirely!
+    if (tableAccess?.is_occupied && tableAccess?.token_matches && existingToken) {
+        sessionBootstrap = [{ session_token: existingToken }];
+        sessionError = null;
+    } else {
+        try {
+            // First attempt with a null PIN to see if the table requires one
+            const { data, error } = await supabase.rpc("ensure_customer_session", { p_table_id: currentTableObj.id, p_pin: null });
+            sessionBootstrap = data;
+            sessionError = error;
+        } catch(err) {
+            sessionError = err;
+        }
+    }
+
+    if (sessionError && sessionError.message.includes('INVALID_DAILY_PIN')) {
+        mount.innerHTML = `
+          <style>
+            /* The Falling Down Animation */
+            @keyframes dropOut {
+              0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+              100% { transform: translateY(120px) rotate(15deg); opacity: 0; }
+            }
+            /* The Falling From Above Animation */
+            @keyframes dropIn {
+              0% { transform: translateY(-60px); opacity: 0; }
+              70% { transform: translateY(5px); opacity: 1; }
+              100% { transform: translateY(0); opacity: 1; }
+            }
+            /* The Shake Animation */
+            @keyframes iconShake {
+              0%, 100% { transform: translateX(0); }
+              20% { transform: translateX(-6px) rotate(-5deg); }
+              40% { transform: translateX(6px) rotate(5deg); }
+              60% { transform: translateX(-6px) rotate(-5deg); }
+              80% { transform: translateX(6px) rotate(5deg); }
+            }
+            
+            /* Premium 4-Box PIN Layout */
+            .pin-box-container { display: flex; gap: 12px; justify-content: center; margin-bottom: 24px; position: relative; perspective: 500px; }
+            .pin-box { 
+                width: 64px; height: 72px; 
+                text-align: center; font-size: 32px; font-weight: 900; color: var(--forest-950);
+                border-radius: 16px; border: 2px solid var(--line); background: var(--paper);
+                outline: none; transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.02);
+                caret-color: transparent; 
+            }
+            .pin-box:focus {
+                border-color: var(--forest-900); background: #ffffff;
+                box-shadow: 0 8px 24px rgba(18,34,22,0.1); transform: translateY(-2px);
+            }
+            
+            /* Animation Classes */
+            .pin-box.falling-out {
+               animation: dropOut 0.5s cubic-bezier(0.55, 0.085, 0.68, 0.53) forwards;
+               pointer-events: none;
+            }
+            .pin-box.dropping-in {
+               animation: dropIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+            }
+            .sq-error-shake {
+               animation: iconShake 0.5s ease-in-out;
+               background: linear-gradient(135deg, #fb7185, #e11d48) !important;
+               box-shadow: 0 16px 32px rgba(225, 29, 72, 0.35) !important;
+            }
+          </style>
+          
+          <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit; overflow: hidden;">
+            <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04); position: relative;">
+              <div id="lock-icon-container" class="premium-squircle sq-blue anim-float" style="margin-bottom: 24px; transition: all 0.3s ease;">
+                <i id="lock-icon" class="ph-bold ph-lock-key"></i>
+              </div>
+              <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Table Locked</h1>
+              
+              <div style="height: 60px; margin-bottom: 24px; display: flex; align-items: center; justify-content: center; position: relative;">
+                 <p id="pin-prompt-msg" class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin: 0; line-height: 1.5; transition: opacity 0.2s;">Please enter the daily dining PIN to access the menu for Table ${currentTableObj.table_no}.</p>
+                 <p id="pin-error-msg" style="font-size: 1.15rem; font-weight: 800; color: #e11d48; margin: 0; line-height: 1.5; display: none; position: absolute; width: 100%;">Incorrect PIN entered.</p>
+              </div>
+              
+              <div class="pin-box-container" id="pin-box-container">
+                 <input type="tel" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
+                 <input type="tel" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
+                 <input type="tel" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
+                 <input type="tel" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
+              </div>
+              
+              <div id="pin-loading-indicator" style="display: none; height: 24px; align-items: center; justify-content: center; color: var(--forest-900); font-weight: 800; font-size: 16px; margin-top: 16px;">
+                 <i class="ph-bold ph-spinner-gap ph-spin" style="margin-right: 8px;"></i> Unlocking...
+              </div>
+            </div>
+          </main>
+        `;
+
+        const boxContainer = mount.querySelector("#pin-box-container");
+        let inputs = Array.from(mount.querySelectorAll(".pin-box"));
+        const promptMsg = mount.querySelector("#pin-prompt-msg");
+        const errorMsg = mount.querySelector("#pin-error-msg");
+        const loadingIndicator = mount.querySelector("#pin-loading-indicator");
+        const lockIconContainer = mount.querySelector("#lock-icon-container");
+        const lockIcon = mount.querySelector("#lock-icon");
+        
+        let isProcessing = false;
+
+        function setupInputs(inputElements) {
+            inputElements[0].focus();
+
+            inputElements.forEach((input, index) => {
+                input.addEventListener('input', (e) => {
+                    if (isProcessing) { e.target.value = ''; return; }
+                    
+                    e.target.value = e.target.value.replace(/[^0-9]/g, '');
+                    
+                    lockIconContainer.className = "premium-squircle sq-blue anim-float";
+                    lockIcon.className = "ph-bold ph-lock-key";
+                    errorMsg.style.display = "none";
+                    promptMsg.style.opacity = "1";
+
+                    if (e.target.value.length === 1) {
+                        if (index < inputElements.length - 1) {
+                            inputElements[index + 1].focus();
+                        } else {
+                            submitPin(inputElements);
+                        }
+                    }
+                });
+
+                input.addEventListener('keydown', (e) => {
+                    if (isProcessing) return;
+                    if (e.key === 'Backspace' && e.target.value === '' && index > 0) {
+                        inputElements[index - 1].focus();
+                        inputElements[index - 1].value = '';
+                    }
+                });
+                
+                input.addEventListener('paste', (e) => {
+                    if (isProcessing) return;
+                    e.preventDefault();
+                    const pasteData = (e.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
+                    if (pasteData) {
+                        for (let i = 0; i < inputElements.length; i++) {
+                            if (pasteData[i]) {
+                                inputElements[i].value = pasteData[i];
+                                if (i < inputElements.length - 1) inputElements[i + 1].focus();
+                            }
+                        }
+                        if (pasteData.length >= 4) submitPin(inputElements);
+                    }
+                });
+            });
+        }
+
+        setupInputs(inputs);
+
+        async function submitPin(currentInputs) {
+            const pin = currentInputs.map(i => i.value).join("");
+            if (pin.length < 4) return;
+            
+            isProcessing = true;
+            currentInputs.forEach(i => i.disabled = true);
+            loadingIndicator.style.display = "flex";
+            
+            const { data, error } = await supabase.rpc("ensure_customer_session", { p_table_id: currentTableObj.id, p_pin: pin });
+            
+            if (error && error.message.includes('INVALID_DAILY_PIN')) {
+                // THE FALLING REJECTION ANIMATION
+                loadingIndicator.style.display = "none";
+                
+                lockIconContainer.className = "premium-squircle sq-error-shake";
+                lockIcon.className = "ph-bold ph-x";
+                
+                promptMsg.style.opacity = "0";
+                setTimeout(() => { errorMsg.style.display = "block"; }, 150);
+
+                // Right to Left Staggered Fall
+                currentInputs.forEach((i, idx) => {
+                    const delay = (3 - idx) * 80; // 240ms, 160ms, 80ms, 0ms
+                    setTimeout(() => { i.classList.add("falling-out"); i.style.borderColor = "#e11d48"; i.style.color = "#e11d48"; }, delay);
+                });
+
+                // Rebuild boxes from above
+                setTimeout(() => {
+                    boxContainer.innerHTML = ''; 
+                    
+                    for(let i=0; i<4; i++) {
+                        const newBox = document.createElement("input");
+                        newBox.type = "tel";
+                        newBox.className = "pin-box dropping-in";
+                        newBox.maxLength = 1;
+                        newBox.pattern = "[0-9]*";
+                        newBox.inputMode = "numeric";
+                        newBox.autocomplete = "off";
+                        // Left to Right Staggered Drop In
+                        newBox.style.animationDelay = `${i * 60}ms`;
+                        boxContainer.appendChild(newBox);
+                    }
+                    
+                    inputs = Array.from(mount.querySelectorAll(".pin-box"));
+                    setupInputs(inputs);
+                    isProcessing = false;
+                    
+                    setTimeout(() => {
+                        inputs.forEach(i => i.classList.remove("dropping-in"));
+                    }, 500);
+
+                }, 800); 
+                
+            } else if (error) {
+                currentInputs.forEach(i => i.disabled = false);
+                loadingIndicator.style.display = "none";
+                promptMsg.style.opacity = "0";
+                errorMsg.textContent = error.message;
+                errorMsg.style.display = "block";
+                isProcessing = false;
+            } else {
+                // SUCCESS SEQUENCE
+                loadingIndicator.style.display = "none";
+                lockIconContainer.className = "premium-squircle sq-green anim-pop";
+                lockIcon.className = "ph-bold ph-check";
+                
+                const sessionData = Array.isArray(data) ? data[0] : data;
+                if (sessionData?.session_token) {
+                    localStorage.setItem(sessionKey, sessionData.session_token);
+                    sessionStorage.setItem(tabSessionKey, sessionData.session_token);
+                    
+                    setTimeout(() => {
+                        window.location.reload(); 
+                    }, 600);
+                }
+            }
+        }
+
+        return () => {};
+    } else if (sessionError) {
+        throw sessionError;
+    }
     
     customerSessionToken = (sessionBootstrap?.[0] ?? sessionBootstrap)?.session_token;
     if (customerSessionToken) {
@@ -339,15 +527,26 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
         sessionStorage.setItem(tabSessionKey, customerSessionToken);
     }
   }
+
   const state = createPOSState({ settings });
+  window.__FOUR_FLAVOURS_POS_STATE__ = state; // 🔥 Re-export global state so Admin buttons can communicate with it!
+  
+  // 🛡️ CUSTOMER CART & SESSION SECURITY FIX
+  if (isCustomerMode) {
+      const previousTableId = state.getState().tableId;
+
+      state.setOrderType("dine_in");
+      state.setTable(currentTableObj);
+
+      // Clear the target-table draft after setTable has loaded it on a physical scan.
+      if (isPhysicalScan || (previousTableId && previousTableId !== currentTableObj.id)) {
+          state.clear();
+      }
+  }
+
   const adminAlertChannel = supabase.channel('ff-admin-alerts');
   adminAlertChannel.subscribe();
   
-  if (isCustomerMode) {
-    state.setOrderType("dine_in");
-    state.setTable(currentTableObj);
-  }
-
   let activeCuisine = null;
   let activeSubCategory = "All";
   let searchTerm = "";
@@ -463,49 +662,115 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
     mount.querySelector("#customer-live-tab").addEventListener("click", openLiveTabDashboard);
   } else {
     state.setOrderType("dine_in");
-    
-    // FIX: Master Cart Reset. Every time a staff member opens the POS, 
-    // it will forcefully wipe any ghost items left behind from a previous abandoned session!
-    state.clear(); 
   }
-  
+
   mount.querySelector("#pos-next").addEventListener("click", openReview);
 
   async function openLiveTabDashboard() {
-    const tableId = isCustomerMode ? currentTableObj.id : state.getState().tableId;
+    const tableId = isCustomerMode
+      ? currentTableObj?.id
+      : state.getState().tableId;
+
     if (!tableId) return;
 
-    const btn = mount.querySelector("#customer-live-tab");
-    if (btn) { btn.classList.remove("qty-pulse"); void btn.offsetWidth; btn.classList.add("qty-pulse"); }
-
-    const { data: session } = await supabase.from("dining_sessions")
-      .select("id, status")
-      .eq("table_id", tableId)
-      .eq("restaurant_id", activeTenantId) /* 🔒 EXPLICIT TENANT ISOLATION */
-      .in("status", ["open", "bill_requested", "bill_ready"])
-      .maybeSingle();
-
-    if (!session) {
-       return openAppModal({
-          title: "Your Tab is Empty",
-          subtitle: "You haven't sent any items to the kitchen yet.",
-          body: `<div class="empty-state"><i class="ph-bold ph-receipt"></i><strong>Nothing here yet</strong><span>Add dishes to your cart and tap "Next" to start your order.</span></div>`,
-          actions: [{ label: "Browse Menu", icon: "ph-arrow-left", className: "btn-primary", onClick: ({ close }) => close() }]
-       });
+    const button = mount.querySelector("#customer-live-tab");
+    if (button) {
+      button.classList.remove("qty-pulse");
+      void button.offsetWidth;
+      button.classList.add("qty-pulse");
     }
 
-    const { data: order } = await supabase.from("orders").select("*").eq("session_id", session.id).eq("restaurant_id", activeTenantId).limit(1).maybeSingle();
-    
-    if (!order) {
-       return openAppModal({
-          title: "Your Tab is Empty",
-          subtitle: "You haven't sent any items to the kitchen yet.",
-          body: `<div class="empty-state"><i class="ph-bold ph-receipt"></i><strong>Nothing here yet</strong><span>Add dishes to your cart and tap "Next" to start your order.</span></div>`,
-          actions: [{ label: "Browse Menu", icon: "ph-arrow-left", className: "btn-primary", onClick: ({ close }) => close() }]
-       });
-    }
+    try {
+      let sessionId = null;
+      let sessionStatus = null;
 
-    showActiveOrderDashboard({ order, settings, current_state: { tableId, orderType: "dine_in" }, sessionKey: tableId });
+      if (isCustomerMode) {
+        const token =
+          customerSessionToken ||
+          localStorage.getItem(`rms.session.${tableId}`) ||
+          localStorage.getItem(`fourflavours.session.${tableId}`);
+
+        if (!token) {
+          throw new Error("Your table session could not be verified. Please scan the table QR code again.");
+        }
+
+        const { data, error } = await supabase.rpc("get_customer_session_state", {
+          p_table_id: tableId,
+          p_session_token: token
+        });
+
+        if (error) throw error;
+
+        const sessionState = Array.isArray(data) ? data[0] : data;
+
+        if (!sessionState || sessionState.status === "closed") {
+          return openAppModal({
+            title: "Your Tab Is Empty",
+            subtitle: "There is no active order for this table.",
+            body: `<div class="empty-state"><i class="ph-bold ph-receipt"></i><strong>Nothing here yet</strong><span>Add dishes to your cart and tap Next to place your first order.</span></div>`,
+            actions: [
+              {
+                label: "Browse Menu",
+                icon: "ph-arrow-left",
+                className: "btn-primary",
+                onClick: ({ close }) => close()
+              }
+            ]
+          });
+        }
+
+        sessionId = sessionState.id || sessionState.session_id || null;
+        sessionStatus = sessionState.status;
+      } else {
+        const { data: session, error } = await supabase
+          .from("dining_sessions")
+          .select("id, status")
+          .eq("table_id", tableId)
+          .eq("restaurant_id", activeTenantId)
+          .in("status", ["open", "bill_requested", "bill_ready"])
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (!session) {
+          return openAppModal({
+            title: "Your Tab Is Empty",
+            subtitle: "There is no active order for this table.",
+            body: `<div class="empty-state"><i class="ph-bold ph-receipt"></i><strong>Nothing here yet</strong><span>Add dishes to your cart and tap Next to start an order.</span></div>`,
+            actions: [
+              {
+                label: "Close",
+                icon: "ph-x",
+                className: "btn-primary",
+                onClick: ({ close }) => close()
+              }
+            ]
+          });
+        }
+
+        sessionId = session.id;
+        sessionStatus = session.status;
+      }
+
+      if (sessionStatus === "bill_requested" || sessionStatus === "bill_ready") {
+        showToast("Bill requested", "Please settle the bill with restaurant staff in person.", "info");
+      }
+
+      showActiveOrderDashboard({
+        order: null,
+        session_id: sessionId,
+        settings,
+        current_state: { tableId, orderType: "dine_in" },
+        sessionKey: tableId
+      });
+    } catch (error) {
+      console.error("Could not open live tab:", error);
+      showToast(
+        "Could not load live tab",
+        error?.message || "Please check your connection and try again.",
+        "error"
+      );
+    }
   }
 
   const tenantFilter = `restaurant_id=eq.${activeTenantId}`;
@@ -518,6 +783,44 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
       })
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: tenantFilter }, payload => {
         window.dispatchEvent(new Event("ff_live_update"));
+        
+        // 🛑 THE INSTANT GLOBAL KICK LOGIC 🛑
+        if (isCustomerMode && currentTableObj && payload.new.table_id === currentTableObj.id) {
+            if (payload.new.status === 'closed') {
+                // ⚡ LIVE KICK: Destroy tokens instantly and inject the lock screen without a browser refresh!
+                localStorage.removeItem(`rms.session.${currentTableObj.id}`);
+                localStorage.removeItem(`fourflavours.session.${currentTableObj.id}`);
+                sessionStorage.removeItem(`rms.tab.${currentTableObj.id}`);
+                
+                const timeString = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+                const rootNode = document.querySelector("#app") || mount;
+                
+                // Clear any open modals to prevent overlay ghosting
+                document.querySelectorAll(".app-modal-overlay").forEach(m => m.remove());
+                
+                rootNode.innerHTML = `
+                  <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit; animation: sqPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;">
+                    <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
+                      <div class="premium-squircle sq-slate anim-float">
+                        <i class="ph-bold ph-lock-key"></i>
+                      </div>
+                      <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Session Expired</h1>
+                      <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Your dining session for Table ${escapeHtml(currentTableObj.table_no)} was closed by staff at ${timeString}.</p>
+                      <div class="premium-lock-notice" style="background: #f8faf9; border-radius: 16px; border: 1px solid rgba(18,34,22,0.08); padding: 20px; display: flex; gap: 14px; text-align: left; align-items: flex-start;">
+                          <i class="ph-bold ph-shield-check" style="color: var(--forest-900); font-size: 22px;"></i>
+                          <div>
+                            <strong style="display: block; color: var(--forest-950); font-size: 0.9rem; margin-bottom: 4px;">Security Lock Active</strong>
+                            <span style="color: var(--forest-700); font-size: 0.85rem; line-height: 1.5;">To prevent remote ordering, this link is locked. To start a new order, please rescan the QR code on your table.</span>
+                          </div>
+                      </div>
+                    </div>
+                  </main>
+                `;
+                window.history.replaceState({ locked: true }, "", window.location.href);
+            } else if (payload.new.status === 'bill_requested' || payload.new.status === 'bill_ready') {
+                window.location.reload(); // "Payment Pending" requires standard routing
+            }
+        }
       })
       .subscribe(status => { const node = mount.querySelector("#pos-connection"); if (!node) return; const live = status === "SUBSCRIBED"; node.innerHTML = `<span class="connection-dot ${live ? "live" : "offline"}"></span>${live ? "Live" : "Offline"}`; });
 
@@ -772,7 +1075,6 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
         dropdown?.classList.remove("active");
         toggleBtn?.classList.remove("open");
         renderProducts();
-        // UI Polish: Smoothly scroll back to top when a filter is applied
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
     });
@@ -786,7 +1088,6 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
         
         window.history.pushState({ view: "cuisine", cuisine: activeCuisine }, "", "#" + encodeURIComponent(activeCuisine));
         renderProducts();
-        // UI Polish: Smoothly scroll back to top when switching cuisines
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
     });
@@ -930,7 +1231,6 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
     }
 
     const scroller = area.querySelector("#pos-product-container");
-    // Duplicate 'const grid' removed. The physics engine will securely use the 'grid' variable already declared above!
     if (scroller) {
       let lastScroll = 0;
       scroller.addEventListener("scroll", e => {
@@ -947,18 +1247,15 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
         lastScroll = current;
       }, { passive: true });
 
-      // --- iOS TACTILE CARD SEPARATION PHYSICS ---
       if (grid) {
           let touchStartY = 0;
           let isAtBottom = false;
 
           scroller.addEventListener("touchstart", e => {
-              // 1. Detect if we are at the absolute bottom of the menu
               const maxScroll = scroller.scrollHeight - scroller.clientHeight;
               isAtBottom = scroller.scrollTop >= maxScroll - 5;
               if (isAtBottom) {
                   touchStartY = e.touches[0].clientY;
-                  // Strip transitions so the cards stick instantly to your finger
                   Array.from(grid.children).forEach(child => child.style.transition = 'none');
               }
           }, { passive: true });
@@ -966,13 +1263,12 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
           scroller.addEventListener("touchmove", e => {
               if (!isAtBottom) return;
               const deltaY = touchStartY - e.touches[0].clientY; 
-              if (deltaY > 0) { // If pulling UP past the boundary
+              if (deltaY > 0) { 
                   const children = Array.from(grid.children);
                   const total = children.length;
                   children.forEach((child, index) => {
-                      // 2. Exponential Math: Bottom cards pull away much faster than top cards
                       const factor = Math.pow((index + 1) / total, 1.5); 
-                      const stretch = deltaY * factor * 0.45; // 0.45 controls the "spring stiffness"
+                      const stretch = deltaY * factor * 0.45; 
                       child.style.transform = `translateY(-${stretch}px)`;
                   });
               }
@@ -981,12 +1277,10 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
           scroller.addEventListener("touchend", () => {
               if (isAtBottom) {
                   Array.from(grid.children).forEach(child => {
-                      // 3. Apple-style cubic-bezier snap back
                       child.style.transition = 'transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
                       child.style.transform = 'translateY(0px)';
                   });
                   
-                  // 4. Safely return styles to normal so hover effects work again
                   setTimeout(() => {
                       Array.from(grid.children).forEach(child => {
                           child.style.transition = '';
@@ -1063,7 +1357,6 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
       actions: [{ label: "Cancel", icon: "ph-x", className: "btn-quiet", onClick: (ctx) => ctx.close() }]
     });
 
-    // 🔒 ISOLATION FIX: Query explicit tenant scope
     supabase.from("dining_sessions").select("table_id")
       .in("status", ["open", "bill_requested", "bill_ready"])
       .eq("restaurant_id", activeTenantId)
@@ -1086,12 +1379,10 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
           btn.addEventListener("click", () => {
             const table = tables.find(t => t.id === btn.dataset.tableId) ?? null;
             
-            // FIX: CART MEMORY. Securely cache the items before the table state changes!
             const savedCartItems = JSON.parse(JSON.stringify(state.getState().items || []));
             
             state.setTable(table);
             
-            // Instantly inject the cached items back into the new table session
             if (state.getState().items.length === 0 && savedCartItems.length > 0) {
                 savedCartItems.forEach(item => {
                     for (let i = 0; i < item.quantity; i++) state.addProduct(item);
@@ -1176,525 +1467,479 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
     list.innerHTML = current.items.map(item => `<div class="review-item" style="align-items: center;"><div class="review-item-copy"><strong>${escapeHtml(item.name)}</strong><span>${money(item.price)}</span></div><div class="premium-qty-wrapper is-active" style="flex-shrink: 0; margin-left: 12px;"><button class="premium-qty-btn dec-btn" data-dec="${item.id}" title="Decrease"><i class="ph ph-minus"></i></button><span class="premium-qty-value">${item.quantity}</span><button class="premium-qty-btn inc-btn" data-inc="${item.id}" title="Increase"><i class="ph ph-plus"></i></button></div></div>`).join("");
   }
 
-  async function submitPOSOrder(closeModal, errorBoxElement = null) {
-    if (!isCustomerMode) window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-    
-    const current = state.getState();
-    const posSessionKey = current.orderType === "dine_in" ? current.tableId : "takeaway_session";
+    async function submitPOSOrder(closeModal, errorBoxElement = null) {
+    if (!isCustomerMode) {
+      window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
+    }
 
-    let safeServerItems = current.items.map(i => ({
-      id: i.id,
-      quantity: i.quantity
-    }));
+    const current = state.getState();
+    const posSessionKey = current.orderType === "dine_in"
+      ? current.tableId
+      : "takeaway_session";
 
     try {
-      let result;
-      
-      if (isCustomerMode) {
-          const token = customerSessionToken || localStorage.getItem(`rms.session.${current.tableId}`) || localStorage.getItem(`fourflavours.session.${current.tableId}`);
-          if (!token) throw new Error("Security session expired. Please rescan the QR code.");
+      if (!Array.isArray(current.items) || current.items.length === 0) {
+        throw new Error("Your cart is empty. Add at least one item before submitting.");
+      }
 
-          // 🔒 RPC UPDATE: The server securely recalculates pricing from products table
-          const { data, error } = await supabase.rpc("submit_customer_order", {
-              p_table_id: current.tableId,
-              p_session_token: token,
-              p_items: safeServerItems
-          });
-          if (error) throw error;
-          result = data?.[0] ?? data;
-          
+      if (current.orderType === "dine_in" && !current.tableId) {
+        throw new Error("No table is selected. Please select a table and try again.");
+      }
+
+      if (
+        isCustomerMode &&
+        (!currentTableObj || current.tableId !== currentTableObj.id)
+      ) {
+        throw new Error("The table does not match this QR code. Please scan the table QR code again.");
+      }
+
+      const safeServerItems = current.items.map(item => {
+        const id = String(item?.id || "");
+        const quantity = Number(item?.quantity);
+
+        if (!id || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
+          throw new Error("One or more cart items have invalid details. Please review your cart.");
+        }
+
+        return { id, quantity };
+      });
+
+      let result;
+
+      if (isCustomerMode) {
+        const token =
+          customerSessionToken ||
+          localStorage.getItem(`rms.session.${current.tableId}`) ||
+          localStorage.getItem(`fourflavours.session.${current.tableId}`);
+
+        if (!token) {
+          throw new Error("Your dining session has expired. Please scan the table QR code again.");
+        }
+
+        const { data, error } = await supabase.rpc("submit_customer_order", {
+          p_table_id: currentTableObj.id,
+          p_session_token: token,
+          p_items: safeServerItems
+        });
+
+        if (error) throw error;
+        result = Array.isArray(data) ? data[0] : data;
       } else {
-          // 🔒 EXPLICIT TENANT ROUTING: Staff order forcefully bounds the RPC to the active viewport
-          const { data, error } = await supabase.rpc("create_pos_order", { 
-              p_restaurant_id: window.__ACTIVE_TENANT__.id,
-              p_order_type: current.orderType, 
-              p_table_id: current.tableId, 
-              p_items: safeServerItems, 
-              p_note: "Staff Order" 
-          });
-          if (error) throw error;
-          result = data?.[0] ?? data;
+        const tenantId = window.__ACTIVE_TENANT__?.id;
+
+        if (!tenantId) {
+          throw new Error("Your restaurant session is not available. Please sign in again.");
+        }
+
+        const { data, error } = await supabase.rpc("create_pos_order", {
+          p_restaurant_id: tenantId,
+          p_order_type: current.orderType,
+          p_table_id: current.tableId,
+          p_items: safeServerItems,
+          p_note: "Staff Order"
+        });
+
+        if (error) throw error;
+        result = Array.isArray(data) ? data[0] : data;
+      }
+
+      // Never clear the cart or close the modal until the database confirms an order ID.
+      if (!result?.id) {
+        throw new Error("The server did not confirm the order. Your cart has been kept; please check the order list before retrying.");
       }
 
       const wasNewOrder = !activeTableOrders[posSessionKey];
       activeTableOrders[posSessionKey] = result.id;
+
       state.clear();
       closeModal();
-      
-      if (isCustomerMode) {
-          adminAlertChannel.send({ type: 'broadcast', event: 'customer_order', payload: { tableId: current.tableId, isNew: wasNewOrder } });
-          showActiveOrderDashboard({ order: result, settings, current_state: current, sessionKey: posSessionKey, showPrepAnimation: true });
-      } else {
-          showActiveOrderDashboard({ order: result, settings, current_state: current, sessionKey: posSessionKey });
-      }
-      return true;
 
+      if (isCustomerMode) {
+        adminAlertChannel.send({
+          type: "broadcast",
+          event: "customer_order",
+          payload: {
+            tableId: currentTableObj.id,
+            isNew: wasNewOrder
+          }
+        });
+
+        showActiveOrderDashboard({
+          order: result,
+          settings,
+          current_state: current,
+          sessionKey: posSessionKey,
+          showPrepAnimation: true
+        });
+      } else {
+        showActiveOrderDashboard({
+          order: result,
+          settings,
+          current_state: current,
+          sessionKey: posSessionKey
+        });
+      }
+
+      return true;
     } catch (error) {
       console.error("Order Submission Error:", error);
+
+      const message = error?.message || "An unexpected error occurred while submitting the order.";
+
       if (errorBoxElement) {
-          errorBoxElement.innerHTML = `<i class="ph-bold ph-warning-circle"></i><span><strong>Order failed</strong><br>${escapeHtml(error.message)}</span>`;
-          errorBoxElement.style.display = "flex";
+        errorBoxElement.innerHTML =
+          `<i class="ph-bold ph-warning-circle"></i><span><strong>Order failed</strong><br>${escapeHtml(message)}</span>`;
+        errorBoxElement.style.display = "flex";
       } else {
-          showToast("Order failed", error.message, "error");
+        showToast("Order failed", message, "error");
       }
+
       return false;
     }
   }
 
-  function showActiveOrderDashboard({ order, settings, current_state, sessionKey, showPrepAnimation = false }) {
+  function showActiveOrderDashboard({ order, session_id, settings, current_state, sessionKey, showPrepAnimation = false }) {
     const t = tables.find(x => x.id === current_state.tableId);
     const titleStr = current_state.orderType === "dine_in" ? `Table ${t ? t.table_no : "Unknown"} · Live Tab` : `Takeaway · Active Order`;
     
-    let displayItems = [];
-    // FIX: Pre-fill with the known order data so it never flashes 0.00!
-    let aggregatedBill = { 
-        subtotal: Number(order?.subtotal || 0), 
-        cgst: Number(order?.cgst || 0), 
-        sgst: Number(order?.sgst || 0), 
-        rounding: Number(order?.rounding || 0), 
-        grand_total: Number(order?.grand_total || 0) 
-    };
-    let rootOrder = order;
-    
+    let displayRounds = [];
+    let aggregatedBill = { subtotal: 0, cgst: 0, sgst: 0, rounding: 0, grand_total: 0 };
+    let rootOrder = order; 
     let isPrepAnimating = showPrepAnimation;
-
-    // --- RAZORPAY & UPI GATEWAY LOGIC ---
-    const isGatewayEnabled = isCustomerMode && settings.gateway_active && window.Razorpay;
-    const hasUpi = isCustomerMode && settings.upi_id;
-    const upiString = hasUpi ? `upi://pay?pa=${encodeURIComponent(settings.upi_id.trim())}&pn=${encodeURIComponent(settings.restaurant_name.trim())}&am=${Number(aggregatedBill.grand_total).toFixed(2)}&cu=INR&tn=${encodeURIComponent(`Table ${t ? t.table_no : "Unknown"}`)}` : '';
+    let sessionStatus = null;
 
     const handleCustomerPaymentRequest = async (ctx) => {
-        ctx.button.disabled = true;
-        ctx.button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i>`;
+        const button = ctx?.button;
+        const originalButtonHTML = button?.innerHTML;
+
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Requesting...`;
+        }
+
         try {
-            const token = customerSessionToken || localStorage.getItem(`rms.session.${current_state.tableId}`) || localStorage.getItem(`fourflavours.session.${current_state.tableId}`);
-            const { error: rpcError } = await supabase.rpc("request_session_bill", { p_table_id: current_state.tableId, p_session_token: token });
-            if (rpcError) throw rpcError;
-            
-            adminAlertChannel.send({ type: 'broadcast', event: 'customer_bill', payload: { tableId: current_state.tableId } });
-            
-            ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
-            
+            const tableId = current_state.tableId;
+            const token =
+                customerSessionToken ||
+                localStorage.getItem(`rms.session.${tableId}`) ||
+                localStorage.getItem(`fourflavours.session.${tableId}`);
+
+            if (!tableId || !token) {
+                throw new Error("Your dining session could not be verified. Please scan the table QR code again.");
+            }
+
+            const { error } = await supabase.rpc("request_session_bill", {
+                p_table_id: tableId,
+                p_session_token: token
+            });
+
+            if (error) throw error;
+
+            adminAlertChannel.send({
+                type: "broadcast",
+                event: "customer_bill",
+                payload: { tableId }
+            });
+
+            ctx.close();
+            modal.close();
+            delete activeTableOrders[sessionKey];
+
             document.getElementById("app").innerHTML = `
-              <style>
-                @keyframes pulsePendingBlue { 0% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(2, 132, 199, 0); } 100% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0); } }
-                @keyframes spinClock { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-              </style>
               <div class="thank-you-screen" id="live-pending-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
                 <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                  <div style="width: 104px; height: 104px; margin: 0 auto 28px; border-radius: 50%; background: linear-gradient(135deg, #38bdf8 0%, #0369a1 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(2, 132, 199, 0.3); animation: pulsePendingBlue 2s infinite cubic-bezier(0.16, 1, 0.3, 1);">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 56px; height: 56px;">
-                      <circle cx="50" cy="50" r="44" fill="none" stroke="#e0f2fe" stroke-width="8"/>
-                      <line x1="50" y1="50" x2="68" y2="50" stroke="#ffffff" stroke-width="8" stroke-linecap="round" style="transform-origin: 50px 50px; animation: spinClock 12s linear infinite;" />
-                      <line x1="50" y1="50" x2="50" y2="24" stroke="#ffffff" stroke-width="8" stroke-linecap="round" style="transform-origin: 50px 50px; animation: spinClock 1s linear infinite;" />
-                      <circle cx="50" cy="50" r="6" fill="#ffffff" />
-                    </svg>
+                  <div style="width: 88px; height: 88px; margin: 0 auto 24px; border-radius: 50%; background: var(--sage-200); color: var(--forest-900); display: grid; place-items: center; font-size: 38px;">
+                    <i class="ph-bold ph-receipt"></i>
                   </div>
-                  <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Pending</h1>
-                  <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your bill has been requested. Please wait while our staff verifies payment at your table.</p>
-                  <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                  <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}!</p>
+                  <h1 class="thank-you-title" style="font-size: 2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Bill Requested</h1>
+                  <p class="thank-you-message" style="font-size: 1.05rem; font-weight: 600; color: var(--forest-800); margin-bottom: 24px;">Please settle your bill with the restaurant staff in person. Your table will close after staff records the payment.</p>
+                  <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600);">Thank you for dining at ${escapeHtml(restaurant.name)}.</p>
                 </div>
-              </div>
-            `;
+              </div>`;
 
-            // The True Server-Side Verification Engine
+            let pollFallback = null;
+            let disposed = false;
+
+            const cleanupPaymentPolling = () => {
+                if (disposed) return;
+                disposed = true;
+
+                if (pollFallback) clearInterval(pollFallback);
+                document.removeEventListener("visibilitychange", visibilityCheck);
+                supabase.removeChannel(pendingChannel);
+            };
+
             const checkServerForPayment = async () => {
-                const { data } = await supabase.from("dining_sessions").select("status").eq("table_id", current_state.tableId).order('created_at', {ascending: false}).limit(1).maybeSingle();
-                if (data?.status === "closed") {
-                    clearInterval(pollFallback);
-                    document.removeEventListener("visibilitychange", visibilityCheck);
-                    supabase.removeChannel(pendingChannel);
-                    
-                    document.getElementById("app").innerHTML = `
-                      <style>
-                        @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
-                        @keyframes drawCheck { to { stroke-dashoffset: 0; } }
-                        @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
-                      </style>
-                      <div class="thank-you-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
-                        <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                          <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
-                              <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
-                              <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
-                            </svg>
-                          </div>
-                          <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
-                          <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
-                          <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                          <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
-                        </div>
-                      </div>
-                    `;
-                    window.history.pushState({ locked: true }, "", window.location.href);
-                    window.addEventListener("popstate", () => { window.location.reload(); });
+                try {
+                    const { data, error: stateError } = await supabase.rpc("get_customer_session_state", {
+                        p_table_id: tableId,
+                        p_session_token: token
+                    });
+
+                    if (stateError) {
+                        console.warn("Session-state check failed:", stateError.message);
+                        return;
+                    }
+
+                    const sessionState = Array.isArray(data) ? data[0] : data;
+
+                    if (sessionState?.status === "closed") {
+                        cleanupPaymentPolling();
+                        window.location.reload();
+                    }
+                } catch (pollError) {
+                    console.warn("Could not verify payment status:", pollError);
                 }
             };
 
-            const pendingChannel = supabase.channel(`pending-tab-${current_state.tableId}`)
-              .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${current_state.tableId}` }, () => checkServerForPayment()).subscribe();
-              
-            const pollFallback = setInterval(checkServerForPayment, 3000);
-            
-            // Wake-Up Sync: Fires instantly when phone screen turns on
-            const visibilityCheck = () => { if (document.visibilityState === 'visible') checkServerForPayment(); };
-            document.addEventListener("visibilitychange", visibilityCheck);
+            const pendingChannel = supabase
+                .channel(`pending-tab-${tableId}`)
+                .on(
+                    "postgres_changes",
+                    {
+                        event: "UPDATE",
+                        schema: "public",
+                        table: "dining_sessions",
+                        filter: `table_id=eq.${tableId}`
+                    },
+                    checkServerForPayment
+                )
+                .subscribe();
 
-        } catch(e) {
-            showToast("Action Failed", e.message, "error");
-            ctx.button.disabled = false;
+            const visibilityCheck = () => {
+                if (document.visibilityState === "visible") checkServerForPayment();
+            };
+
+            pollFallback = setInterval(checkServerForPayment, 5000);
+            document.addEventListener("visibilitychange", visibilityCheck);
+            checkServerForPayment();
+        } catch (error) {
+            showToast("Could not request bill", error?.message || "Please try again.", "error");
+
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = originalButtonHTML || "Request Bill";
+            }
         }
     };
 
-    // Build the side-by-side flexbox buttons dynamically
-    const generateBillActions = [];
-    if (hasUpi) {
-        generateBillActions.push({ 
-            label: "Pay via UPI App", 
-            icon: "ph-device-mobile", 
-            className: "btn-primary", 
-            style: "flex: 1; background: #0284c7; border-color: #0284c7;", 
-            onClick: (ctx) => {
-                window.location.href = upiString; // Try to launch Google Pay / PhonePe directly
-                handleCustomerPaymentRequest(ctx);
-            }
-        });
-    }
-
-    generateBillActions.push({ 
-        label: "Pay at Counter", 
-        className: "btn-quiet", 
-        style: "flex: 1;", 
-        onClick: (ctx) => handleCustomerPaymentRequest(ctx) 
-    });
-
-    if (isGatewayEnabled) {
-      // If Razorpay is enabled, we add it as a primary full-width button
-      generateBillActions.push({ label: "Pay Online Now", icon: "ph-credit-card", className: "btn-primary", style: "width: 100%; background: var(--forest-900); border-color: var(--forest-900); margin-top: 8px;", onClick: async (ctx) => {
+    const finalActionsList = isCustomerMode ? [
+      {
+        label: "Pay at Counter",
+        className: "btn-quiet",
+        style: "flex: 1;",
+        onClick: handleCustomerPaymentRequest
+      }
+    ] : [
+      {
+        label: "Cancel",
+        className: "btn-quiet",
+        onClick: (ctx) => ctx.close()
+      },
+      {
+        label: "Confirm Cash Received",
+        className: "btn-primary",
+        onClick: async (ctx) => {
+          window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
           ctx.button.disabled = true;
-          ctx.button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Processing...`;
+          const originalHTML = ctx.button.innerHTML;
+          ctx.button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Recording...`;
+
           try {
-             const { data: rzpKey } = await supabase.rpc("get_razorpay_key", { p_restaurant_id: activeTenantId });
-             if (!rzpKey) throw new Error("Payment gateway is temporarily unavailable.");
+            const tenantId = window.__ACTIVE_TENANT__?.id;
 
-             const { data: sess } = await supabase.from("dining_sessions").select("id").eq("table_id", current_state.tableId).in("status", ["open", "bill_requested"]).maybeSingle();
-             if (!sess) throw new Error("Dining session expired.");
-
-             const amountInPaise = Math.round(aggregatedBill.grand_total * 100);
-             
-             const options = {
-                 key: rzpKey,
-                 amount: amountInPaise,
-                 currency: "INR",
-                 name: settings.restaurant_name,
-                 description: `Table ${t ? t.table_no : "Unknown"} Bill`,
-                 image: restaurant.icon_url ? versionedAsset(restaurant.icon_url) : null,
-                 handler: async function (response) {
-                     try {
-                        const { error: updateError } = await supabase.rpc("complete_session_payment", { p_session_id: sess.id, p_payment_method: "online" });
-                        if (updateError) throw updateError;
-                        
-                        ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
-                        document.getElementById("app").innerHTML = `
-                          <div class="thank-you-screen">
-                            <div class="thank-you-card">
-                              <div class="thank-you-icon" style="color: #16a34a;"><i class="ph-fill ph-check-circle"></i></div>
-                              <h1 class="thank-you-title">Payment Successful</h1>
-                              <p class="thank-you-message">Your bill of ${money(aggregatedBill.grand_total, settings.currency_symbol)} has been paid!</p>
-                              <div class="thank-you-divider"></div>
-                              <p class="thank-you-footer">You are free to leave. We hope you enjoyed your time at ${escapeHtml(restaurant.name)}.</p>
-                            </div>
-                          </div>`;
-                     } catch(err) {
-                        showToast("System Sync Error", "Payment received, but failed to close table. Please show staff.", "error");
-                     }
-                 },
-                 prefill: { name: "Guest", email: "guest@example.com", contact: "9999999999" },
-                 theme: { color: restaurant.foreground_color || "#122216" }
-             };
-             
-             const rzp = new window.Razorpay(options);
-             rzp.on('payment.failed', function (response){
-                  showToast("Payment Failed", response.error.description, "error");
-                  ctx.button.disabled = false;
-                  ctx.button.innerHTML = `<i class="ph-bold ph-credit-card"></i> Pay Online Now`;
-             });
-             rzp.open();
-             
-          } catch(e) {
-             showToast("Gateway Error", e.message, "error");
-             ctx.button.disabled = false;
-             ctx.button.innerHTML = `<i class="ph-bold ph-credit-card"></i> Pay Online Now`;
-          }
-      }});
-    }
-
-    const adminGenerateBillAction = { label: "Yes, I'm Done", className: "btn-primary", onClick: async (ctx) => {
-        window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-        ctx.button.disabled = true;
-        try {
-            const { data: sess } = await supabase.from("dining_sessions").select("id").eq("table_id", current_state.tableId).in("status", ["open", "bill_requested"]).maybeSingle();
-            if (sess) {
-                const { error: updateError } = await supabase.rpc("complete_session_payment", { p_session_id: sess.id, p_payment_method: "cash" });
-                if (updateError) throw updateError;
+            if (!tenantId) {
+              throw new Error("The active restaurant could not be verified. Please sign in again.");
             }
-        } catch(e) { 
-            showToast("Action Failed", e.message, "error");
+
+            // Dining-session payment is supported by the current database RPC. Do not mark a takeaway bill paid without its own server-side payment RPC.
+            if (current_state.orderType !== "dine_in") {
+              throw new Error("Cash settlement for takeaway orders is not wired to a server-side payment function yet. Do not mark this order paid until that workflow is added.");
+            }
+
+            const sessionId = session_id || rootOrder?.session_id;
+            let payableSessionId = sessionId;
+            if (!payableSessionId) {
+              const { data: session, error: sessionError } = await supabase
+                .from("dining_sessions")
+                .select("id, status")
+                .eq("table_id", current_state.tableId)
+                .eq("restaurant_id", tenantId)
+                .in("status", ["open", "bill_requested", "bill_ready"])
+                .maybeSingle();
+              if (sessionError) throw sessionError;
+              payableSessionId = session?.id;
+            }
+            if (!payableSessionId) throw new Error("No active session was found for this table. Refresh the table before proceeding.");
+
+            const { error: paymentError } = await supabase.rpc("complete_session_payment", {
+              p_session_id: payableSessionId,
+              p_payment_method: "cash"
+            });
+            if (paymentError) throw paymentError;
+
+            ctx.close();
+            modal.close();
+            delete activeTableOrders[sessionKey];
+
+            const flatItems = [];
+            displayRounds.forEach(round => {
+              round.items.forEach(item => flatItems.push(item));
+            });
+
+            showReceiptPreview({
+              order: {
+                ...rootOrder,
+                order_number: rootOrder?.order_number ?? displayRounds[displayRounds.length - 1]?.order_number ?? "Tab",
+                subtotal: aggregatedBill.subtotal,
+                cgst: aggregatedBill.cgst,
+                sgst: aggregatedBill.sgst,
+                rounding: aggregatedBill.rounding,
+                grand_total: aggregatedBill.grand_total
+              },
+              items: flatItems,
+              settings,
+              current_state
+            });
+          } catch (error) {
+            console.error("Cash payment confirmation failed:", error);
+            showToast("Payment not recorded", error?.message || "Please try again.", "error");
             ctx.button.disabled = false;
-            return; 
+            ctx.button.innerHTML = originalHTML;
+          }
         }
-        
-        ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
-        
-        showReceiptPreview({ 
-          order: {
-            ...rootOrder, subtotal: aggregatedBill.subtotal, cgst: aggregatedBill.cgst, sgst: aggregatedBill.sgst, rounding: aggregatedBill.rounding, grand_total: aggregatedBill.grand_total
-          }, 
-          items: displayItems, settings, current_state 
-        }); 
-    }};
+      }
+    ];
 
-    const finalActionsList = isCustomerMode ? generateBillActions : [ { label: "No, Go Back", className: "btn-quiet", onClick: (ctx) => ctx.close() }, adminGenerateBillAction ];
-
-    // FIX: Renamed back to 'modal' to prevent the silent JavaScript reference crash!
     const modal = openAppModal({
-      title: titleStr,
-      subtitle: "Your live table tab. Add more items or request the final bill.",
-      body: `<div id="active-dash-host">
-        ${showPrepAnimation ? `
-          <div class="inline-prep-stage">
-            <div class="chef-pot-wrap">
-              <div class="steam-container">
-                <div class="steam-line"></div><div class="steam-line"></div><div class="steam-line"></div>
-              </div>
-              <i class="ph-fill ph-cooking-pot"></i>
-            </div>
-            <h2 class="inline-prep-title">Sending to Kitchen...</h2>
-            <p class="inline-prep-subtitle">The chefs are preparing your dishes.</p>
-          </div>
-        ` : `
-          <div class="empty-state"><i class="ph ph-spinner-gap qty-pulse"></i><span>Syncing live tab...</span></div>
-        `}
-      </div>`,
+      title: titleStr, subtitle: "Your live table tab.",
+      body: `<div id="active-dash-host"><div class="empty-state"><i class="ph ph-spinner-gap qty-pulse"></i><span>Syncing rounds...</span></div></div>`,
       actions: [
         { label: "Keep Ordering", icon: "ph-plus-circle", className: "btn-quiet", onClick: ({ close }) => close() },
         { label: isCustomerMode ? "Request Bill" : "Complete Order", icon: "ph-receipt", className: "btn-primary", onClick: ({ close }) => {
-            
-            const finalTotal = aggregatedBill.grand_total;
-            const formattedTotal = money(finalTotal, settings.currency_symbol);
-            
+            const formattedTotal = money(aggregatedBill.grand_total, settings.currency_symbol);
             if (isCustomerMode) {
-                // PURE CUSTOMER FLOW: Physical On-Table Billing Only
                 openAppModal({
-                  title: "Request Final Bill?",
-                  subtitle: "Your waiter will bring the physical bill to your table.",
-                  body: `<div class="danger-confirm" style="text-align: center;">
-                    <div class="danger-confirm-icon" style="background: var(--sage-200); color: var(--forest-900);"><i class="ph-bold ph-receipt"></i></div>
-                    <h3>Ready for the bill?</h3>
-                    <p>Your total is <strong>${formattedTotal}</strong>.</p>
-                  </div>`,
-                  actions: [
-                    { label: "No, Go Back", className: "btn-quiet", onClick: (ctx) => ctx.close() },
-                    { label: "Yes, Request Bill", className: "btn-primary", onClick: async (ctx) => {
-                        ctx.button.disabled = true;
-                        ctx.button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Processing...`;
-                        try {
-                            const token = customerSessionToken || localStorage.getItem(`rms.session.${current_state.tableId}`) || localStorage.getItem(`fourflavours.session.${current_state.tableId}`);
-                            const { error: rpcError } = await supabase.rpc("request_session_bill", { p_table_id: current_state.tableId, p_session_token: token });
-                            if (rpcError) throw rpcError;
-                            
-                            adminAlertChannel.send({ type: 'broadcast', event: 'customer_bill', payload: { tableId: current_state.tableId } });
-                            
-                            ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
-                            
-                            // Render Premium SVG Pending Screen instantly!
-                            document.getElementById("app").innerHTML = `
-                              <style>
-                                @keyframes pulsePendingBlue { 0% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0.4); } 70% { box-shadow: 0 0 0 20px rgba(2, 132, 199, 0); } 100% { box-shadow: 0 0 0 0 rgba(2, 132, 199, 0); } }
-                                @keyframes spinClock { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-                              </style>
-                              <div class="thank-you-screen" id="live-pending-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
-                                <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                                  <div style="width: 104px; height: 104px; margin: 0 auto 28px; border-radius: 50%; background: linear-gradient(135deg, #38bdf8 0%, #0369a1 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(2, 132, 199, 0.3); animation: pulsePendingBlue 2s infinite cubic-bezier(0.16, 1, 0.3, 1);">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 56px; height: 56px;">
-                                      <circle cx="50" cy="50" r="44" fill="none" stroke="#e0f2fe" stroke-width="8"/>
-                                      <line x1="50" y1="50" x2="68" y2="50" stroke="#ffffff" stroke-width="8" stroke-linecap="round" style="transform-origin: 50px 50px; animation: spinClock 12s linear infinite;" />
-                                      <line x1="50" y1="50" x2="50" y2="24" stroke="#ffffff" stroke-width="8" stroke-linecap="round" style="transform-origin: 50px 50px; animation: spinClock 1s linear infinite;" />
-                                      <circle cx="50" cy="50" r="6" fill="#ffffff" />
-                                    </svg>
-                                  </div>
-                                  <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Payment Pending</h1>
-                                  <p class="thank-you-message" style="font-size: 1.2rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your bill has been requested. Please wait while our staff verifies payment at your table.</p>
-                                  <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                                  <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}!</p>
-                                </div>
-                              </div>`;
-
-                            // Listen for admin approval. DO NOT delete localStorage tokens.
-                            const showThankYouUI = () => {
-                                 const scr = document.getElementById("live-pending-screen");
-                                 if (!scr) return;
-                                 scr.innerHTML = `
-                                    <style>
-                                      @keyframes pulseSuccessGreen { 0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.4); } 70% { box-shadow: 0 0 0 25px rgba(22, 163, 74, 0); } 100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); } }
-                                      @keyframes drawCheck { to { stroke-dashoffset: 0; } }
-                                      @keyframes popSuccess { 0% { transform: scale(0.8); opacity: 0; } 60% { transform: scale(1.1); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
-                                    </style>
-                                    <div class="thank-you-card" style="background: var(--paper); padding: 56px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                                      <div style="width: 104px; height: 104px; margin: 0 auto 32px; border-radius: 50%; background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 32px rgba(22, 163, 74, 0.3); animation: popSuccess 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards, pulseSuccessGreen 2.5s infinite cubic-bezier(0.16, 1, 0.3, 1) 0.5s;">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" style="width: 50px; height: 50px;">
-                                          <circle cx="50" cy="50" r="44" fill="none" stroke="#dcfce7" stroke-width="8"/>
-                                          <path d="M28 53 L43 68 L74 34" fill="none" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="120" stroke-dashoffset="120" style="animation: drawCheck 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s forwards;" />
-                                        </svg>
-                                      </div>
-                                      <h1 class="thank-you-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Received</h1>
-                                      <p class="thank-you-message" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px;">Your tab has been closed successfully.</p>
-                                      <div class="thank-you-divider" style="width: 48px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                                      <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}.<br>We hope to see you again soon!</p>
-                                    </div>
-                                 `;
-                                 window.history.pushState({ locked: true }, "", window.location.href);
-                                 window.addEventListener("popstate", () => { window.location.reload(); });
-                            };
-
-                            const pendingChannel = supabase.channel(`pending-tab-${current_state.tableId}`)
-                              .on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${current_state.tableId}` }, payload => {
-                                 if (payload.new?.status === "closed") {
-                                     showThankYouUI();
-                                     supabase.removeChannel(pendingChannel);
-                                 }
-                              }).subscribe();
-                              
-                              const pollFallback = setInterval(async () => {
-                                // 🔒 SECURITY FIX: Pass the session_token and tenant ID so RLS allows the customer to read the status
-                                const { data } = await supabase.from("dining_sessions")
-                                    .select("status")
-                                    .eq("session_token", token)
-                                    .eq("restaurant_id", window.__ACTIVE_TENANT__.id)
-                                    .maybeSingle();
-                                    
-                                if (data?.status === "closed") {
-                                    clearInterval(pollFallback);
-                                    showThankYouUI();
-                                    supabase.removeChannel(pendingChannel);
-                                }
-                            }, 3000);
-                        } catch(e) {
-                            showToast("Action Failed", e.message, "error");
-                            ctx.button.disabled = false;
-                            ctx.button.innerHTML = `Yes, Request Bill`;
-                        }
-                    }}
-                  ]
+                  title: "Request Final Bill?", subtitle: "Your waiter will bring the physical bill.",
+                  body: `<div class="danger-confirm" style="text-align: center;"><div class="danger-confirm-icon" style="background: var(--sage-200); color: var(--forest-900);"><i class="ph-bold ph-receipt"></i></div><h3>Ready for the bill?</h3><p>Your total is <strong>${formattedTotal}</strong>.</p></div>`,
+                  actions: [ { label: "No", className: "btn-quiet", onClick: (c) => c.close() }, { label: "Yes, Request", className: "btn-primary", onClick: handleCustomerPaymentRequest } ]
                 });
             } else {
-                // PURE ADMIN FLOW: Generate Final Bill
                 openAppModal({
-                  title: "Generate Final Bill?",
-                  subtitle: "Confirm you are finished adding items to this table.",
-                  body: `<div class="danger-confirm" style="text-align: center;">
-                    <div class="danger-confirm-icon" style="background: var(--sage-200); color: var(--forest-900);"><i class="ph-bold ph-receipt"></i></div>
-                    <h3>Generate Final Bill?</h3>
-                    <p>This will finalize the tab and lock the table from further ordering.</p>
-                  </div>`,
-                  actions: [
-                    { label: "No, Go Back", className: "btn-quiet", onClick: (ctx) => ctx.close() },
-                    { label: "Yes, I'm Done", className: "btn-primary", onClick: async (ctx) => {
-                        window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-                        ctx.button.disabled = true;
-                        try {
-                            const { data: sess } = await supabase.from("dining_sessions").select("id").eq("table_id", current_state.tableId).in("status", ["open", "bill_requested"]).maybeSingle();
-                            if (sess) {
-                                const { error: updateError } = await supabase.rpc("complete_session_payment", { p_session_id: sess.id, p_payment_method: "cash" });
-                                if (updateError) throw updateError;
-                            }
-                        } catch(e) { 
-                            showToast("Action Failed", e.message, "error");
-                            ctx.button.disabled = false;
-                            return; 
-                        }
-                        
-                        ctx.close(); modal.close(); delete activeTableOrders[sessionKey];
-                        
-                        showReceiptPreview({ 
-                          order: {
-                            ...rootOrder, subtotal: aggregatedBill.subtotal, cgst: aggregatedBill.cgst, sgst: aggregatedBill.sgst, rounding: aggregatedBill.rounding, grand_total: aggregatedBill.grand_total
-                          }, 
-                          items: displayItems, settings, current_state 
-                        }); 
-                    }}
-                  ]
+                  title: "Generate Final Bill?", subtitle: "Confirm you are finished adding items.",
+                  body: `<div class="danger-confirm" style="text-align: center;"><div class="danger-confirm-icon" style="background: var(--sage-200); color: var(--forest-900);"><i class="ph-bold ph-receipt"></i></div><h3>Generate Final Bill?</h3><p>This finalizes the tab.</p></div>`,
+                  actions: finalActionsList
                 });
             }
-          }
-        }
+        }}
       ]
     });
 
     let syncTimer = setInterval(fetchLiveSession, 3000);
-    
     const liveUpdateHandler = () => fetchLiveSession();
     window.addEventListener("ff_live_update", liveUpdateHandler);
     
     const originalClose = modal.close;
-    modal.close = () => { 
-        clearInterval(syncTimer); 
-        window.removeEventListener("ff_live_update", liveUpdateHandler);
-        originalClose(); 
-    };
+    modal.close = () => { clearInterval(syncTimer); window.removeEventListener("ff_live_update", liveUpdateHandler); originalClose(); };
 
     async function fetchLiveSession() {
       const host = modal.root.querySelector("#active-dash-host");
-      
-      if (current_state.orderType === "takeaway") {
-         if (!rootOrder || !rootOrder.id || rootOrder.id === "undefined") {
-             if (host) host.innerHTML = `<div class="empty-state"><i class="ph ph-warning-circle"></i><span>Connection lost. Please add a new item to restart the session.</span></div>`;
-             return;
-         }
-         
-         const { data, error } = await supabase.from("orders").select("*, order_items(*)").eq("id", rootOrder.id).eq("restaurant_id", activeTenantId).single();
-         if (error) {
-             console.error("Takeaway Fetch Error:", error);
-             if (host) host.innerHTML = `<div class="empty-state"><i class="ph ph-warning-circle"></i><span>Failed to load live tab. Please close and reopen.</span></div>`;
-             return;
-         }
-         if (data) processOrders([data]);
-         return;
-      }
-      
-      const { data: activeSession } = await supabase.from("dining_sessions")
-         .select("id, status")
-         .eq("table_id", current_state.tableId)
-         .eq("restaurant_id", activeTenantId) /* 🔒 EXPLICIT TENANT ISOLATION */
-         .order("created_at", { ascending: false })
-         .limit(1)
-         .maybeSingle();
+      let ordersToProcess = [];
+      let nextSessionStatus = sessionStatus;
 
-      if (activeSession && activeSession.status === "closed") {
-         modal.close();
-         return; 
-      }
+      try {
+        if (current_state.orderType === "takeaway") {
+          if (!rootOrder?.id) return;
+          const { data, error } = await supabase
+            .from("orders")
+            .select("*, order_items(*)")
+            .eq("id", rootOrder.id)
+            .eq("restaurant_id", activeTenantId)
+            .single();
+          if (error) throw error;
+          if (data) ordersToProcess = [data];
+        } else if (isCustomerMode) {
+          const token = customerSessionToken ||
+            localStorage.getItem(`rms.session.${current_state.tableId}`) ||
+            localStorage.getItem(`fourflavours.session.${current_state.tableId}`);
+          if (!token) throw new Error("Your table session could not be verified. Please scan the QR code again.");
 
-      if (activeSession && ["open", "bill_requested", "bill_ready"].includes(activeSession.status)) {
-         const { data } = await supabase.from("orders").select("*, order_items(*)").eq("session_id", activeSession.id).eq("restaurant_id", activeTenantId).neq("status", "cancelled").order("created_at", { ascending: true });
-         if (data) {
-             if (data.length > 0) activeTableOrders[sessionKey] = data[data.length - 1].id;
-             processOrders(data);
-         }
-      } else {
-         if (rootOrder && rootOrder.id && rootOrder.id !== "undefined") {
-             const { data } = await supabase.from("orders").select("*, order_items(*)").eq("id", rootOrder.id).eq("restaurant_id", activeTenantId).single();
-             if (data) processOrders([data]);
-         }
+          const { data, error } = await supabase.rpc("get_customer_session_state", {
+            p_table_id: current_state.tableId,
+            p_session_token: token
+          });
+          if (error) throw error;
+
+          const sessionState = Array.isArray(data) ? data[0] : data;
+          if (!sessionState) {
+            if (host) host.innerHTML = `<div class="empty-state"><i class="ph ph-warning-circle"></i><strong>Tab unavailable</strong><span>We could not verify this table session. Please rescan the table QR code.</span></div>`;
+            return;
+          }
+          nextSessionStatus = sessionState.status;
+          if (sessionState.status === "closed") {
+            if (host) host.innerHTML = `<div class="empty-state"><i class="ph ph-check-circle"></i><strong>This tab is closed</strong><span>Please rescan the QR code if you need to start a new visit.</span></div>`;
+            const primary = modal.root.querySelector(".modal-actions .btn-primary");
+            if (primary) { primary.disabled = true; primary.textContent = "Tab Closed"; }
+            return;
+          }
+          ordersToProcess = Array.isArray(sessionState.orders) ? sessionState.orders : [];
+        } else {
+          let sid = session_id || rootOrder?.session_id;
+          if (!sid) {
+            const { data: activeSession, error: activeSessionError } = await supabase
+              .from("dining_sessions")
+              .select("id, status")
+              .eq("table_id", current_state.tableId)
+              .eq("restaurant_id", activeTenantId)
+              .in("status", ["open", "bill_requested", "bill_ready"])
+              .maybeSingle();
+            if (activeSessionError) throw activeSessionError;
+            if (!activeSession) {
+              if (host) host.innerHTML = `<div class="empty-state"><span>No active items.</span></div>`;
+              return;
+            }
+            sid = activeSession.id;
+            nextSessionStatus = activeSession.status;
+          } else {
+            const { data: activeSession, error: activeSessionError } = await supabase
+              .from("dining_sessions")
+              .select("status")
+              .eq("id", sid)
+              .eq("restaurant_id", activeTenantId)
+              .maybeSingle();
+            if (activeSessionError) throw activeSessionError;
+            if (activeSession) nextSessionStatus = activeSession.status;
+          }
+
+          const { data, error } = await supabase
+            .from("orders")
+            .select("*, order_items(*)")
+            .eq("session_id", sid)
+            .eq("restaurant_id", activeTenantId)
+            .neq("status", "cancelled")
+            .order("round_number", { ascending: true });
+          if (error) throw error;
+          ordersToProcess = data ?? [];
+        }
+
+        if (ordersToProcess.length > 0 || nextSessionStatus) {
+          processOrders(ordersToProcess, nextSessionStatus);
+        } else if (host) {
+          host.innerHTML = `<div class="empty-state"><span>No active items.</span></div>`;
+        }
+      } catch (error) {
+        console.error("Live tab refresh failed:", error);
+        if (host) host.innerHTML = `<div class="empty-state"><i class="ph ph-warning-circle"></i><strong>Could not refresh the live tab</strong><span>${escapeHtml(error?.message || "Please check the connection and try again.")}</span></div>`;
       }
     }
 
-    function processOrders(ordersList) {
-      let tempMap = new Map();
+    function processOrders(ordersList, nextStatus = sessionStatus) {
+      sessionStatus = nextStatus;
       aggregatedBill = { subtotal: 0, cgst: 0, sgst: 0, rounding: 0, grand_total: 0 };
-      
-      ordersList.forEach(o => {
+      displayRounds = [];
+      if (ordersList.length) rootOrder = ordersList[ordersList.length - 1];
+
+      ordersList.forEach((o, index) => {
         aggregatedBill.subtotal += Number(o.subtotal || 0);
         aggregatedBill.cgst += Number(o.cgst || 0);
         aggregatedBill.sgst += Number(o.sgst || 0);
@@ -1702,103 +1947,113 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
         aggregatedBill.grand_total += Number(o.grand_total || 0);
 
         const itemsArray = o.items || o.order_items || []; 
-        
-        itemsArray.sort((a, b) => (a.id || 0) - (b.id || 0));
+        itemsArray.sort((a, b) => {
+            const dateDiff = new Date(a.created_at) - new Date(b.created_at);
+            return dateDiff !== 0 ? dateDiff : (a.id > b.id ? 1 : -1);
+        });
 
+        let roundItems = [];
         itemsArray.forEach(oi => {
-          const pId = oi.product_id;
-          const qty = Number(oi.quantity);
-          if (tempMap.has(pId)) {
-             tempMap.get(pId).quantity += qty;
-          } else {
-             const productObj = products.find(p => p.id === pId);
-             tempMap.set(pId, { 
-               id: pId, 
-               name: productObj ? productObj.name : (oi.name_snapshot || oi.product_name || oi.name || "Unknown Item"), 
-               price: oi.unit_price || oi.price, 
-               quantity: qty 
-             });
-          }
+           const productObj = products.find(p => p.id === oi.product_id);
+           roundItems.push({
+             id: oi.id,
+             product_id: oi.product_id,
+             name: productObj ? productObj.name : (oi.name_snapshot || "Unknown Item"),
+             price: oi.unit_price,
+             quantity: Number(oi.quantity),
+             status: oi.serving_status || 'pending'
+           });
+        });
+
+        displayRounds.push({
+           id: o.id,
+           round_number: o.round_number || (index + 1),
+           order_number: o.order_number,
+           total: Number(o.grand_total),
+           items: roundItems
         });
       });
-
-      displayItems = Array.from(tempMap.values());
       renderDash();
+    }
+
+    function getCustomerStatusStyle(status) {
+        if(status === 'served') return 'color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; box-shadow: 0 2px 4px rgba(22, 163, 74, 0.05);'; 
+        if(status === 'preparing') return 'color: #b45309; background: #fffbeb; border: 1px solid #fde68a; box-shadow: 0 2px 8px rgba(217, 119, 6, 0.15);';
+        // Beautiful Indigo badge for PENDING
+        return 'color: #4338ca; background: #e0e7ff; border: 1px solid #c7d2fe; box-shadow: 0 2px 8px rgba(67, 56, 202, 0.15);'; 
     }
 
     function renderDash() {
       if (isPrepAnimating) return; 
-      
       const host = modal.root.querySelector("#active-dash-host");
       if (!host) return;
-      
       const listContainer = host.querySelector(".dining-items-list");
       const currentScroll = listContainer ? listContainer.scrollTop : 0;
 
+      // Check if ANY item is unserved to lock the Bill Request button
+      let hasUnservedItems = false;
+      displayRounds.forEach(r => r.items.forEach(i => { if (i.status !== 'served') hasUnservedItems = true; }));
+
+      // Never allow billing while service items remain, or after a bill has already been requested.
+      const primaryBtn = modal.root.querySelector(".modal-actions .btn-primary");
+      if (primaryBtn) {
+          if (sessionStatus === "closed") {
+              primaryBtn.disabled = true;
+              primaryBtn.innerHTML = `<i class="ph-bold ph-check-circle"></i> Tab Closed`;
+          } else if (sessionStatus === "bill_requested" || sessionStatus === "bill_ready") {
+              primaryBtn.disabled = true;
+              primaryBtn.innerHTML = `<i class="ph-bold ph-receipt"></i> Bill Requested`;
+          } else if (hasUnservedItems || displayRounds.length === 0) {
+              primaryBtn.disabled = true;
+              primaryBtn.innerHTML = `<i class="ph-bold ph-clock"></i> ${displayRounds.length ? "Items Pending" : "Loading tab…"}`;
+          } else {
+              primaryBtn.disabled = false;
+              primaryBtn.innerHTML = isCustomerMode ? `<i class="ph-bold ph-receipt"></i> Request Bill` : `<i class="ph-bold ph-check-circle"></i> Complete Order`;
+          }
+      }
+
       host.innerHTML = `
-        <div class="active-dining-dashboard">
-          <div class="dining-status-banner">
+        <div class="active-dining-dashboard" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+          <div class="dining-status-banner" style="flex-shrink: 0;">
             <i class="ph-bold ph-cooking-pot"></i>
             <div>
               <strong>Table Tab is Open</strong>
               <span id="dash-live-total">Live Total: ${money(aggregatedBill.grand_total, settings.currency_symbol)}</span>
             </div>
           </div>
-          <h3 class="dining-section-title">Current Table Items <span style="font-size: 10px; font-weight: normal; color: var(--gold-600); margin-left: 8px; text-transform: uppercase;"><i class="ph-bold ph-arrows-clockwise" style="margin-right:3px;"></i>Live Sync</span></h3>
-          <div class="dining-items-list" style="max-height: 40vh; overflow-y: auto;">
-            ${displayItems.map(i => `
-              <div class="dining-item-row">
-                <div class="dining-item-info">
-                  <strong>${escapeHtml(i.name)} <span class="qty-badge" id="dash-qty-${i.id}">x${i.quantity}</span></strong>
-                  <span>${money(i.price, settings.currency_symbol)}</span>
+          
+          <div class="dining-items-list" style="flex: 1; overflow-y: auto; min-height: 0; margin-top: 12px; padding-bottom: 24px; padding-right: 4px;">
+            ${displayRounds.map(r => `
+              <div style="flex-shrink: 0; margin-bottom: 16px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;">
+                <div style="background: var(--cream-50); padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; z-index: 2;">
+                   <strong style="font-size: 14px; color: var(--forest-900);">Round ${r.round_number}</strong>
+                   <span style="font-size: 14px; font-weight: 900;">${money(r.total, settings.currency_symbol)}</span>
                 </div>
-                <button class="btn-primary btn-sm dash-repeat-btn" data-id="${i.id}">
-                  <i class="ph-bold ph-arrow-counter-clockwise"></i> Repeat
-                </button>
+                
+                <!-- DYNAMIC INNER CONTAINER: No max-height, No scrollbar -->
+                <div style="display: flex; flex-direction: column; background: var(--paper);">
+                  ${r.items.map(i => `
+                    <div style="padding: 12px 14px; border-bottom: 1px solid var(--cream-200); display: flex; justify-content: space-between; align-items: center;">
+                      <div style="display: flex; flex-direction: column; gap: 6px;">
+                        <strong style="font-size: 14px;">${escapeHtml(i.name)} <span class="qty-badge" style="background: var(--sage-200); color: var(--forest-900); padding: 2px 6px; border-radius: 6px; font-size: 11px;">x${i.quantity}</span></strong>
+                        <span style="font-size: 13px; color: var(--muted);">${money(i.price, settings.currency_symbol)}</span>
+                      </div>
+                      
+                      <div style="padding: 6px 10px; font-size: 10px; font-weight: 900; text-transform: uppercase; border-radius: 8px; display: inline-flex; align-items: center; gap: 4px; user-select: none; letter-spacing: 0.05em; ${getCustomerStatusStyle(i.status)}">
+                         ${i.status === 'served' ? `<i class="ph-bold ph-check" style="font-size: 13px;"></i> SERVED` : (i.status === 'preparing' ? `<i class="ph-bold ph-fire" style="font-size: 13px;"></i> PREPARING` : `<i class="ph-bold ph-clock" style="font-size: 13px;"></i> PENDING`)}
+                      </div>
+                    </div>
+                  `).join("")}
+                </div>
               </div>
             `).join("")}
+            <div style="height: 24px; flex-shrink: 0; width: 100%;"></div>
           </div>
-        </div>
-      `;
-
-      host.querySelectorAll(".dash-repeat-btn").forEach(btn => {
-        btn.addEventListener("click", async () => {
-          window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-          btn.classList.remove("qty-pulse"); void btn.offsetWidth; btn.classList.add("qty-pulse");
-          const productId = btn.dataset.id;
-          
-          try {
-            btn.disabled = true;
-            const p = products.find(x => x.id === productId);
-            if (!p) throw new Error("Item not found in menu.");
-            
-            // 🔒 RPC UPDATE: Explicit Append securely fetches pricing and merges
-            await supabase.rpc("append_pos_order", { 
-                p_order_id: rootOrder.id, 
-                p_items: [{ id: productId, quantity: 1 }] 
-            });
-            
-            await fetchLiveSession(); 
-          } catch(e) { 
-            console.error("Sync failed:", e); 
-            showToast("Repeat failed", "Could not repeat this item.", "error");
-          } finally { 
-            btn.disabled = false; 
-          }
-        });
-      });
-
-      const newListContainer = host.querySelector(".dining-items-list");
-      if (newListContainer) newListContainer.scrollTop = currentScroll;
+        </div>`;
+      if (listContainer) host.querySelector(".dining-items-list").scrollTop = currentScroll;
     }
 
-    if (isPrepAnimating) {
-        setTimeout(() => {
-            isPrepAnimating = false;
-            renderDash(); // FIX: Unconditionally render the dash to clear the animation, even if the network is slow
-        }, 3200); // Wait exactly 3.2 seconds before transitioning
-    }
-    
+    if (isPrepAnimating) { setTimeout(() => { isPrepAnimating = false; renderDash(); }, 3200); }
     fetchLiveSession(); 
   }
 
@@ -1849,12 +2104,6 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
           <div class="thermal-line"><span>Rounding</span><strong>${money(order.rounding, settings.currency_symbol)}</strong></div>
           <div class="thermal-line thermal-grand"><span>GRAND TOTAL</span><strong>${money(order.grand_total, settings.currency_symbol)}</strong></div>
         </div>
-        ${settings.upi_id ? `
-          <div class="thermal-payment-block">
-            <div class="thermal-qr" id="thermal-upi"></div>
-            <div class="thermal-upi-note"><strong>Scan to pay</strong><br>Supported by all UPI apps</div>
-          </div>
-        ` : ""}
         <footer class="thermal-foot">
           <p>${escapeHtml(settings.receipt_footer || 'Thank you for dining with us!')}</p>
           <div class="thermal-software-tag">Powered by Table Forge System</div>
@@ -1864,10 +2113,10 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
 
     const modal = openAppModal({
       title: isCustomerMode ? "Your Digital Bill" : `Order #${order.order_number} Confirmed`,
-      subtitle: isCustomerMode ? "Please pay at the counter or show this to your waiter." : "Review the generated bill before printing.",
+      subtitle: isCustomerMode ? "Please settle this bill with restaurant staff in person." : "Review the bill before printing.",
       body: `<div class="receipt-preview-container">${receiptHTML}</div>`,
       actions: isCustomerMode ? [
-        { label: "Exit Receipt", icon: "ph-check", className: "btn-primary", onClick: ({ close }) => { close(); window.location.reload(); } }
+        { label: "Exit", icon: "ph-check", className: "btn-primary", onClick: ({ close }) => { close(); window.location.reload(); } }
       ] : [
         { label: "Close", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() },
         { label: "Print Bill", icon: "ph-printer", className: "btn-primary", onClick: () => {
@@ -1880,102 +2129,6 @@ const sessionKey = `rms.session.${currentTableObj.id}`;
       ]
     });
 
-    if (settings.upi_id && globalThis.QRCode) {
-      setTimeout(() => {
-        const qr = modal.root.querySelector("#thermal-upi");
-        if (qr) {
-          qr.innerHTML = "";
-          const pa = encodeURIComponent(settings.upi_id.trim());
-          const pn = encodeURIComponent(settings.restaurant_name.trim());
-          const am = Number(order.grand_total).toFixed(2);
-          const tn = encodeURIComponent(`Order #${order.order_number}`);
-          const upiString = `upi://pay?pa=${pa}&pn=${pn}&am=${am}&cu=INR&tn=${tn}`;
-          new QRCode(qr, { text: upiString, width: 160, height: 160, correctLevel: QRCode.CorrectLevel.M });
-        }
-      }, 50);
-    }
-  }
-
-  async function openOrdersDrawer() {
-    unreadOrders = 0;
-    unseenBillRequests = 0;
-    const badge = mount.querySelector("#pos-order-badge"); 
-    const bellIcon = mount.querySelector("#pos-orders");
-    
-    if (badge) { 
-      badge.classList.add("hidden"); 
-      badge.textContent = "0"; 
-      badge.style.background = "var(--gold-500)"; 
-      badge.style.color = "var(--forest-950)";
-    }
-    if (bellIcon) {
-      bellIcon.style.borderColor = "var(--forest-700)"; 
-    }
-    
-    // 🔒 ISOLATION FIX: Query explicit tenant scope
-    const { data: sessions, error } = await supabase.from("dining_sessions")
-      .select("*")
-      .neq("status", "closed")
-      .eq("restaurant_id", activeTenantId)
-      .order("bill_requested_at", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false });
-      
-    if (error) return showToast("Could not load table orders", error.message, "error");
-
-    const modal = openAppModal({
-      title: "Table orders",
-      subtitle: "Customer rounds stay together until the final payment.",
-      body: `<div class="session-scroll-container">${sessions?.length ? sessions.map(s => `<article class="session-card ${s.status === 'bill_requested' ? 'bill-requested-card' : ''}"><div class="session-card-head"><div><span class="eyebrow">Table</span><h3>${escapeHtml(tables.find(t => t.id === s.table_id)?.table_no ?? "—")}</h3></div><span class="session-status ${s.status}"><i class="ph ph-${s.status === "bill_requested" ? "receipt" : s.status === "bill_ready" ? "check-circle" : "clock"}"></i>${s.status === "bill_requested" ? "Bill requested" : s.status === "bill_ready" ? "Bill ready" : "Open"}</span></div><div class="session-summary" data-session-summary="${s.id}"><span>Loading…</span></div><div class="session-actions">${s.status === "bill_requested" ? `<button class="btn btn-primary btn-small" data-ready-bill="${s.id}"><i class="ph ph-receipt"></i>Prepare bill</button>` : ""}${s.status === "bill_ready" ? `<button class="btn btn-dark btn-small" data-close-session="${s.id}"><i class="ph ph-check"></i>Complete payment</button>` : ""}</div></article>`).join("") : `<div class="empty-state"><i class="ph ph-bell-slash"></i><strong>No open customer sessions</strong><span>New QR orders appear here automatically.</span></div>`}</div>`,
-      actions: [{ label: "Close", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() }]
-    });
-
-    for (const s of sessions ?? []) {
-      const target = modal.root.querySelector(`[data-session-summary="${s.id}"]`); if (!target) continue;
-      const { data: orders } = await supabase.from("orders").select("id, order_number, order_items(quantity)").eq("session_id", s.id).neq("status", "cancelled").order("created_at", { ascending: true });
-      const list = orders ?? [];
-      const items = list.reduce((sum, o) => sum + (o.order_items ?? []).reduce((n, i) => n + Number(i.quantity || 0), 0), 0);
-      target.innerHTML = `<div><strong>${list.length}</strong><span>${list.length === 1 ? "round" : "rounds"}</span></div><div><strong>${items}</strong><span>${items === 1 ? "item" : "items"}</span></div>`;
-    }
-
-    modal.root.addEventListener("click", async event => {
-      const ready = event.target.closest("[data-ready-bill]");
-      const complete = event.target.closest("[data-close-session]");
-      if (ready) await prepareBill(ready.dataset.readyBill, ready, modal.close);
-      if (complete) await completeSession(complete.dataset.closeSession, complete, modal.close);
-    });
-  }
-
-  async function prepareBill(sessionId, button, closeOrdersDrawer) {
-    window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-    button.disabled = true;
-    try {
-      const { error } = await supabase.rpc("mark_session_bill_ready", { p_session_id: sessionId });
-      if (error) throw error;
-      showToast("Bill ready", "The customer can now view the final bill.");
-      closeOrdersDrawer?.();
-      await openOrdersDrawer();
-    } catch (error) { button.disabled = false; showToast("Could not prepare bill", error.message, "error"); }
-  }
-
-  async function completeSession(sessionId, button, closeOrdersDrawer) {
-    const paymentModal = openAppModal({
-      title: "Complete payment",
-      subtitle: "Close the dining session after settlement.",
-      body: `<div class="payment-choice-grid"><button class="payment-choice" data-payment="cash"><i class="ph ph-money"></i><span>Cash</span></button><button class="payment-choice" data-payment="upi"><i class="ph ph-device-mobile"></i><span>UPI</span></button><button class="payment-choice" data-payment="card"><i class="ph ph-credit-card"></i><span>Card</span></button></div><div class="review-total-hint"><i class="ph ph-info"></i><span>Closing this session means no further rounds should be added to this table visit.</span></div>`,
-      actions: [{ label: "Cancel", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() }]
-    });
-    paymentModal.root.querySelectorAll(".payment-choice").forEach(choice => choice.addEventListener("click", async () => {
-      window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-      paymentModal.root.querySelectorAll(".payment-choice").forEach(el => el.disabled = true);
-      try {
-        const { error } = await supabase.rpc("complete_session_payment", { p_session_id: sessionId, p_payment_method: choice.dataset.payment });
-        if (error) throw error;
-        paymentModal.close();
-        closeOrdersDrawer?.();
-        showToast("Table closed", "Payment recorded and dining session completed.");
-        await openOrdersDrawer();
-      } catch (error) { paymentModal.root.querySelectorAll(".payment-choice").forEach(el => el.disabled = false); showToast("Could not complete payment", error.message, "error"); }
-    }));
   }
 
   return async () => { 

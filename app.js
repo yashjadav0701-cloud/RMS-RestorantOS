@@ -16,7 +16,7 @@ async function bootSaaS() {
     path = path.replace(/index\.html$/i, '').replace(/\/$/, '');
     
     const urlParams = new URLSearchParams(window.location.search);
-    const tableId = urlParams.get("table");
+    const tableId = urlParams.get("table") || urlParams.get("t");
 
     // 2 & 3. Securely Fetch Branding via the Database Bootstrapper (Handles both QR Scans and Slug Navigation)
     if (tableId || (path && path !== "")) {

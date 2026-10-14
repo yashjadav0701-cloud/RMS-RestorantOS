@@ -3,7 +3,7 @@ let started = false;
 
 function getRoute() {
   const params = new URLSearchParams(location.search);
-  const tableId = params.get("table");
+  const tableId = params.get("table") || params.get("t");
   if (tableId) return { name: "customer", tableId, key: `customer:${tableId}` };
   if (location.hash === "#/admin") return { name: "admin", key: "admin" };
   return { name: "pos", key: "pos" };
