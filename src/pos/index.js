@@ -1291,51 +1291,6 @@ export async function render({ mount }) {
         }
         lastScroll = current;
       }, { passive: true });
-
-      if (grid) {
-          let touchStartY = 0;
-          let isAtBottom = false;
-
-          scroller.addEventListener("touchstart", e => {
-              const maxScroll = scroller.scrollHeight - scroller.clientHeight;
-              isAtBottom = scroller.scrollTop >= maxScroll - 5;
-              if (isAtBottom) {
-                  touchStartY = e.touches[0].clientY;
-                  Array.from(grid.children).forEach(child => child.style.transition = 'none');
-              }
-          }, { passive: true });
-
-          scroller.addEventListener("touchmove", e => {
-              if (!isAtBottom) return;
-              const deltaY = touchStartY - e.touches[0].clientY; 
-              if (deltaY > 0) { 
-                  const children = Array.from(grid.children);
-                  const total = children.length;
-                  children.forEach((child, index) => {
-                      const factor = Math.pow((index + 1) / total, 1.5); 
-                      const stretch = deltaY * factor * 0.45; 
-                      child.style.transform = `translateY(-${stretch}px)`;
-                  });
-              }
-          }, { passive: true });
-
-          scroller.addEventListener("touchend", () => {
-              if (isAtBottom) {
-                  Array.from(grid.children).forEach(child => {
-                      child.style.transition = 'transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)';
-                      child.style.transform = 'translateY(0px)';
-                  });
-                  
-                  setTimeout(() => {
-                      Array.from(grid.children).forEach(child => {
-                          child.style.transition = '';
-                          child.style.transform = '';
-                      });
-                  }, 600);
-                  isAtBottom = false;
-              }
-          }, { passive: true });
-      }
     }
 
     renderProductQuantities();
