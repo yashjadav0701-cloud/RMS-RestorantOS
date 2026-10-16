@@ -3149,9 +3149,6 @@ async function renderAdminWorkspace(mount) {
           <label class="field"><span>Dish name</span><input class="field-input" name="name" value="${escapeHtml(product?.name ?? "")}" required /></label>
           
           <!-- Native HTML Combobox Datalists (Tenant Isolated) -->
-          <datalist id="cuisine-datalist">
-            ${cuisines.map(c => `<option value="${escapeHtml(c.name)}">`).join("")}
-          </datalist>
           <datalist id="subcat-datalist">
             ${[...new Set(products.map(p => { const parts = String(p.category || "").split(" - "); return parts.length > 1 ? parts.slice(1).join(" - ").trim() : null; }).filter(Boolean))].map(sub => `<option value="${escapeHtml(sub)}">`).join("")}
           </datalist>
@@ -3159,7 +3156,16 @@ async function renderAdminWorkspace(mount) {
           <div style="display: grid; grid-template-columns: 1.2fr 1.2fr 100px; gap: 10px;">
             <label class="field">
               <span>Category</span>
-              <input class="field-input" list="cuisine-datalist" name="main_category" value="${escapeHtml(String(product?.category ?? "").split(" - ")[0]?.trim() ?? "")}" placeholder="e.g. Indian" required autocomplete="off" />
+              <div style="position: relative; width: 100%;">
+                <select class="field-input" name="main_category" required style="appearance: none; padding-right: 32px; cursor: pointer; width: 100%; background-color: var(--paper); color: var(--ink);">
+                  <option value="" disabled ${!product ? "selected" : ""}>Select Cuisine...</option>
+                  ${cuisines.map(c => {
+                      const isSelected = product && String(product?.category ?? "").split(" - ")[0]?.trim() === c.name;
+                      return `<option value="${escapeHtml(c.name)}" ${isSelected ? "selected" : ""}>${escapeHtml(c.name)}</option>`;
+                  }).join("")}
+                </select>
+                <i class="ph-bold ph-caret-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--forest-900); pointer-events: none;"></i>
+              </div>
             </label>
             <label class="field">
               <span>Sub Category</span>

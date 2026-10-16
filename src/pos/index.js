@@ -1782,31 +1782,37 @@ export async function render({ mount }) {
               throw new Error("The active restaurant could not be verified. Please sign in again.");
             }
 
-            // Dining-session payment is supported by the current database RPC. Do not mark a takeaway bill paid without its own server-side payment RPC.
             if (current_state.orderType !== "dine_in") {
-              throw new Error("Cash settlement for takeaway orders is not wired to a server-side payment function yet. Do not mark this order paid until that workflow is added.");
-            }
+              // Takeaway Payment (Directly updates the order row)
+              const { error: paymentError } = await supabase
+                .from("orders")
+                .update({ status: 'completed', payment_status: 'paid', updated_at: new Date().toISOString() })
+                .eq("id", rootOrder.id)
+                .eq("restaurant_id", tenantId);
+              if (paymentError) throw paymentError;
+            } else {
+              // Dine-In Payment (Cascades through the active session)
+              const sessionId = session_id || rootOrder?.session_id;
+              let payableSessionId = sessionId;
+              if (!payableSessionId) {
+                const { data: session, error: sessionError } = await supabase
+                  .from("dining_sessions")
+                  .select("id, status")
+                  .eq("table_id", current_state.tableId)
+                  .eq("restaurant_id", tenantId)
+                  .in("status", ["open", "bill_requested", "bill_ready"])
+                  .maybeSingle();
+                if (sessionError) throw sessionError;
+                payableSessionId = session?.id;
+              }
+              if (!payableSessionId) throw new Error("No active session was found for this table. Refresh the table before proceeding.");
 
-            const sessionId = session_id || rootOrder?.session_id;
-            let payableSessionId = sessionId;
-            if (!payableSessionId) {
-              const { data: session, error: sessionError } = await supabase
-                .from("dining_sessions")
-                .select("id, status")
-                .eq("table_id", current_state.tableId)
-                .eq("restaurant_id", tenantId)
-                .in("status", ["open", "bill_requested", "bill_ready"])
-                .maybeSingle();
-              if (sessionError) throw sessionError;
-              payableSessionId = session?.id;
+              const { error: paymentError } = await supabase.rpc("complete_session_payment", {
+                p_session_id: payableSessionId,
+                p_payment_method: "cash"
+              });
+              if (paymentError) throw paymentError;
             }
-            if (!payableSessionId) throw new Error("No active session was found for this table. Refresh the table before proceeding.");
-
-            const { error: paymentError } = await supabase.rpc("complete_session_payment", {
-              p_session_id: payableSessionId,
-              p_payment_method: "cash"
-            });
-            if (paymentError) throw paymentError;
 
             ctx.close();
             modal.close();
@@ -1864,12 +1870,14 @@ export async function render({ mount }) {
       initialDashboardLoadingHTML
     );
 
+    const isTakeaway = current_state.orderType === "takeaway";
+
     const modal = openAppModal({
-      title: titleStr, subtitle: "Your live table tab.",
+      title: titleStr, subtitle: isTakeaway ? "Manage this takeaway order." : "Your live table tab.",
       body: liveTabModalBodyHTML,
       actions: [
-        { label: "Keep Ordering", icon: "ph-plus-circle", className: "btn-quiet", onClick: ({ close }) => close() },
-        { label: isCustomerMode ? "Request Bill" : "Complete Order", icon: "ph-receipt", className: "btn-primary", disabled: true, onClick: ({ close }) => {
+        { label: isTakeaway ? "Add Items" : "Keep Ordering", icon: "ph-plus-circle", className: "btn-quiet", onClick: ({ close }) => close() },
+        { label: isCustomerMode ? "Request Bill" : (isTakeaway ? "Generate Bill" : "Complete Order"), icon: "ph-receipt", className: "btn-primary", disabled: true, onClick: ({ close }) => {
             const formattedTotal = money(aggregatedBill.grand_total, settings.currency_symbol);
             if (isCustomerMode) {
                 openAppModal({
@@ -2043,10 +2051,14 @@ export async function render({ mount }) {
       if (!host) return;
       const listContainer = host.querySelector(".dining-items-list");
       const currentScroll = listContainer ? listContainer.scrollTop : 0;
+      
+      const isTakeaway = current_state.orderType === "takeaway";
 
-      // Check if ANY item is unserved to lock the Bill Request button
+      // Check if ANY item is unserved to lock the Bill Request button (Bypassed for takeaway)
       let hasUnservedItems = false;
-      displayRounds.forEach(r => r.items.forEach(i => { if (i.status !== 'served') hasUnservedItems = true; }));
+      if (!isTakeaway) {
+          displayRounds.forEach(r => r.items.forEach(i => { if (i.status !== 'served') hasUnservedItems = true; }));
+      }
 
       // Never allow billing while service items remain, or after a bill has already been requested.
       const primaryBtn = modal.root.querySelector(".modal-actions .btn-primary");
@@ -2062,43 +2074,45 @@ export async function render({ mount }) {
               primaryBtn.innerHTML = `<i class="ph-bold ph-clock"></i> ${displayRounds.length ? "Items Pending" : "Loading tab…"}`;
           } else {
               primaryBtn.disabled = false;
-              primaryBtn.innerHTML = isCustomerMode ? `<i class="ph-bold ph-receipt"></i> Request Bill` : `<i class="ph-bold ph-check-circle"></i> Complete Order`;
+              primaryBtn.innerHTML = isCustomerMode ? `<i class="ph-bold ph-receipt"></i> Request Bill` : (isTakeaway ? `<i class="ph-bold ph-receipt"></i> Generate Bill` : `<i class="ph-bold ph-check-circle"></i> Complete Order`);
           }
       }
 
       host.innerHTML = `
         <div class="active-dining-dashboard" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
           <div class="dining-status-banner" style="flex-shrink: 0;">
-            <i class="ph-bold ph-cooking-pot"></i>
+            <i class="ph-bold ${isTakeaway ? 'ph-shopping-bag' : 'ph-cooking-pot'}"></i>
             <div>
-              <strong>Table Tab is Open</strong>
+              <strong>${isTakeaway ? 'Takeaway Order Active' : 'Table Tab is Open'}</strong>
               <span id="dash-live-total">Live Total: ${money(aggregatedBill.grand_total, settings.currency_symbol)}</span>
             </div>
           </div>
           
           <div class="dining-items-list" style="flex: 1; overflow-y: auto; min-height: 0; margin-top: 12px; padding-bottom: 24px; padding-right: 4px;">
             ${displayRounds.map(r => `
-              <div style="flex-shrink: 0; margin-bottom: 16px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column;">
+              <div style="flex-shrink: 0; margin-bottom: 16px; background: var(--paper); ${isTakeaway ? '' : 'border: 1px solid var(--line); border-radius: 12px;'} overflow: hidden; display: flex; flex-direction: column;">
+                ${!isTakeaway ? `
                 <div style="background: var(--cream-50); padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; z-index: 2;">
                    <strong style="font-size: 14px; color: var(--forest-900);">Round ${r.round_number}</strong>
                    <span style="font-size: 14px; font-weight: 900;">${money(r.total, settings.currency_symbol)}</span>
-                </div>
+                </div>` : ''}
                 
                 <!-- DYNAMIC INNER CONTAINER: No max-height, No scrollbar -->
                 <div style="display: flex; flex-direction: column; background: var(--paper);">
                   ${r.items.map(i => `
-                    <div style="padding: 12px 14px; border-bottom: 1px solid var(--cream-200); display: flex; justify-content: space-between; align-items: center;">
+                    <div style="padding: 12px ${isTakeaway ? '4px' : '14px'}; border-bottom: 1px solid var(--cream-200); display: flex; justify-content: space-between; align-items: center;">
                       <div style="display: flex; flex-direction: column; gap: 6px;">
                         <strong style="font-size: 14px;">${escapeHtml(i.name)} <span class="qty-badge" style="background: var(--sage-200); color: var(--forest-900); padding: 2px 6px; border-radius: 6px; font-size: 11px;">x${i.quantity}</span></strong>
                         <span style="font-size: 13px; color: var(--muted);">${money(i.price, settings.currency_symbol)}</span>
                       </div>
                       
+                      ${!isTakeaway ? `
                       <div style="padding: 6px 10px; font-size: 10px; font-weight: 900; text-transform: uppercase; border-radius: 8px; display: inline-flex; align-items: center; gap: 4px; user-select: none; letter-spacing: 0.05em; ${getCustomerStatusStyle(i.status)}">
                          ${i.status === 'served' ? `<i class="ph-bold ph-check" style="font-size: 13px;"></i> SERVED` : 
                            i.status === 'ready' ? `<i class="ph-bold ph-bell-ringing" style="font-size: 13px;"></i> READY` : 
                            i.status === 'preparing' ? `<i class="ph-bold ph-fire" style="font-size: 13px;"></i> PREPARING` : 
                            `<i class="ph-bold ph-clock" style="font-size: 13px;"></i> PENDING`}
-                      </div>
+                      </div>` : ''}
                     </div>
                   `).join("")}
                 </div>
