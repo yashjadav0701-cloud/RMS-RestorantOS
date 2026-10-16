@@ -224,53 +224,174 @@ export async function renderAdminLock({ mount, onUnlocked }) {
         ${!hasPin ? `
           <h1>Welcome to RMS</h1>
           <p class="access-copy">This is your first time logging in. Please create a 6-digit Master PIN to secure your Admin Dashboard.</p>
+          <p id="admin-pin-error" style="color: var(--danger); font-size: 0.85rem; display: none; text-align: center; margin-bottom: 12px; font-weight: 800;"></p>
           <form id="admin-pin-form" class="stack-form" style="display: flex; flex-direction: column; gap: 14px;">
-            <label class="field"><span>Create 6-digit PIN</span><input class="field-input pin-input" id="admin-pin" type="password" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="••••••" required autofocus /></label>
+            <label class="field">
+              <span style="font-size: 0.8rem; font-weight: 800; color: var(--forest-800);">Create 6-digit PIN</span>
+              <div class="pin-box-container" id="admin-pin-container" style="gap: 8px; margin-bottom: 0;">
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" autofocus />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+              </div>
+            </label>
             <button class="btn btn-primary btn-large" type="submit" style="width: 100%; margin-top: 8px;"><i class="ph-bold ph-shield-check"></i> Set PIN & Continue</button>
         ` : `
           <h1>Secure admin access</h1>
           <p class="access-copy">Enter your 6-digit manager PIN to unlock the control centre.</p>
+          <p id="admin-pin-error" style="color: var(--danger); font-size: 0.85rem; display: none; text-align: center; margin-bottom: 12px; font-weight: 800;"></p>
           <form id="admin-pin-form" class="stack-form" style="display: flex; flex-direction: column; gap: 14px;">
-            <label class="field"><span>6-digit PIN</span><input class="field-input pin-input" id="admin-pin" type="password" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="••••••" required autofocus /></label>
+            <label class="field">
+              <span style="font-size: 0.8rem; font-weight: 800; color: var(--forest-800);">6-digit PIN</span>
+              <div class="pin-box-container" id="admin-pin-container" style="gap: 8px; margin-bottom: 0;">
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" autofocus />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+              </div>
+            </label>
             <button class="btn btn-dark btn-large" type="submit" style="width: 100%; margin-top: 8px;"><i class="ph-bold ph-lock-key"></i> Unlock workspace</button>
         `}
           <button class="btn btn-quiet" id="admin-back" type="button" style="width: 100%; margin-top: 8px;"><i class="ph-bold ph-arrow-left"></i> Return to POS</button>
-          <div class="access-status" id="admin-status" style="text-align: center; margin-top: 10px;"></div>
+          <div class="access-status" id="admin-status" style="text-align: center; margin-top: 10px; font-weight: 700; color: var(--forest-700);"></div>
         </form>
       </div>
     </section>`;
 
   const form = mount.querySelector("#admin-pin-form");
   const status = mount.querySelector("#admin-status");
+  const errorMsg = mount.querySelector("#admin-pin-error");
+  const boxContainer = mount.querySelector("#admin-pin-container");
+  let inputs = Array.from(mount.querySelectorAll(".pin-box"));
+  let isProcessing = false;
 
-  form.addEventListener("submit", async event => {
-    event.preventDefault();
-    status.textContent = !hasPin ? "Securing Workspace…" : "Verifying PIN…";
-    
-    const submitBtn = form.querySelector("button[type='submit']");
-    submitBtn.disabled = true;
+  function setupInputs(inputElements) {
+      inputElements[0]?.focus();
 
-    try {
-      const pin = mount.querySelector("#admin-pin").value.trim();
+      inputElements.forEach((input, index) => {
+          input.addEventListener('input', (e) => {
+              if (isProcessing) { e.target.value = ''; return; }
+              e.target.value = e.target.value.replace(/[^0-9]/g, '');
+              
+              if (errorMsg) errorMsg.style.display = "none";
+              status.textContent = "";
+
+              if (e.target.value.length === 1) {
+                  if (index < inputElements.length - 1) {
+                      inputElements[index + 1].focus();
+                  } else {
+                      submitPin(inputElements);
+                  }
+              }
+          });
+
+          input.addEventListener('keydown', (e) => {
+              if (isProcessing) return;
+              if (e.key === 'Backspace' && e.target.value === '' && index > 0) {
+                  inputElements[index - 1].focus();
+                  inputElements[index - 1].value = '';
+              } else if (e.key === 'Enter') {
+                  e.preventDefault();
+                  submitPin(inputElements);
+              }
+          });
+          
+          input.addEventListener('paste', (e) => {
+              if (isProcessing) return;
+              e.preventDefault();
+              const pasteData = (e.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
+              if (pasteData) {
+                  for (let i = 0; i < inputElements.length; i++) {
+                      if (pasteData[i]) {
+                          inputElements[i].value = pasteData[i];
+                          if (i < inputElements.length - 1) inputElements[i + 1].focus();
+                      }
+                  }
+                  if (pasteData.length >= 6) submitPin(inputElements);
+              }
+          });
+      });
+  }
+
+  if (inputs.length) setupInputs(inputs);
+
+  async function submitPin(currentInputs) {
+      const pin = currentInputs.map(i => i.value).join("");
+      if (pin.length < 6) return; // Wait for full code before auto-submitting
+
+      isProcessing = true;
+      currentInputs.forEach(i => i.disabled = true);
+      status.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> ${!hasPin ? "Securing Workspace…" : "Verifying PIN…"}`;
       
-      if (!hasPin) {
-            // FIRST TIME SETUP (V2)
-            const { error } = await supabase.rpc("rms_set_pin_v2", { p_restaurant_id: tenant?.id || null, p_new_pin: pin });
-            if (error) throw error;
-            showToast("Workspace Secured", "Your master PIN has been saved.", "success");
-            onUnlocked();
-        } else {
-            // STANDARD LOGIN (V2)
-            const { data, error } = await supabase.rpc("rms_verify_pin_v2", { p_restaurant_id: tenant?.id || null, p_pin: pin });
-            if (error) throw error;
-            if (data !== true) throw new Error("Invalid PIN or unauthorized.");
-            onUnlocked();
-        }
-    } catch (error) {
-      submitBtn.disabled = false;
-      status.textContent = "";
-      showToast(!hasPin ? "Setup Failed" : "Access Denied", error.message, "error");
-    }
+      const submitBtn = form.querySelector("button[type='submit']");
+      if(submitBtn) submitBtn.disabled = true;
+
+      try {
+          if (!hasPin) {
+              const { error } = await supabase.rpc("rms_set_pin_v2", { p_restaurant_id: tenant?.id || null, p_new_pin: pin });
+              if (error) throw error;
+              showToast("Workspace Secured", "Your master PIN has been saved.", "success");
+              onUnlocked();
+          } else {
+              const { data, error } = await supabase.rpc("rms_verify_pin_v2", { p_restaurant_id: tenant?.id || null, p_pin: pin });
+              if (error) throw error;
+              if (data !== true) throw new Error("Invalid PIN or unauthorized.");
+              onUnlocked();
+          }
+      } catch (error) {
+          if(submitBtn) submitBtn.disabled = false;
+          status.textContent = "";
+          if (errorMsg) {
+              errorMsg.textContent = !hasPin ? "Setup Failed: " + error.message : "Access Denied: " + error.message;
+              errorMsg.style.display = "block";
+          }
+          
+          // Trigger the 'falling' sequence
+          currentInputs.forEach((i, idx) => {
+              const delay = (5 - idx) * 60; 
+              setTimeout(() => { 
+                  i.classList.add("falling-out"); 
+                  i.style.borderColor = "var(--danger)"; 
+                  i.style.color = "var(--danger)"; 
+              }, delay);
+          });
+
+          // Regenerate clean boxes from above
+          setTimeout(() => {
+              boxContainer.innerHTML = ''; 
+              for(let i=0; i<6; i++) {
+                  const newBox = document.createElement("input");
+                  newBox.type = "password";
+                  newBox.className = "pin-box dropping-in";
+                  newBox.maxLength = 1;
+                  newBox.inputMode = "numeric";
+                  newBox.autocomplete = "off";
+                  newBox.placeholder = ".";
+                  newBox.style.cssText = "width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;";
+                  newBox.style.animationDelay = `${i * 50}ms`; 
+                  boxContainer.appendChild(newBox);
+              }
+              
+              inputs = Array.from(mount.querySelectorAll("#admin-pin-container .pin-box"));
+              setupInputs(inputs);
+              isProcessing = false;
+              
+              setTimeout(() => {
+                  inputs.forEach(i => i.classList.remove("dropping-in"));
+                  inputs[0]?.focus();
+              }, 500);
+
+          }, 800);
+      }
+  }
+
+  form.addEventListener("submit", event => {
+    event.preventDefault();
+    submitPin(inputs);
   });
 
   mount.querySelector("#admin-back").addEventListener("click", () => {

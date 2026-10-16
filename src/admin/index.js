@@ -577,41 +577,6 @@ async function renderAdminWorkspace(mount) {
   const iconUrl = activeTenant.icon_url ? versionedAsset(activeTenant.icon_url) : null;
   const tenantName = activeTenant.name || "Table Forge";
 
-  // 🛡️ PREMIUM ALERT CSS INJECTION: Elegant, smooth Gold ripple
-  if (!document.getElementById("premium-alert-styles")) {
-      const style = document.createElement("style");
-      style.id = "premium-alert-styles";
-      style.innerHTML = `
-          .hamburger-dot, .admin-drawer-dot, [data-drawer-alert-dot], .drawer-nav-dot {
-              position: absolute !important;
-              top: -1px !important;
-              right: -1px !important;
-              width: 12px !important;
-              height: 12px !important;
-              background: var(--gold-500, #c9a45a) !important;
-              border: 2px solid var(--paper) !important;
-              border-radius: 50% !important;
-              z-index: 10 !important;
-              pointer-events: none !important;
-              box-shadow: 0 2px 4px rgba(201, 164, 90, 0.3) !important;
-          }
-          .hamburger-dot::after, .admin-drawer-dot::after, [data-drawer-alert-dot]::after, .drawer-nav-dot::after {
-              content: '';
-              position: absolute;
-              inset: -4px;
-              border-radius: 50%;
-              border: 1.5px solid var(--gold-500, #c9a45a);
-              animation: premium-radar-sweep 2.5s cubic-bezier(0.16, 1, 0.3, 1) infinite;
-              opacity: 0;
-          }
-          @keyframes premium-radar-sweep {
-              0% { transform: scale(0.6); opacity: 1; border-width: 1.5px; }
-              100% { transform: scale(2.4); opacity: 0; border-width: 0px; }
-          }
-      `;
-      document.head.appendChild(style);
-  }
-
   mount.innerHTML = `
     <section class="admin-page">
       <header class="app-topbar admin-topbar">
@@ -902,7 +867,8 @@ async function renderAdminWorkspace(mount) {
             }
         });
 
-        const orders = Array.from(groupedOrdersMap.values());
+        // Filter out any orders that have been completely emptied (0 items)
+        const orders = Array.from(groupedOrdersMap.values()).filter(o => o.order_items && o.order_items.length > 0);
 
         // ==========================================
         // EXPORT TO EXCEL LOGIC (WYSIWYG: Only exports what is filtered!)
@@ -2165,7 +2131,30 @@ async function renderAdminWorkspace(mount) {
           });
           
           host.querySelector("#admin-add-items").addEventListener("click", () => {
-             modal.close(); window.__FOUR_FLAVOURS_POS_STATE__?.setOrderType('dine_in'); window.__FOUR_FLAVOURS_POS_STATE__?.setTable(table); document.querySelector('[data-nav="pos"]')?.click();
+            const tenantId = window.__ACTIVE_TENANT__?.id;
+            const posNav = document.querySelector('[data-nav="pos"]');
+
+            if (!tenantId || !table?.id) {
+              showToast("Cannot add round", "The active restaurant or table could not be verified.", "error");
+              return;
+            }
+
+            if (!posNav) {
+              showToast("POS unavailable", "The POS navigation could not be found. Please refresh and try again.", "error");
+              return;
+            }
+
+            // Pass the selected table to the POS route. Do not update the old
+            // POS state here; its action-bar listener belongs to a view that
+            // is no longer mounted and would throw on missing DOM elements.
+            window.__RMS_PENDING_POS_TABLE__ = {
+              restaurantId: tenantId,
+              tableId: table.id,
+              orderType: "dine_in"
+            };
+
+            modal.close();
+            posNav.click();
           });
           return;
         }
@@ -2464,23 +2453,25 @@ async function renderAdminWorkspace(mount) {
                     <div style="display: flex; flex-direction: column; flex: 1; min-height: 0; background: var(--paper);">
                         
                         <!-- SINGLE LINE PERFECT ALIGNMENT HEADER -->
-                        <div style="padding: 12px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; background: #fff; z-index: 10; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;">
-                            <button class="icon-btn icon-btn-quiet" id="back-to-tab" style="width: 44px; height: 44px; border-radius: 12px; flex-shrink: 0; background: var(--cream-50); border: 1px solid var(--line);"><i class="ph-bold ph-arrow-left"></i></button>
+                        <div style="position: sticky; top: -16px; margin: -15px -17px 0 -17px; padding: 8px 16px 8px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); z-index: 110; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch;">
+                            <button id="back-to-tab" style="width: 38px; height: 38px; border-radius: 10px; flex-shrink: 0; background: var(--cream-100); border: 1px solid var(--line); display: flex; align-items: center; justify-content: center; cursor: pointer;" onpointerdown="this.style.transform='scale(0.9)'" onpointerup="this.style.transform='scale(1)'" onpointerleave="this.style.transform='scale(1)'">
+                                <i class="ph-bold ph-caret-left" style="font-size: 20px; color: var(--forest-950); margin-left: -2px;"></i>
+                            </button>
                             <div style="flex: 1; position: relative; min-width: 150px;">
-                                <i class="ph-bold ph-magnifying-glass" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 18px;"></i>
-                                <input type="text" id="add-round-search" placeholder="Search dishes..." value="${escapeHtml(searchQuery)}" style="width: 100%; height: 44px; border-radius: 12px; border: 1px solid var(--line); padding: 0 12px 0 40px; font-size: 15px; font-weight: 700; color: var(--forest-950); background: var(--cream-50); outline: none; transition: border-color 0.2s;">
+                                <i class="ph-bold ph-magnifying-glass" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 16px;"></i>
+                                <input type="text" id="add-round-search" placeholder="Search dishes..." value="${escapeHtml(searchQuery)}" style="width: 100%; height: 38px; border-radius: 10px; border: 1px solid var(--line); padding: 0 12px 0 36px; font-size: 14px; font-weight: 700; color: var(--forest-950); background: var(--cream-50); outline: none; transition: border-color 0.2s;">
                             </div>
-                            <div style="position: relative; width: 140px; flex-shrink: 0;">
-                                <select id="filter-cuisine" style="width: 100%; height: 44px; padding: 0 30px 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--cream-50); font-size: 14px; font-weight: 800; color: var(--forest-950); appearance: none; outline: none; cursor: pointer;">
+                            <div style="position: relative; width: 130px; flex-shrink: 0;">
+                                <select id="filter-cuisine" style="width: 100%; height: 38px; padding: 0 28px 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--cream-50); font-size: 13px; font-weight: 800; color: var(--forest-950); appearance: none; outline: none; cursor: pointer;">
                                     ${cuisinesList.map(c => `<option value="${escapeHtml(c)}" ${c === selectedCuisine ? 'selected' : ''}>${escapeHtml(c)}</option>`).join('')}
                                 </select>
-                                <i class="ph-bold ph-caret-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--forest-900); pointer-events: none;"></i>
+                                <i class="ph-bold ph-caret-down" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 13px; color: var(--forest-900); pointer-events: none;"></i>
                             </div>
-                            <div style="position: relative; width: 140px; flex-shrink: 0;">
-                                <select id="filter-sub" style="width: 100%; height: 44px; padding: 0 30px 0 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--cream-50); font-size: 14px; font-weight: 800; color: var(--forest-950); appearance: none; outline: none; cursor: pointer; opacity: ${selectedCuisine === 'All' ? '0.5' : '1'}; pointer-events: ${selectedCuisine === 'All' ? 'none' : 'auto'};">
+                            <div style="position: relative; width: 130px; flex-shrink: 0;">
+                                <select id="filter-sub" style="width: 100%; height: 38px; padding: 0 28px 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--cream-50); font-size: 13px; font-weight: 800; color: var(--forest-950); appearance: none; outline: none; cursor: pointer; opacity: ${selectedCuisine === 'All' ? '0.5' : '1'}; pointer-events:${selectedCuisine === 'All' ? 'none' : 'auto'};">
                                     ${getAvailableSubs().map(s => `<option value="${escapeHtml(s)}" ${s === selectedSub ? 'selected' : ''}>${escapeHtml(s)}</option>`).join('')}
                                 </select>
-                                <i class="ph-bold ph-caret-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--forest-900); pointer-events: none;"></i>
+                                <i class="ph-bold ph-caret-down" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font-size: 13px; color: var(--forest-900); pointer-events: none;"></i>
                             </div>
                         </div>
 
@@ -2517,7 +2508,7 @@ async function renderAdminWorkspace(mount) {
                         </div>
 
                         <!-- ABSOLUTE STICKY FOOTER WRAPPER -->
-                        <div id="catalog-footer-wrap" style="position: sticky; bottom: -17px; background: var(--paper); padding: 12px 0 0 0; margin-top: auto; border-top: 1px solid var(--line); z-index: 100; display: none;"></div>
+                        <div id="catalog-footer-wrap" style="position: sticky; bottom: -17px; background: var(--paper); padding: 12px 0 12px 0; margin-top: auto; border-top: 1px solid var(--line); z-index: 100; display: none;"></div>
                     </div>
                 `;
 
@@ -2547,8 +2538,8 @@ async function renderAdminWorkspace(mount) {
                     renderCatalog();
                 });
 
-                // Bind Back
-                host.querySelector("#back-to-tab")?.addEventListener("click", () => renderManager());
+                // Bind Back (Instant Pointerdown removes 300ms mobile lag)
+                host.querySelector("#back-to-tab")?.addEventListener("pointerdown", () => renderManager());
 
                 // EVENT DELEGATION: Animates the POS pill buttons without refreshing HTML
                 const listContainer = host.querySelector("#catalog-list-container");

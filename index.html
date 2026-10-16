@@ -11,7 +11,7 @@
   <!-- APP VERSION: change src/core/config.js then globally replace v=2.0.0 in this file. -->
   <link rel="icon" type="image/svg+xml" href="assets/images/RMS_icon.svg?v=3.0.0" />
   <link rel="preload" as="image" href="assets/images/RMS_Logo.svg?v=3.0.0" />
-  <link rel="stylesheet" href="styles.css?v=3.0.0" />
+  <link rel="stylesheet" href="styles.css?v=3.1.1" />
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/regular/style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/bold/style.css" />
@@ -59,7 +59,33 @@
   <div id="toast-root" class="toast-root" aria-live="assertive" aria-atomic="true"></div>
   <section id="receipt-print-host" class="print-host" aria-hidden="true"></section>
   <section id="qr-print-host" class="print-host" aria-hidden="true"></section>
-  <script type="module" src="app.js?v=2.5.1"></script>
+
+  <!-- Live Tab loading templates: HTML structure only. Styles are defined in styles.css. -->
+  <template id="live-tab-modal-body-template">
+    <div id="active-dash-host"><!-- LIVE_TAB_INITIAL_CONTENT --></div>
+  </template>
+
+  <template id="live-tab-loading-template">
+    <div class="empty-state"><i class="ph ph-spinner-gap qty-pulse" aria-hidden="true"></i><span>Loading your live tab...</span></div>
+  </template>
+
+  <template id="kitchen-dispatch-template">
+    <div class="inline-prep-stage" style="min-height: 50vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; animation: prep-fade-in 0.4s ease;">
+      <div class="premium-squircle sq-amber anim-float" style="margin-bottom: 24px; position: relative;">
+        <!-- The Steam Animation relies on the existing steam-rise CSS keyframes -->
+        <div class="steam-container" style="position: absolute; top: -16px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px;">
+          <div class="steam-line" style="width: 5px; height: 18px; background: rgba(255, 255, 255, 0.7); border-radius: 4px; animation: steam-rise 1.8s infinite ease-in-out; animation-delay: 0.2s;"></div>
+          <div class="steam-line" style="width: 5px; height: 26px; background: rgba(255, 255, 255, 0.9); border-radius: 4px; animation: steam-rise 1.8s infinite ease-in-out; animation-delay: 0.6s;"></div>
+          <div class="steam-line" style="width: 5px; height: 16px; background: rgba(255, 255, 255, 0.7); border-radius: 4px; animation: steam-rise 1.8s infinite ease-in-out; animation-delay: 0.4s;"></div>
+        </div>
+        <i class="ph-bold ph-cooking-pot" style="animation: pan-toss 1.8s infinite cubic-bezier(0.3, 1.2, 0.4, 1); z-index: 2;"></i>
+      </div>
+      <h2 class="inline-prep-title" style="font-size: 1.8rem; font-weight: 900; color: var(--forest-950); margin: 0 0 8px; letter-spacing: -0.02em;">Sending to Kitchen</h2>
+      <p class="inline-prep-subtitle" style="font-size: 1.05rem; color: var(--forest-700); margin: 0; font-weight: 600;">Your order is confirmed and being prepared!</p>
+    </div>
+  </template>
+
+  <script type="module" src="app.js?v=2.5.2"></script>
   <script>
     // Strictly required to trigger the "Install App" prompt on Android/iOS
     if ('serviceWorker' in navigator) {

@@ -166,17 +166,48 @@ export async function render({ mount }) {
                 sessionStorage.setItem(tabSessionKey, existingToken);
             }
 
-            if (mySession.status === "bill_requested" || mySession.status === "bill_ready") {
-                mount.innerHTML = `
+            // 1. Reusable Payment Success View (Rendered dynamically when server confirms payment)
+            const renderPaymentSuccess = () => {
+                // Wipe the tokens instantly so if they reload or hit back, they get locked out natively
+                sessionStorage.removeItem(tabSessionKey);
+                localStorage.removeItem(sessionKey);
+                localStorage.removeItem(legacySessionKey);
+                
+                const rootNode = document.querySelector("#app") || mount;
+                rootNode.innerHTML = `
                   <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
                     <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
-                      <div class="premium-squircle sq-blue anim-pulse">
-                        <i class="ph-bold ph-hourglass-high"></i>
+                      <div class="premium-squircle sq-green anim-pop" style="margin-bottom: 24px;">
+                        <i class="ph-bold ph-check"></i>
                       </div>
-                      <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Pending</h1>
-                      <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Your bill has been requested. Please wait while our staff verifies payment at your table.</p>
+                      <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Successful</h1>
+                      <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Your table has been successfully cleared. We hope you enjoyed your meal and look forward to serving you again soon!</p>
+                      <button onclick="window.location.reload()" style="background: var(--forest-950); color: #fff; border: none; border-radius: 14px; padding: 14px 24px; font-size: 1.05rem; font-weight: 800; cursor: pointer; width: 100%; box-shadow: 0 8px 24px rgba(18,34,22,0.15); transition: transform 0.15s;" onmousedown="this.style.transform='scale(0.96)'" onmouseup="this.style.transform='scale(1)'">Close Session</button>
+                    </div>
+                  </main>
+                `;
+            };
+
+            // 2. The Bill Requested State (With CSS Clock Animation)
+            if (mySession.status === "bill_requested" || mySession.status === "bill_ready") {
+                mount.innerHTML = `
+                  <style>
+                    @keyframes spinMinute { 0% { transform: translateX(-50%) rotate(0deg); } 100% { transform: translateX(-50%) rotate(360deg); } }
+                    @keyframes spinHour { 0% { transform: translateX(-50%) rotate(0deg); } 100% { transform: translateX(-50%) rotate(360deg); } }
+                    .css-clock { width: 48px; height: 48px; border: 4px solid var(--forest-900); border-radius: 50%; position: relative; margin: 0 auto; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); background: transparent; }
+                    .css-clock::before { content: ''; position: absolute; bottom: 50%; left: 50%; width: 3px; height: 18px; background: var(--forest-900); border-radius: 2px; transform-origin: bottom center; transform: translateX(-50%); animation: spinMinute 2s linear infinite; }
+                    .css-clock::after { content: ''; position: absolute; bottom: 50%; left: 50%; width: 4px; height: 12px; background: var(--forest-900); border-radius: 2px; transform-origin: bottom center; transform: translateX(-50%); animation: spinHour 24s linear infinite; }
+                    .css-clock-center { position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; background: var(--forest-900); border: 2px solid var(--sage-200); border-radius: 50%; transform: translate(-50%, -50%); z-index: 10; }
+                  </style>
+                  <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
+                    <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
+                      <div class="premium-squircle anim-pulse" style="margin-bottom: 24px; background: var(--sage-200); box-shadow: 0 16px 32px rgba(219, 228, 214, 0.5);">
+                        <div class="css-clock"><div class="css-clock-center"></div></div>
+                      </div>
+                      <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Bill Requested</h1>
+                      <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Please settle your bill with the restaurant staff in person. Your table will close after staff records the payment.</p>
                       <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
-                      <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6;">Thank you for dining at ${escapeHtml(restaurant.name)}!</p>
+                      <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6; font-weight: 700;">Thank you for dining at ${escapeHtml(restaurant.name)}!</p>
                     </div>
                   </main>
                 `;
@@ -186,7 +217,7 @@ export async function render({ mount }) {
                     const sessionState = data?.[0] ?? data;
                     if (!error && sessionState?.status === "closed") {
                         clearInterval(pollFallback); document.removeEventListener("visibilitychange", visibilityCheck); supabase.removeChannel(pendingChannel);
-                        window.location.reload();
+                        renderPaymentSuccess();
                     }
                 };
                 const pendingChannel = supabase.channel(`pending-tab-${currentTableObj.id}`).on("postgres_changes", { event: "UPDATE", schema: "public", table: "dining_sessions", filter: `table_id=eq.${currentTableObj.id}` }, () => checkServerForPayment()).subscribe();
@@ -197,8 +228,8 @@ export async function render({ mount }) {
                 return () => { clearInterval(pollFallback); document.removeEventListener("visibilitychange", visibilityCheck); supabase.removeChannel(pendingChannel); };
             }
 
+            // 3. The Standard "Session Expired" State (Triggered natively on reload/back if closed)
             if (mySession.status === "closed") {
-                // 🧠 INSTANT EXPIRATION: Immediately wipe memory and lock them out permanently!
                 sessionStorage.removeItem(tabSessionKey);
                 localStorage.removeItem(sessionKey);
                 localStorage.removeItem(legacySessionKey);
@@ -210,17 +241,19 @@ export async function render({ mount }) {
                 mount.innerHTML = `
                   <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
                     <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
-                      <div class="premium-squircle sq-slate anim-float">
+                      <div class="premium-squircle sq-slate anim-float" style="margin-bottom: 24px;">
                         <i class="ph-bold ph-lock-key"></i>
                       </div>
+                      <p style="margin: 0 0 8px; color: var(--forest-600); font-size: 11px; font-weight: 900; letter-spacing: 0.15em; text-transform: uppercase;">Table ${escapeHtml(currentTableObj.table_no)}</p>
                       <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Session Expired</h1>
-                      <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Your dining session for Table ${currentTableObj.table_no} was closed at ${timeString}.</p>
-                      <div class="premium-lock-notice" style="background: #f8faf9; border-radius: 16px; border: 1px solid rgba(18,34,22,0.08); padding: 20px; display: flex; gap: 14px; text-align: left; align-items: flex-start;">
-                          <i class="ph-bold ph-shield-check" style="color: var(--forest-900); font-size: 22px;"></i>
-                          <div>
-                            <strong style="display: block; color: var(--forest-950); font-size: 0.9rem; margin-bottom: 4px;">Security Lock Active</strong>
-                            <span style="color: var(--forest-700); font-size: 0.85rem; line-height: 1.5;">To prevent remote ordering, this link is locked. To start a new order, please rescan the QR code on your table.</span>
-                          </div>
+                      <p class="premium-lock-desc" style="font-size: 1.1rem; font-weight: 600; color: var(--forest-800); margin-bottom: 24px; line-height: 1.5;">Your dining session was closed by staff at ${timeString}.</p>
+                      
+                      <div style="width: 100%; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 12px; align-items: start; padding: 16px; border: 1px solid rgba(18, 34, 22, 0.08); border-radius: 16px; background: #f8faf6; color: var(--forest-900); text-align: left;">
+                        <i class="ph-bold ph-shield-check" style="color: var(--forest-700); font-size: 24px;"></i>
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                          <strong style="font-size: 13px; line-height: 1.35; font-weight: 900;">Security lock active</strong>
+                          <span style="color: var(--muted); font-size: 12.5px; line-height: 1.5; font-weight: 600;">Please scan the QR code physically displayed on your table to start a new visit.</span>
+                        </div>
                       </div>
                     </div>
                   </main>
@@ -787,35 +820,47 @@ export async function render({ mount }) {
         // 🛑 THE INSTANT GLOBAL KICK LOGIC 🛑
         if (isCustomerMode && currentTableObj && payload.new.table_id === currentTableObj.id) {
             if (payload.new.status === 'closed') {
-                // ⚡ LIVE KICK: Destroy tokens instantly and inject the lock screen without a browser refresh!
+                // Clear any open modals
+                document.querySelectorAll(".app-modal-overlay").forEach(m => m.remove());
+                const rootNode = document.querySelector("#app") || mount;
+                
+                // ⚡ LIVE KICK: Destroy tokens instantly
                 localStorage.removeItem(`rms.session.${currentTableObj.id}`);
                 localStorage.removeItem(`fourflavours.session.${currentTableObj.id}`);
                 sessionStorage.removeItem(`rms.tab.${currentTableObj.id}`);
-                
-                const timeString = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
-                const rootNode = document.querySelector("#app") || mount;
-                
-                // Clear any open modals to prevent overlay ghosting
-                document.querySelectorAll(".app-modal-overlay").forEach(m => m.remove());
-                
-                rootNode.innerHTML = `
-                  <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit; animation: sqPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;">
-                    <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
-                      <div class="premium-squircle sq-slate anim-float">
-                        <i class="ph-bold ph-lock-key"></i>
-                      </div>
-                      <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Session Expired</h1>
-                      <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Your dining session for Table ${escapeHtml(currentTableObj.table_no)} was closed by staff at ${timeString}.</p>
-                      <div class="premium-lock-notice" style="background: #f8faf9; border-radius: 16px; border: 1px solid rgba(18,34,22,0.08); padding: 20px; display: flex; gap: 14px; text-align: left; align-items: flex-start;">
-                          <i class="ph-bold ph-shield-check" style="color: var(--forest-900); font-size: 22px;"></i>
-                          <div>
-                            <strong style="display: block; color: var(--forest-950); font-size: 0.9rem; margin-bottom: 4px;">Security Lock Active</strong>
-                            <span style="color: var(--forest-700); font-size: 0.85rem; line-height: 1.5;">To prevent remote ordering, this link is locked. To start a new order, please rescan the QR code on your table.</span>
+
+                // READ THE DATABASE TRUTH: If the backend says 'paid', show the beautiful Thank You screen.
+                if (payload.new.payment_status === 'paid') {
+                    rootNode.innerHTML = `
+                      <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
+                        <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
+                          <div class="premium-squircle sq-green anim-pop" style="margin-bottom: 24px;">
+                            <i class="ph-bold ph-check"></i>
                           </div>
-                      </div>
-                    </div>
-                  </main>
-                `;
+                          <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Successful</h1>
+                          <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Your table has been successfully cleared. We hope you enjoyed your meal and look forward to serving you again soon!</p>
+                          <button onclick="window.location.reload()" style="background: var(--forest-950); color: #fff; border: none; border-radius: 14px; padding: 14px 24px; font-size: 1.05rem; font-weight: 800; cursor: pointer; width: 100%; box-shadow: 0 8px 24px rgba(18,34,22,0.15); transition: transform 0.15s;" onmousedown="this.style.transform='scale(0.96)'" onmouseup="this.style.transform='scale(1)'">Close Session</button>
+                        </div>
+                      </main>
+                    `;
+                } else {
+                    // Admin force-closed the table without a customer request. Show standard Session Expired.
+                    const timeString = new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+                    rootNode.innerHTML = `
+                      <main class="customer-session-expired" role="alert" aria-live="assertive">
+                        <section class="customer-session-expired__card" aria-labelledby="customer-session-expired-title">
+                          <div class="customer-session-expired__icon" aria-hidden="true"><i class="ph-bold ph-lock-key"></i></div>
+                          <p class="customer-session-expired__eyebrow">TABLE ${escapeHtml(currentTableObj.table_no)}</p>
+                          <h1 class="customer-session-expired__title" id="customer-session-expired-title">Session Expired</h1>
+                          <p class="customer-session-expired__description">Your dining session was closed by staff at ${timeString}.</p>
+                          <div class="customer-session-expired__notice">
+                            <i class="ph-bold ph-shield-check" aria-hidden="true"></i>
+                            <p><strong>Security lock active</strong><span>Please scan the QR code physically displayed on your table to start a new visit.</span></p>
+                          </div>
+                        </section>
+                      </main>
+                    `;
+                }
                 window.history.replaceState({ locked: true }, "", window.location.href);
             } else if (payload.new.status === 'bill_requested' || payload.new.status === 'bill_ready') {
                 window.location.reload(); // "Payment Pending" requires standard routing
@@ -1645,17 +1690,30 @@ export async function render({ mount }) {
             modal.close();
             delete activeTableOrders[sessionKey];
 
+            // Set the tracking flag so the UI knows we are intentionally waiting for payment
+            sessionStorage.setItem(`rms.waiting_payment.${tableId}`, "true");
+
             document.getElementById("app").innerHTML = `
-              <div class="thank-you-screen" id="live-pending-screen" style="min-height: 100vh; display: flex; align-items: center; justify-content: center; background: var(--cream-100); padding: 24px;">
-                <div class="thank-you-card" style="background: var(--paper); padding: 48px 32px; border-radius: 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; max-width: 400px; width: 100%; border: 1px solid rgba(0,0,0,0.04);">
-                  <div style="width: 88px; height: 88px; margin: 0 auto 24px; border-radius: 50%; background: var(--sage-200); color: var(--forest-900); display: grid; place-items: center; font-size: 38px;">
-                    <i class="ph-bold ph-receipt"></i>
+              <style>
+                @keyframes spinMinute { 0% { transform: translateX(-50%) rotate(0deg); } 100% { transform: translateX(-50%) rotate(360deg); } }
+                @keyframes spinHour { 0% { transform: translateX(-50%) rotate(0deg); } 100% { transform: translateX(-50%) rotate(360deg); } }
+                .css-clock { width: 48px; height: 48px; border: 4px solid var(--forest-900); border-radius: 50%; position: relative; margin: 0 auto; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); background: transparent; }
+                .css-clock::before { content: ''; position: absolute; bottom: 50%; left: 50%; width: 3px; height: 18px; background: var(--forest-900); border-radius: 2px; transform-origin: bottom center; transform: translateX(-50%); animation: spinMinute 2s linear infinite; }
+                .css-clock::after { content: ''; position: absolute; bottom: 50%; left: 50%; width: 4px; height: 12px; background: var(--forest-900); border-radius: 2px; transform-origin: bottom center; transform: translateX(-50%); animation: spinHour 24s linear infinite; }
+                .css-clock-center { position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; background: var(--forest-900); border: 2px solid var(--sage-200); border-radius: 50%; transform: translate(-50%, -50%); z-index: 10; }
+              </style>
+              <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
+                <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
+                  <div class="premium-squircle anim-pulse" style="margin-bottom: 24px; background: var(--sage-200); box-shadow: 0 16px 32px rgba(219, 228, 214, 0.5);">
+                    <div class="css-clock"><div class="css-clock-center"></div></div>
                   </div>
-                  <h1 class="thank-you-title" style="font-size: 2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px;">Bill Requested</h1>
-                  <p class="thank-you-message" style="font-size: 1.05rem; font-weight: 600; color: var(--forest-800); margin-bottom: 24px;">Please settle your bill with the restaurant staff in person. Your table will close after staff records the payment.</p>
-                  <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600);">Thank you for dining at ${escapeHtml(restaurant.name)}.</p>
+                  <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Bill Requested</h1>
+                  <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Please settle your bill with the restaurant staff in person. Your table will close after staff records the payment.</p>
+                  <div class="thank-you-divider" style="width: 40px; height: 4px; background: var(--sage-300); margin: 0 auto 32px auto; border-radius: 4px;"></div>
+                  <p class="thank-you-footer" style="font-size: 0.95rem; color: var(--forest-600); line-height: 1.6; font-weight: 700;">Thank you for dining at ${escapeHtml(restaurant.name)}!</p>
                 </div>
-              </div>`;
+              </main>
+            `;
 
             let pollFallback = null;
             let disposed = false;
@@ -1685,7 +1743,24 @@ export async function render({ mount }) {
 
                     if (sessionState?.status === "closed") {
                         cleanupPaymentPolling();
-                        window.location.reload();
+                        
+                        // We must wipe tokens instantly to prevent a back-button bypass
+                        sessionStorage.removeItem('rms.tab.' + tableId);
+                        localStorage.removeItem('rms.session.' + tableId);
+                        localStorage.removeItem('fourflavours.session.' + tableId);
+                        
+                        document.getElementById("app").innerHTML = `
+                          <main class="premium-lock-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--cream-100, #FCFCF9); padding: 24px; font-family: inherit;">
+                            <div class="premium-lock-card" style="background: var(--paper, #ffffff); max-width: 440px; width: 100%; border-radius: 32px; padding: 56px 32px; box-shadow: 0 24px 48px rgba(18, 34, 22, 0.08); text-align: center; border: 1px solid rgba(0,0,0,0.04);">
+                              <div class="premium-squircle sq-green anim-pop" style="margin-bottom: 24px;">
+                                <i class="ph-bold ph-check"></i>
+                              </div>
+                              <h1 class="premium-lock-title" style="font-size: 2.2rem; font-weight: 900; color: var(--forest-950); margin-bottom: 12px; letter-spacing: -0.02em;">Payment Successful</h1>
+                              <p class="premium-lock-desc" style="font-size: 1.15rem; font-weight: 600; color: var(--forest-800); margin-bottom: 32px; line-height: 1.5;">Your table has been successfully cleared. We hope you enjoyed your meal and look forward to serving you again soon!</p>
+                              <button onclick="window.location.reload()" style="background: var(--forest-950); color: #fff; border: none; border-radius: 14px; padding: 14px 24px; font-size: 1.05rem; font-weight: 800; cursor: pointer; width: 100%; box-shadow: 0 8px 24px rgba(18,34,22,0.15); transition: transform 0.15s;" onmousedown="this.style.transform='scale(0.96)'" onmouseup="this.style.transform='scale(1)'">Close Session</button>
+                            </div>
+                          </main>
+                        `;
                     }
                 } catch (pollError) {
                     console.warn("Could not verify payment status:", pollError);
@@ -1811,12 +1886,35 @@ export async function render({ mount }) {
       }
     ];
 
+    // Select pre-authored HTML templates; styling lives in styles.css, structure in index.html.
+    const initialDashboardTemplateId = showPrepAnimation
+      ? "kitchen-dispatch-template"
+      : "live-tab-loading-template";
+    const initialDashboardTemplate = document.getElementById(initialDashboardTemplateId);
+    const liveTabModalBodyTemplate = document.getElementById("live-tab-modal-body-template");
+
+    if (!initialDashboardTemplate || !liveTabModalBodyTemplate) {
+      console.error("Live Tab templates are missing from index.html.");
+      showToast(
+        "Unable to open Live Tab",
+        "Please reload the app so the latest interface templates can load.",
+        "error"
+      );
+      return;
+    }
+
+    const initialDashboardLoadingHTML = initialDashboardTemplate.innerHTML.trim();
+    const liveTabModalBodyHTML = liveTabModalBodyTemplate.innerHTML.replace(
+      "<!-- LIVE_TAB_INITIAL_CONTENT -->",
+      initialDashboardLoadingHTML
+    );
+
     const modal = openAppModal({
       title: titleStr, subtitle: "Your live table tab.",
-      body: `<div id="active-dash-host"><div class="empty-state"><i class="ph ph-spinner-gap qty-pulse"></i><span>Syncing rounds...</span></div></div>`,
+      body: liveTabModalBodyHTML,
       actions: [
         { label: "Keep Ordering", icon: "ph-plus-circle", className: "btn-quiet", onClick: ({ close }) => close() },
-        { label: isCustomerMode ? "Request Bill" : "Complete Order", icon: "ph-receipt", className: "btn-primary", onClick: ({ close }) => {
+        { label: isCustomerMode ? "Request Bill" : "Complete Order", icon: "ph-receipt", className: "btn-primary", disabled: true, onClick: ({ close }) => {
             const formattedTotal = money(aggregatedBill.grand_total, settings.currency_symbol);
             if (isCustomerMode) {
                 openAppModal({
@@ -1978,6 +2076,7 @@ export async function render({ mount }) {
 
     function getCustomerStatusStyle(status) {
         if(status === 'served') return 'color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; box-shadow: 0 2px 4px rgba(22, 163, 74, 0.05);'; 
+        if(status === 'ready') return 'color: #0369a1; background: #e0f2fe; border: 1px solid #bae6fd; box-shadow: 0 2px 8px rgba(3, 105, 161, 0.15);';
         if(status === 'preparing') return 'color: #b45309; background: #fffbeb; border: 1px solid #fde68a; box-shadow: 0 2px 8px rgba(217, 119, 6, 0.15);';
         // Beautiful Indigo badge for PENDING
         return 'color: #4338ca; background: #e0e7ff; border: 1px solid #c7d2fe; box-shadow: 0 2px 8px rgba(67, 56, 202, 0.15);'; 
@@ -2040,7 +2139,10 @@ export async function render({ mount }) {
                       </div>
                       
                       <div style="padding: 6px 10px; font-size: 10px; font-weight: 900; text-transform: uppercase; border-radius: 8px; display: inline-flex; align-items: center; gap: 4px; user-select: none; letter-spacing: 0.05em; ${getCustomerStatusStyle(i.status)}">
-                         ${i.status === 'served' ? `<i class="ph-bold ph-check" style="font-size: 13px;"></i> SERVED` : (i.status === 'preparing' ? `<i class="ph-bold ph-fire" style="font-size: 13px;"></i> PREPARING` : `<i class="ph-bold ph-clock" style="font-size: 13px;"></i> PENDING`)}
+                         ${i.status === 'served' ? `<i class="ph-bold ph-check" style="font-size: 13px;"></i> SERVED` : 
+                           i.status === 'ready' ? `<i class="ph-bold ph-bell-ringing" style="font-size: 13px;"></i> READY` : 
+                           i.status === 'preparing' ? `<i class="ph-bold ph-fire" style="font-size: 13px;"></i> PREPARING` : 
+                           `<i class="ph-bold ph-clock" style="font-size: 13px;"></i> PENDING`}
                       </div>
                     </div>
                   `).join("")}
@@ -2053,7 +2155,7 @@ export async function render({ mount }) {
       if (listContainer) host.querySelector(".dining-items-list").scrollTop = currentScroll;
     }
 
-    if (isPrepAnimating) { setTimeout(() => { isPrepAnimating = false; renderDash(); }, 3200); }
+    if (isPrepAnimating) { setTimeout(() => { isPrepAnimating = false; renderDash(); }, 4000); }
     fetchLiveSession(); 
   }
 
