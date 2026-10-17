@@ -198,3 +198,263 @@ export function openAppModal({ title, subtitle = "", body, actions = [] }) {
   document.addEventListener("keydown", esc);
   return { root, close };
 }
+
+// ============================================================================
+// MASTER RECEIPT ENGINE (Single Source of Truth for POS, Customer & Admin)
+// ============================================================================
+export function openUniversalReceipt({
+  order,
+  items = [],
+  settings = {},
+  tables = [],
+  tableString = "",
+  modalTitle = "",
+  modalSubtitle = "",
+  isCustomerMode = false,
+  allowPdf = true,
+  extraActions = []
+}) {
+  const tenant = window.__ACTIVE_TENANT__ || {};
+  const iconUrl = tenant.icon_url ? versionedAsset(tenant.icon_url) : "";
+  const currency = settings.currency_symbol || "₹";
+
+  // 1. Resolve Table / Order Type String automatically
+  let resolvedTypeString = tableString;
+  if (!resolvedTypeString) {
+    const oType = order?.order_type || "dine_in";
+    const tId = order?.table_id || order?.dining_sessions?.table_id;
+    if (oType === "dine_in" && tId) {
+      const allTables = tables.length ? tables : (window.__FF_TABLES__ || []);
+      const tObj = allTables.find(x => x.id === tId);
+      resolvedTypeString = tObj ? ("Dine-in · Table " + tObj.table_no) : "Dine-in";
+    } else {
+      resolvedTypeString = "Takeaway";
+    }
+  }
+
+  // 2. Resolve Date
+  const rawDate = order?.created_at ? new Date(order.created_at) : new Date();
+  const dateStr = rawDate.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  // 3. Normalize Items (Handles both POS items and Admin order_items snapshots)
+  const rawItems = (items && items.length > 0) ? items : (order?.order_items || []);
+  const normalizedItems = rawItems.map(i => ({
+    name: i.name || i.name_snapshot || i.product_name || "Item",
+    price: Number(i.price ?? i.unit_price ?? 0),
+    quantity: Number(i.quantity ?? 1)
+  }));
+
+  const rowsHtml = normalizedItems.map(item =>
+    '<tr>' +
+      '<td style="text-align: left;">' + escapeHtml(item.name) + '<br><small>' + currency + item.price.toFixed(2) + '</small></td>' +
+      '<td style="text-align: center;">' + item.quantity + '</td>' +
+      '<td style="text-align: right;">' + currency + (item.price * item.quantity).toFixed(2) + '</td>' +
+    '</tr>'
+  ).join("");
+
+  const addressHtml = settings.restaurant_address
+    ? '<p>' + escapeHtml(settings.restaurant_address).replace(/\n/g, "<br>") + '</p>'
+    : "";
+
+  // 4. Build Unified Thermal Receipt HTML (Parser-Safe)
+  const receiptHTML =
+    '<article class="thermal-receipt" id="thermal-receipt-content">' +
+      '<header class="thermal-head">' +
+        (iconUrl ? '<img class="thermal-logo" src="' + iconUrl + '" alt="Restaurant logo">' : '') +
+        '<h1>' + escapeHtml(settings.restaurant_name || tenant.name || "Restaurant") + '</h1>' +
+        addressHtml +
+        (settings.gst_number ? '<p><strong>GSTIN:</strong> ' + escapeHtml(settings.gst_number) + '</p>' : '') +
+      '</header>' +
+      '<div class="thermal-meta">' +
+        '<div><span>Order:</span> <strong>#' + escapeHtml(order?.order_number ?? "Tab") + '</strong></div>' +
+        '<div><span>Date:</span> <strong>' + dateStr + '</strong></div>' +
+        '<div><span>Type:</span> <strong>' + escapeHtml(resolvedTypeString) + '</strong></div>' +
+      '</div>' +
+      '<table class="thermal-items-table">' +
+        '<thead>' +
+          '<tr>' +
+            '<th style="text-align: left;">Item</th>' +
+            '<th style="text-align: center;">Qty</th>' +
+            '<th style="text-align: right;">Total</th>' +
+          '</tr>' +
+        '</thead>' +
+        '<tbody>' + rowsHtml + '</tbody>' +
+      '</table>' +
+      '<div class="thermal-totals-wrap">' +
+        '<div class="thermal-line"><span>Subtotal</span><strong>' + currency + Number(order?.subtotal || 0).toFixed(2) + '</strong></div>' +
+        '<div class="thermal-line"><span>CGST @ ' + Number(settings.cgst_rate || 0) + '%</span><strong>' + currency + Number(order?.cgst || 0).toFixed(2) + '</strong></div>' +
+        '<div class="thermal-line"><span>SGST @ ' + Number(settings.sgst_rate || 0) + '%</span><strong>' + currency + Number(order?.sgst || 0).toFixed(2) + '</strong></div>' +
+        '<div class="thermal-line"><span>Rounding</span><strong>' + currency + Number(order?.rounding || 0).toFixed(2) + '</strong></div>' +
+        '<div class="thermal-line thermal-grand"><span>GRAND TOTAL</span><strong>' + currency + Number(order?.grand_total || 0).toFixed(2) + '</strong></div>' +
+      '</div>' +
+      (settings.upi_id ?
+        '<div class="thermal-payment-block">' +
+          '<div class="thermal-qr" id="thermal-upi"></div>' +
+          '<div class="thermal-upi-note"><strong>Scan to pay</strong><br>Supported by all UPI apps</div>' +
+        '</div>'
+      : '') +
+      '<footer class="thermal-foot">' +
+        '<p>' + escapeHtml(settings.receipt_footer || "Thank you for dining with us!") + '</p>' +
+        '<div class="thermal-software-tag">Powered by Table Forge System</div>' +
+      '</footer>' +
+    '</article>';
+
+  // 5. Build Unified Modal Actions
+  let actionsList = [];
+
+  if (isCustomerMode) {
+    actionsList = [
+      {
+        label: "Exit",
+        icon: "ph-check",
+        className: "btn-primary",
+        onClick: ({ close }) => { close(); window.location.reload(); }
+      }
+    ];
+  } else {
+    if (allowPdf) {
+      actionsList.push({
+        label: "Save PDF",
+        icon: "ph-bold ph-download-simple",
+        className: "btn-quiet",
+        style: "color: var(--forest-950); font-weight: 900;",
+        onClick: async ({ root, button }) => {
+          const element = root.querySelector("#thermal-receipt-content");
+          if (!element) {
+            showToast("Could not save PDF", "The receipt preview is unavailable.", "error");
+            return;
+          }
+          button.disabled = true;
+          const originalHTML = button.innerHTML;
+          button.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i> Saving...';
+
+          const oldShadow = element.style.boxShadow;
+          const oldMargin = element.style.margin;
+
+          try {
+            if (!window.html2pdf) {
+              await new Promise((resolve, reject) => {
+                const script = document.createElement("script");
+                script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+                script.onload = resolve;
+                script.onerror = () => reject(new Error("The PDF library could not be loaded."));
+                document.head.appendChild(script);
+              });
+            }
+            element.style.boxShadow = "none";
+            element.style.margin = "0";
+            const heightInMM = (element.getBoundingClientRect().height * 0.264583) + 1;
+
+            await window.html2pdf()
+              .set({
+                margin: 0,
+                filename: ((settings.restaurant_name || "Bill").replace(/\s+/g, "_")) + "_order_" + (order?.order_number || "Tab") + ".pdf",
+                image: { type: "jpeg", quality: 1 },
+                html2canvas: { scale: 6, useCORS: true },
+                jsPDF: { unit: "mm", format: [80, heightInMM], orientation: "portrait" }
+              })
+              .from(element)
+              .save();
+          } catch (error) {
+            console.error("PDF generation failed:", error);
+            showToast("Could not save PDF", error.message || "Please try again.", "error");
+          } finally {
+            element.style.boxShadow = oldShadow;
+            element.style.margin = oldMargin;
+            button.disabled = false;
+            button.innerHTML = originalHTML;
+          }
+        }
+      });
+    } else {
+      actionsList.push({
+        label: "Close",
+        icon: "ph-x",
+        className: "btn-quiet",
+        onClick: ({ close }) => close()
+      });
+    }
+
+    actionsList.push({
+      label: "Print Bill",
+      icon: "ph-bold ph-printer",
+      className: "btn-primary",
+      style: "background: var(--forest-950); border-color: var(--forest-950); font-weight: 900;",
+      onClick: ({ root }) => {
+        const receipt = root.querySelector("#thermal-receipt-content");
+        const printHost = document.querySelector("#receipt-print-host");
+        if (!receipt || !printHost) {
+          showToast("Could not print", "The receipt preview is unavailable.", "error");
+          return;
+        }
+        printHost.innerHTML = receipt.outerHTML;
+        window.print();
+      }
+    });
+
+    if (extraActions && extraActions.length) {
+      actionsList.push(...extraActions);
+    }
+  }
+
+  const finalTitle = modalTitle || (isCustomerMode ? "Your Digital Bill" : ("Order #" + (order?.order_number ?? "Tab") + " Bill"));
+  const finalSubtitle = modalSubtitle || (isCustomerMode ? "Please settle this bill with restaurant staff in person." : "View, save, or print this bill.");
+
+  const modal = openAppModal({
+    title: finalTitle,
+    subtitle: finalSubtitle,
+    body: '<div class="receipt-preview-container">' + receiptHTML + '</div>',
+    actions: actionsList
+  });
+
+  // 6. Universal UPI QR Code Generator with Center Brand Icon
+  if (settings.upi_id) {
+    const renderQR = () => {
+      setTimeout(() => {
+        const qrNode = modal.root.querySelector("#thermal-upi");
+        if (qrNode) {
+          qrNode.innerHTML = "";
+          const rawUpi = String(settings.upi_id).replace(/[^a-zA-Z0-9.\-@]/g, "");
+          const rawName = String(settings.restaurant_name || tenant.name || "Restaurant").replace(/[^a-zA-Z0-9\s]/g, "").trim();
+          const rawNote = "Bill " + (order?.order_number || "Tab");
+          const am = Number(order?.grand_total || 0).toFixed(2);
+          const upiString = encodeURI("upi://pay?pa=" + rawUpi + "&pn=" + rawName + "&am=" + am + "&cu=INR&tn=" + rawNote);
+
+          qrNode.style.position = "relative";
+          qrNode.style.display = "inline-block";
+
+          new globalThis.QRCode(qrNode, {
+            text: upiString,
+            width: 160,
+            height: 160,
+            correctLevel: globalThis.QRCode.CorrectLevel.H
+          });
+
+          if (iconUrl) {
+            const logoImg = document.createElement("img");
+            logoImg.src = iconUrl;
+            logoImg.style.cssText = "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 36px; height: 36px; min-width: 36px; min-height: 36px; max-width: 36px; max-height: 36px; border-radius: 8px; border: 3px solid #ffffff; background-color: #ffffff; object-fit: cover; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 5;";
+            qrNode.appendChild(logoImg);
+          }
+        }
+      }, 50);
+    };
+
+    if (globalThis.QRCode) {
+      renderQR();
+    } else {
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+      script.onload = renderQR;
+      document.head.appendChild(script);
+    }
+  }
+
+  return modal;
+}

@@ -245,16 +245,18 @@ export async function renderAdminLock({ mount, onUnlocked }) {
           <form id="admin-pin-form" class="stack-form" style="display: flex; flex-direction: column; gap: 14px;">
             <label class="field">
               <span style="font-size: 0.8rem; font-weight: 800; color: var(--forest-800);">6-digit PIN</span>
-              <div class="pin-box-container" id="admin-pin-container" style="gap: 8px; margin-bottom: 0;">
-                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" autofocus />
-                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
-                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
-                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
-                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
-                 <input type="password" class="pin-box" maxlength="1" inputmode="numeric" placeholder="." autocomplete="off" style="width: 46px; height: 54px; font-size: 26px; font-family: 'Courier New', Courier, monospace;" />
+              <div class="pin-box-container" id="admin-pin-container">
+                 <input type="password" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
+                 <input type="password" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
+                 <input type="password" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
+                 <input type="password" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
+                 <input type="password" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
+                 <input type="password" class="pin-box" maxlength="1" pattern="[0-9]*" inputmode="numeric" autocomplete="off" />
               </div>
-            </label>
-            <button class="btn btn-dark btn-large" type="submit" style="width: 100%; margin-top: 8px;"><i class="ph-bold ph-lock-key"></i> Unlock workspace</button>
+              
+              <div id="pin-loading-indicator" style="display: none; height: 52px; align-items: center; justify-content: center; color: var(--forest-900); font-weight: 800; font-size: 16px; margin-bottom: 16px; background: var(--sage-100); border-radius: 12px;">
+                 <i class="ph-bold ph-spinner-gap ph-spin" style="margin-right: 8px;"></i> Verifying...
+              </div>
         `}
           <button class="btn btn-quiet" id="admin-back" type="button" style="width: 100%; margin-top: 8px;"><i class="ph-bold ph-arrow-left"></i> Return to POS</button>
           <div class="access-status" id="admin-status" style="text-align: center; margin-top: 10px; font-weight: 700; color: var(--forest-700);"></div>
@@ -325,7 +327,10 @@ export async function renderAdminLock({ mount, onUnlocked }) {
 
       isProcessing = true;
       currentInputs.forEach(i => i.disabled = true);
-      status.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> ${!hasPin ? "Securing Workspace…" : "Verifying PIN…"}`;
+      
+      const loader = mount.querySelector("#pin-loading-indicator");
+      if (loader) loader.style.display = "flex";
+      else status.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> ${!hasPin ? "Securing Workspace…" : "Verifying PIN…"}`;
       
       const submitBtn = form.querySelector("button[type='submit']");
       if(submitBtn) submitBtn.disabled = true;
@@ -345,6 +350,9 @@ export async function renderAdminLock({ mount, onUnlocked }) {
       } catch (error) {
           if(submitBtn) submitBtn.disabled = false;
           status.textContent = "";
+          const loader = mount.querySelector("#pin-loading-indicator");
+          if (loader) loader.style.display = "none";
+          
           if (errorMsg) {
               errorMsg.textContent = !hasPin ? "Setup Failed: " + error.message : "Access Denied: " + error.message;
               errorMsg.style.display = "block";

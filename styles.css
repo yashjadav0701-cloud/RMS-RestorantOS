@@ -1279,15 +1279,24 @@ html, body {
   animation: icon-spin-anim 0.75s linear infinite !important;
 }
 
+/* Redesigned to act as a sleek, invisible Amazon-style click shield globally */
 .full-page-blocker {
   position: fixed !important;
   inset: 0 !important;
-  z-index: 99999 !important; /* Highest priority to cover everything */
-  background: rgba(18, 34, 22, 0.15) !important;
-  backdrop-filter: blur(2px) !important;
-  -webkit-backdrop-filter: blur(2px) !important;
+  z-index: 99999 !important; 
+  background: transparent !important; /* No more dark overlays or blurs */
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
   cursor: wait !important;
   display: block !important;
+}
+
+/* Utility class to instantly dim and deactivate ANY container like Amazon */
+.amazon-loading-state {
+  opacity: 0.4 !important;
+  pointer-events: none !important;
+  transition: opacity 0.15s ease !important;
+  user-select: none !important;
 }
 
 /* --- Search Overlay Perfect Positioning --- */
@@ -1565,42 +1574,41 @@ html, body {
 }
 
 /* =========================================
-   YOUTUBE-STYLE PREMIUM NAVIGATION BAR
+   YOUTUBE-STYLE PREMIUM NAVIGATION BAR (LIGHT DOCK)
    ========================================= */
 nav#admin-section-nav.admin-section-nav {
   position: fixed !important;
   bottom: 0 !important;
-  left: 50% !important; /* Centers the dock */
-  transform: translateX(-50%) !important; /* Perfect centering alignment */
+  left: 50% !important;
+  transform: translateX(-50%) !important;
   width: 100% !important;
-  max-width: 560px !important; /* Caps the width so it doesn't stretch on PC */
-  height: 58px !important; /* Slimmer, compact height */
-  background: rgba(252, 252, 249, 0.95) !important; /* Premium Creamy Glass */
+  max-width: 560px !important;
+  height: 58px !important;
+  background: rgba(255, 255, 255, 0.96) !important; /* Pristine White Glass */
   backdrop-filter: blur(16px) !important;
   -webkit-backdrop-filter: blur(16px) !important;
-  border-top: 1px solid rgba(0,0,0,0.06) !important;
+  border-top: 1px solid rgba(0, 0, 0, 0.12) !important; /* Stronger edge definition */
   border-radius: 0 !important;
   padding: 0 8px env(safe-area-inset-bottom) 8px !important;
   display: flex !important;
   align-items: center !important;
   justify-content: space-around !important; 
-  z-index: 120 !important; /* Neatly layers beneath the 2000 Modal Backdrop */
-  box-shadow: 0 -4px 24px rgba(18, 34, 22, 0.04) !important; 
+  z-index: 120 !important;
+  box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.08) !important; /* Deep ambient glow */
 }
 
-/* Enhances the desktop/tablet view into a premium floating dock */
 @media (min-width: 600px) {
   nav#admin-section-nav.admin-section-nav {
     bottom: 16px !important;
     border-radius: 20px !important;
-    border: 1px solid rgba(0,0,0,0.06) !important;
-    box-shadow: 0 12px 32px rgba(18, 34, 22, 0.08) !important; 
+    border: 1px solid rgba(0, 0, 0, 0.16) !important; /* Distinct dark outline */
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.08), inset 0 1px 0 rgba(255,255,255,1) !important; /* Outer shadow + Inner bright rim */
   }
 }
 
 nav#admin-section-nav.admin-section-nav button {
   display: flex !important;
-  flex-direction: column !important; /* Stack icon and text like YouTube */
+  flex-direction: column !important;
   align-items: center !important;
   justify-content: center !important;
   background: transparent !important;
@@ -1609,18 +1617,18 @@ nav#admin-section-nav.admin-section-nav button {
   flex: 1 !important; 
   padding: 0 !important; 
   margin: 0 !important;
-  gap: 2px !important; /* Tighter gap between icon and text */
+  gap: 2px !important;
   outline: none !important; 
   -webkit-tap-highlight-color: transparent !important; 
   transition: none !important;
-  cursor: pointer !important; /* The Magic Fix: Shows the hand/finger cursor on hover */
+  cursor: pointer !important;
 }
 
-/* Base Inactive State (Olive Green, Outlined) */
+/* Base Inactive State (Soft Forest Green) */
 nav#admin-section-nav.admin-section-nav button i {
-  font-family: "Phosphor", sans-serif !important; /* Enforces outline style */
-  font-size: 28px !important; /* Noticeably larger icons */
-  color: var(--forest-600) !important; /* Olive Green */
+  font-family: "Phosphor", sans-serif !important;
+  font-size: 28px !important;
+  color: var(--forest-600) !important; 
   transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.25s ease !important;
   font-weight: normal !important; 
   margin: 0 !important;
@@ -1628,25 +1636,25 @@ nav#admin-section-nav.admin-section-nav button i {
 
 nav#admin-section-nav.admin-section-nav button span {
   display: block !important;
-  font-size: 11px !important; /* Bumped slightly to match the larger icons */
+  font-size: 11px !important;
   font-weight: 600 !important;
   color: var(--forest-600) !important;
   transition: color 0.25s ease, font-weight 0.25s ease !important;
 }
 
-/* Active Focus State (No Pill + YouTube Solid Fill Icon) */
+/* Active Focus State (Deep Forest Bold) */
 nav#admin-section-nav.admin-section-nav button.active {
-  background: transparent !important; /* Completely removes the container pill */
+  background: transparent !important;
   border-radius: 0 !important;
   height: 100% !important; 
   margin: 0 !important;
 }
 
 nav#admin-section-nav.admin-section-nav button.active i {
-  font-family: "Phosphor-Solid", "Phosphor Fill", "Phosphor" !important; /* THE YOUTUBE MAGIC: Forces the custom Solid font we injected */
-  color: var(--forest-950) !important; /* Dark, highly visible contrast */
+  font-family: "Phosphor-Solid", "Phosphor Fill", "Phosphor" !important;
+  color: var(--forest-950) !important; 
   font-size: 28px !important; 
-  transform: scale(1.15) translateY(-2px) !important; /* More pronounced pop animation without the pill */
+  transform: scale(1.15) translateY(-2px) !important;
 }
 
 nav#admin-section-nav.admin-section-nav button.active span {
@@ -1804,72 +1812,81 @@ nav#admin-section-nav.admin-section-nav button.active span {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   background: var(--sage-100);
   overflow: hidden;
-  border: none; /* Border completely removed */
-  box-shadow: 0 2px 8px rgba(0,0,0,0.04); /* Soft premium shadow replaces the border */
-  transition: width 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.5s, box-shadow 0.5s;
+  border: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  /* GPU Acceleration & iOS Spring Curve */
+  transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.4s ease, box-shadow 0.4s ease;
   position: relative;
+  will-change: width, background-color, box-shadow;
+  transform: translateZ(0); 
 }
 
 .premium-qty-wrapper.is-active {
-  width: 96px;
+  width: 76px;
   background: var(--paper);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.06); /* Slightly elevated when expanded */
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
 }
 
 .premium-qty-btn {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   background: transparent;
   color: var(--forest-900);
   flex-shrink: 0;
-  transition: background 0.2s ease, color 0.2s ease;
+  transition: background-color 0.2s ease, color 0.2s ease;
   border-radius: 0;
   z-index: 2;
   cursor: pointer;
+}
+
+.premium-qty-btn i {
+  font-size: 14px !important;
 }
 
 .premium-qty-value {
   position: absolute;
   left: 0;
   top: 0;
-  width: 100%; /* Spans the entire 96px wrapper to guarantee absolute center */
+  width: 100%; 
   height: 100%;
   display: flex;
   align-items: center;
-  justify-content: center; /* Mathematically centers the digit */
-  font-size: 1 rem; 
-  font-weight: 700;
+  justify-content: center; 
+  font-size: 0.85rem; 
+  font-weight: 800;
   color: var(--forest-950);
   opacity: 0;
-  transform: translateX(12px); 
-  transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transform: translateX(8px); 
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.4s ease;
   user-select: none;
   z-index: 1;
-  pointer-events: none; /* Prevents the invisible full-width box from blocking button clicks */
+  pointer-events: none;
+  will-change: transform, opacity;
 }
 
 .premium-qty-wrapper.is-active .premium-qty-value {
   opacity: 1;
-  transform: translateX(0); /* Glides into perfect center */
+  transform: translateX(0);
 }
 
 .dec-btn {
   position: absolute;
   left: 0;
-  transform: translateX(16px); /* Starts hidden behind expanding right edge */
+  transform: translateX(12px);
   opacity: 0;
-  transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+  will-change: transform, opacity;
 }
 
 .premium-qty-wrapper.is-active .dec-btn {
-  transform: translateX(0); /* Glides to far left edge smoothly */
+  transform: translateX(0);
   opacity: 1;
   background: var(--forest-900);
   color: #fff;
@@ -1890,11 +1907,11 @@ nav#admin-section-nav.admin-section-nav button.active span {
 }
 
 .qty-pulse {
-  animation: premium-pulse 300ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: premium-pulse 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 @keyframes premium-pulse {
   0% { transform: scale(1); }
-  50% { transform: scale(1.06); }
+  40% { transform: scale(1.12); }
   100% { transform: scale(1); }
 }
 
@@ -3096,4 +3113,58 @@ h3 {
 @keyframes premium-radar-sweep {
     0% { transform: scale(0.6); opacity: 1; border-width: 1.5px; }
     100% { transform: scale(2.4); opacity: 0; border-width: 0px; }
+}
+
+/* =========================================
+   OCCUPIED TABLE ROW & MANAGE BUTTON STYLING
+   ========================================= */
+.table-occupied-row {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 16px 20px !important;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.12) !important;
+  background: linear-gradient(135deg, rgba(238, 242, 255, 0.85) 0%, rgba(224, 231, 255, 0.45) 100%) !important;
+  transition: background 0.2s ease !important;
+}
+
+.table-occupied-row:hover {
+  background: linear-gradient(135deg, rgba(224, 231, 255, 1) 0%, rgba(199, 210, 254, 0.65) 100%) !important;
+}
+
+.manage-active-table-btn {
+  background: var(--forest-950, #122216) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 14px !important;
+  padding: 0 16px !important;
+  height: 40px !important;
+  font-size: 13.5px !important;
+  font-weight: 800 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 12px rgba(18, 34, 22, 0.15) !important;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  outline: none !important;
+  -webkit-tap-highlight-color: transparent !important;
+}
+
+.manage-active-table-btn:hover {
+  background: var(--forest-900, #1b3221) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 20px rgba(18, 34, 22, 0.25) !important;
+}
+
+.manage-active-table-btn:active {
+  transform: translateY(0) scale(0.97) !important;
+}
+
+.manage-active-table-btn i {
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.manage-active-table-btn:hover i {
+  transform: translateX(3px) !important;
 }

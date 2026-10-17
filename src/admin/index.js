@@ -10,7 +10,8 @@ import {
   money,
   mountNavigation,
   openAppModal,
-  showToast
+  showToast,
+  openUniversalReceipt
 } from "../components/navigation.js";
 
 const DISH_IMAGE_BUCKET = "dish-images";
@@ -1066,163 +1067,14 @@ async function renderAdminWorkspace(mount) {
   }
 
   function showAdminReceiptPreview(order) {
-    let tableString = "Takeaway";
-
-    if (order.order_type === "dine_in" && order.table_id) {
-      const table = tables.find(item => item.id === order.table_id);
-      if (table) tableString = `Dine-in · Table ${table.table_no}`;
-    }
-
-    const date = new Date(order.created_at).toLocaleString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit"
-    });
-
-    const receiptHTML = `
-      <article class="thermal-receipt" id="thermal-receipt-content">
-        <header class="thermal-head">
-          ${window.__ACTIVE_TENANT__?.icon_url
-            ? `<img class="thermal-logo" src="${versionedAsset(window.__ACTIVE_TENANT__.icon_url)}" alt="Restaurant logo">`
-            : ""}
-          <h1>${escapeHtml(settings.restaurant_name)}</h1>
-          ${settings.restaurant_address ? `<p>${escapeHtml(settings.restaurant_address).replace(/\n/g, "<br>")}</p>` : ""}
-          ${settings.gst_number ? `<p><strong>GSTIN:</strong> ${escapeHtml(settings.gst_number)}</p>` : ""}
-        </header>
-
-        <div class="thermal-meta">
-          <div><span>Order:</span> <strong>#${escapeHtml(order.order_number)}</strong></div>
-          <div><span>Date:</span> <strong>${date}</strong></div>
-          <div><span>Type:</span> <strong>${escapeHtml(tableString)}</strong></div>
-        </div>
-
-        <table class="thermal-items-table">
-          <thead>
-            <tr>
-              <th style="text-align: left;">Item</th>
-              <th style="text-align: center;">Qty</th>
-              <th style="text-align: right;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${(order.order_items || []).map(item => `
-              <tr>
-                <td style="text-align: left;">${escapeHtml(item.name_snapshot)}<br><small>${money(item.unit_price, settings.currency_symbol)}</small></td>
-                <td style="text-align: center;">${item.quantity}</td>
-                <td style="text-align: right;">${money(Number(item.unit_price) * Number(item.quantity), settings.currency_symbol)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-
-        <div class="thermal-totals-wrap">
-          <div class="thermal-line"><span>Subtotal</span><strong>${money(order.subtotal, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line"><span>CGST</span><strong>${money(order.cgst, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line"><span>SGST</span><strong>${money(order.sgst, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line"><span>Rounding</span><strong>${money(order.rounding, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line thermal-grand"><span>GRAND TOTAL</span><strong>${money(order.grand_total, settings.currency_symbol)}</strong></div>
-        </div>
-
-        ${settings.upi_id ? `
-          <div class="thermal-payment-block">
-            <div class="thermal-qr" id="thermal-upi"></div>
-            <div class="thermal-upi-note"><strong>Scan to pay</strong><br>Supported by all UPI apps</div>
-          </div>
-        ` : ""}
-
-        <footer class="thermal-foot">
-          <p>${escapeHtml(settings.receipt_footer || "Thank you for dining with us!")}</p>
-          <div class="thermal-software-tag">Powered by Table Forge System</div>
-        </footer>
-      </article>
-    `;
-
     const isActiveBill = Boolean(
       order.dining_sessions &&
       ["bill_requested", "bill_ready"].includes(order.dining_sessions.status)
     );
 
-    const actionsList = [
-      {
-        label: "Save PDF",
-        icon: "ph-bold ph-download-simple",
-        className: "btn-quiet",
-        style: "color: var(--forest-950); font-weight: 900;",
-        onClick: async ({ root, button }) => {
-          const element = root.querySelector("#thermal-receipt-content");
-          if (!element) {
-            showToast("Could not save PDF", "The receipt preview is unavailable.", "error");
-            return;
-          }
-
-          button.disabled = true;
-          const originalHTML = button.innerHTML;
-          button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Saving...`;
-
-          const oldShadow = element.style.boxShadow;
-          const oldMargin = element.style.margin;
-
-          try {
-            if (!window.html2pdf) {
-              await new Promise((resolve, reject) => {
-                const script = document.createElement("script");
-                script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-                script.onload = resolve;
-                script.onerror = () => reject(new Error("The PDF library could not be loaded."));
-                document.head.appendChild(script);
-              });
-            }
-
-            element.style.boxShadow = "none";
-            element.style.margin = "0";
-
-            const heightInMM = (element.getBoundingClientRect().height * 0.264583) + 1;
-
-            await window.html2pdf()
-              .set({
-                margin: 0,
-                filename: `${(settings.restaurant_name || "Bill").replace(/\s+/g, "_")}_order_${order.order_number}.pdf`,
-                image: { type: "jpeg", quality: 1 },
-                html2canvas: { scale: 6, useCORS: true }, // Ultra-HD Scale 6 configuration
-                jsPDF: { unit: "mm", format: [80, heightInMM], orientation: "portrait" }
-              })
-              .from(element)
-              .save();
-          } catch (error) {
-            console.error("PDF generation failed:", error);
-            showToast("Could not save PDF", error.message || "Please try again.", "error");
-          } finally {
-            element.style.boxShadow = oldShadow;
-            element.style.margin = oldMargin;
-            button.disabled = false;
-            button.innerHTML = originalHTML;
-          }
-        }
-      },
-      {
-        label: "Print Bill",
-        icon: "ph-bold ph-printer",
-        className: "btn-primary",
-        style: "background: var(--forest-950); border-color: var(--forest-950); font-weight: 900;",
-        onClick: ({ root }) => {
-          const receipt = root.querySelector("#thermal-receipt-content");
-          const printHost = document.querySelector("#receipt-print-host");
-
-          if (!receipt || !printHost) {
-            showToast("Could not print", "The receipt preview is unavailable.", "error");
-            return;
-          }
-
-          printHost.innerHTML = receipt.outerHTML;
-          window.print();
-        }
-      }
-    ];
-
+    const extraActions = [];
     if (isActiveBill) {
-      actionsList.push({
+      extraActions.push({
         label: "Paid",
         icon: "ph-bold ph-check-circle",
         className: "btn-primary",
@@ -1230,7 +1082,7 @@ async function renderAdminWorkspace(mount) {
         onClick: async ({ close, button }) => {
           const originalHTML = button.innerHTML;
           button.disabled = true;
-          button.innerHTML = `<i class="ph-bold ph-spinner-gap ph-spin"></i> Paid...`;
+          button.innerHTML = '<i class="ph-bold ph-spinner-gap ph-spin"></i> Paid...';
 
           try {
             const { error } = await supabase.rpc("complete_session_payment", {
@@ -1252,89 +1104,16 @@ async function renderAdminWorkspace(mount) {
       });
     }
 
-    const modal = openAppModal({
-      title: `Order #${order.order_number} Bill`,
-      subtitle: isActiveBill
+    openUniversalReceipt({
+      order,
+      settings,
+      tables,
+      modalTitle: "Order #" + order.order_number + " Bill",
+      modalSubtitle: isActiveBill
         ? "Print the bill, collect cash in person, then confirm receipt to close the table."
         : "View, save, or reprint this bill.",
-      body: `<div class="receipt-preview-container">${receiptHTML}</div>`,
-      actions: actionsList
+      extraActions
     });
-
-    // 🔗 DYNAMIC UPI QR INJECTION: Safely loads the library and renders the perfect UPI string
-    if (settings.upi_id) {
-        const renderQR = () => {
-            setTimeout(() => {
-                const qrNode = modal.root.querySelector("#thermal-upi");
-                if (qrNode) {
-                    qrNode.innerHTML = "";
-                    
-                    // 1. SANITIZATION: Forcefully strip zero-width spaces and invalid hidden characters
-                    const rawUpi = settings.upi_id.replace(/[^a-zA-Z0-9.\-@]/g, '');
-                    
-                    // 2. NAME CLEANUP: Strip weird symbols from the restaurant name
-                    const rawName = (settings.restaurant_name || "Restaurant").replace(/[^a-zA-Z0-9\s]/g, '').trim();
-                    
-                    // 3. THE '#' FIX: Completely remove the '#' symbol to prevent URI fragment corruption in banking apps
-                    const rawNote = `Bill ${order.order_number}`;
-                    
-                    const am = Number(order.grand_total).toFixed(2);
-                    
-                    // Encode spaces to %20 cleanly without breaking the core structure
-                    const upiString = encodeURI(`upi://pay?pa=${rawUpi}&pn=${rawName}&am=${am}&cu=INR&tn=${rawNote}`);
-                    
-                    // Ensure the node has relative positioning to hold the center logo
-                    qrNode.style.position = "relative";
-                    qrNode.style.display = "inline-block";
-                    
-                    new QRCode(qrNode, { 
-                        text: upiString, 
-                        width: 160, 
-                        height: 160, 
-                        // CRITICAL: Must use Level H (30% redundancy) to allow a logo in the center without breaking scans!
-                        correctLevel: QRCode.CorrectLevel.H 
-                    });
-
-                    // 💎 PREMIUM UPGRADE: Inject the Restaurant Icon perfectly into the center
-                    const iconUrl = window.__ACTIVE_TENANT__?.icon_url;
-                    if (iconUrl) {
-                        const logoImg = document.createElement("img");
-                        logoImg.src = versionedAsset(iconUrl);
-                        logoImg.style.position = "absolute";
-                        logoImg.style.top = "50%";
-                        logoImg.style.left = "50%";
-                        logoImg.style.transform = "translate(-50%, -50%)";
-                        
-                        // CRITICAL FIX: The logo must be exactly 20-25% of the total QR size to allow scanning
-                        logoImg.style.width = "36px"; 
-                        logoImg.style.height = "36px";
-                        logoImg.style.minWidth = "36px";
-                        logoImg.style.minHeight = "36px";
-                        logoImg.style.maxWidth = "36px";
-                        logoImg.style.maxHeight = "36px";
-                        
-                        logoImg.style.borderRadius = "8px";
-                        logoImg.style.border = "3px solid #ffffff";
-                        logoImg.style.backgroundColor = "#ffffff";
-                        logoImg.style.objectFit = "cover";
-                        logoImg.style.boxShadow = "0 2px 8px rgba(0,0,0,0.15)";
-                        logoImg.style.zIndex = "5"; // Ensure it sits strictly on top of the canvas
-                        
-                        qrNode.appendChild(logoImg);
-                    }
-                }
-            }, 50);
-        };
-
-        if (globalThis.QRCode) {
-            renderQR();
-        } else {
-            const script = document.createElement("script");
-            script.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
-            script.onload = renderQR;
-            document.head.appendChild(script);
-        }
-    }
   }
 
   
@@ -2066,17 +1845,18 @@ async function renderAdminWorkspace(mount) {
   }
 
   async function openAdminTableManager(table, session) {
-    // 🧠 GHOST DOT FIX: Instantly mark this session as seen and wipe local alerts
+    // Clear temporary green activity alert for this table
     if (window.__tableAlerts) delete window.__tableAlerts[table.id];
     if (window.clearTableAlert) window.clearTableAlert(table.id);
     
-    if (session && session.id) {
+    // CRITICAL: Only mark seen_sessions if the bill was ALREADY requested when opening the manager.
+    // Otherwise, serving items on an 'open' table would suppress a future Golden Bill Notification!
+    if (session && session.id && session.status === "bill_requested") {
         const seenSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
         seenSessions.add(session.id);
         localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...seenSessions]));
     }
     
-    // Force the UI to evaluate the new clean memory state and hide the dot
     evaluateGlobalAlerts();
 
     const modal = openAppModal({
@@ -2596,7 +2376,17 @@ async function renderAdminWorkspace(mount) {
 
         host.querySelector("#admin-view-bill").addEventListener("click", () => {
            let flatItems = []; displayRounds.forEach(r => r.items.forEach(i => flatItems.push({ name_snapshot: i.name, unit_price: i.price, quantity: i.quantity })));
-           showAdminReceiptPreview({ ...latestOrder, session_id: session.id, order_items: flatItems, subtotal, cgst, sgst, rounding, grand_total: grandTotal });
+           showAdminReceiptPreview({
+             ...latestOrder,
+             session_id: session.id,
+             dining_sessions: { status: session.status, table_id: table.id },
+             order_items: flatItems,
+             subtotal,
+             cgst,
+             sgst,
+             rounding,
+             grand_total: grandTotal
+           });
         });
 
         host.querySelector("#admin-close-table").addEventListener("click", () => {
@@ -3301,11 +3091,13 @@ async function renderAdminWorkspace(mount) {
     });
   }
 
-  // Listen for the custom inbox event triggered by navigation.js
+  // Listen for the custom inbox event triggered by navigation.js (ff-admin-alerts broadcast channel)
   const adminAlertHandler = async () => {
     setTimeout(async () => {
-       if (section === "overview") await reload();
-    }, 400);
+       if (section === "overview" || section === "tables" || section === "orders") {
+         await reload();
+       }
+    }, 300);
   };
   window.addEventListener("ff_admin_alert_received", adminAlertHandler);
 

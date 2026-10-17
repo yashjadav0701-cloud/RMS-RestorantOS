@@ -1,7 +1,7 @@
 import { supabase } from "../core/supabase.js";
 import { DEFAULT_SETTINGS, versionedAsset } from "../core/config.js";
 import { createPOSState } from "../core/posState.js";
-import { escapeHtml, money, mountNavigation, openAppModal, showToast } from "../components/navigation.js";
+import { escapeHtml, money, mountNavigation, openAppModal, showToast, openUniversalReceipt } from "../components/navigation.js";
 
 // Ensure global CSS animation is injected safely to avoid browser blocking
 const ensureGlobalPulse = () => {
@@ -89,7 +89,7 @@ export async function render({ mount }) {
   const [settingsResult, productsResult, tablesResult, cuisinesResult] = await Promise.all([
     supabase
       .from("app_settings")
-      .select("restaurant_id, restaurant_name, restaurant_address, gst_number, cgst_rate, sgst_rate, currency_symbol, receipt_footer")
+      .select("restaurant_id, restaurant_name, restaurant_address, gst_number, cgst_rate, sgst_rate, currency_symbol, receipt_footer, upi_id")
       .eq("restaurant_id", activeTenantId)
       .maybeSingle(),
     supabase.from("products").select("*").eq("restaurant_id", activeTenantId).eq("is_active", true).order("sort_order", { ascending: true }).order("name", { ascending: true }),
@@ -430,15 +430,11 @@ export async function render({ mount }) {
                     
                     e.target.value = e.target.value.replace(/[^0-9]/g, '');
                     
-                    lockIconContainer.className = "premium-squircle sq-blue anim-float";
-                    lockIcon.className = "ph-bold ph-lock-key";
-                    errorMsg.style.display = "none";
-                    promptMsg.style.opacity = "1";
-
                     if (e.target.value.length === 1) {
                         if (index < inputElements.length - 1) {
                             inputElements[index + 1].focus();
                         } else {
+                            // Automatically trigger submission on the 6th digit!
                             submitPin(inputElements);
                         }
                     }
@@ -692,17 +688,17 @@ export async function render({ mount }) {
   searchInput.addEventListener("input", event => { searchTerm = event.target.value.trim().toLowerCase(); renderProducts(); });
   
   if (isCustomerMode) {
-    mount.querySelector("#customer-live-tab").addEventListener("click", openLiveTabDashboard);
+    mount.querySelector("#customer-live-tab").addEventListener("click", () => openLiveTabDashboard());
   } else {
     state.setOrderType("dine_in");
   }
 
   mount.querySelector("#pos-next").addEventListener("click", openReview);
 
-  async function openLiveTabDashboard() {
-    const tableId = isCustomerMode
+  async function openLiveTabDashboard(explicitTableId = null) {
+    const tableId = explicitTableId || (isCustomerMode
       ? currentTableObj?.id
-      : state.getState().tableId;
+      : state.getState().tableId);
 
     if (!tableId) return;
 
@@ -760,7 +756,7 @@ export async function render({ mount }) {
           .select("id, status")
           .eq("table_id", tableId)
           .eq("restaurant_id", activeTenantId)
-          .in("status", ["open", "bill_requested", "bill_ready"])
+          .neq("status", "closed")
           .maybeSingle();
 
         if (error) throw error;
@@ -956,20 +952,48 @@ export async function render({ mount }) {
       });
 
       if (!isCustomerMode) {
+        // Amazon-style seamless context switch (dims the workspace, disables clicks)
+        const triggerContextSwitch = (callback) => {
+            const workspace = mount.querySelector("#pos-dynamic-area") || mount;
+            
+            // Deactivate the page visually
+            workspace.style.transition = "opacity 0.15s ease";
+            workspace.style.opacity = "0.4";
+            workspace.style.pointerEvents = "none";
+            document.body.style.cursor = "wait";
+
+            // Brief delay to make the state-change feel tactile
+            setTimeout(() => {
+              callback();
+              
+              // Reactivate the page
+              workspace.style.opacity = "1";
+              workspace.style.pointerEvents = "auto";
+              document.body.style.cursor = "default";
+              
+              setTimeout(() => { workspace.style.transition = ""; }, 150);
+            }, 250); 
+        };
+
         const tableWrapBtn = area.querySelector("#pos-table-wrap");
         tableWrapBtn?.addEventListener("click", () => {
           if (state.getState().orderType === "takeaway") return;
-          promptTableSelection(() => {
-            renderProducts();
+          promptTableSelection((selectedTable) => {
+            // Trigger animation only if a free table was selected (Occupied tables jump to the Live Tab directly)
+            if (selectedTable) triggerContextSwitch(() => renderProducts());
           });
         });
 
         area.querySelectorAll("[data-order-type]").forEach(button => {
           button.addEventListener("click", () => {
             const oType = button.dataset.orderType;
-            state.setOrderType(oType);
-            if (oType === "takeaway") state.setTable(null);
-            renderProducts(); 
+            if (state.getState().orderType === oType) return; // Prevent animation if already active
+            
+            triggerContextSwitch(() => {
+              state.setOrderType(oType);
+              if (oType === "takeaway") state.setTable(null);
+              renderProducts(); 
+            });
           });
         });
       }
@@ -981,9 +1005,10 @@ export async function render({ mount }) {
     
     let html = ``;
     if (!searchTerm) {
+      const activeTable = state.getState().orderType === 'dine_in' ? tables.find(t => t.id === state.getState().tableId) : null;
       html += `
         <div id="parity-unified-header">
-          <div id="mega-dropdown-wrap" class="dropdown-anchor-wrap" style="display: flex; justify-content: flex-start; position: relative;">
+          <div id="mega-dropdown-wrap" class="dropdown-anchor-wrap" style="flex: 1; display: flex; justify-content: flex-start; position: relative;">
             <button id="cuisine-main-toggle" class="cuisine-center-toggle">
               <span>${escapeHtml(activeCuisine)}</span>
               <i class="ph-bold ph-caret-down" style="font-size: 1.1rem; transition: transform 0.3s ease;"></i>
@@ -1003,7 +1028,16 @@ export async function render({ mount }) {
             </div>
           </div>
 
-          <div id="subcat-dropdown-wrap" class="dropdown-anchor-wrap" style="display: flex; justify-content: flex-end; position: relative;">
+          <div style="flex: 1; display: flex; justify-content: center; align-items: center; pointer-events: none;">
+             ${activeTable ? `
+               <div style="display: inline-flex; align-items: center; gap: 6px; background: #ffffff; padding: 5px 14px; border-radius: 99px; border: 1px solid rgba(0,0,0,0.06); box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
+                 <i class="ph-bold ph-armchair" style="color: var(--forest-600); font-size: 14px;"></i>
+                 <span style="font-size: 11px; font-weight: 900; color: var(--forest-950); text-transform: uppercase; letter-spacing: 0.08em; padding-top: 1px;">Table ${escapeHtml(activeTable.table_no)}</span>
+               </div>
+             ` : ''}
+          </div>
+
+          <div id="subcat-dropdown-wrap" class="dropdown-anchor-wrap" style="flex: 1; display: flex; justify-content: flex-end; position: relative;">
             <button id="pos-cat-toggle" class="subcat-right-toggle">
               <span style="max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(activeSubCategory)}</span>
               <i class="ph-bold ph-caret-down" style="color: var(--forest-900); font-size: 1.1rem; transition: transform 0.3s ease;"></i>
@@ -1352,35 +1386,65 @@ export async function render({ mount }) {
   function promptTableSelection(onSelected) {
     const modal = openAppModal({
       title: "Select Table",
-      subtitle: "Assign a table for this dine-in session. Occupied tables are hidden.",
-      body: `<div id="table-selection-host" style="max-height: 50vh; overflow-y: auto; margin: -10px -24px;"><div class="empty-state"><i class="ph ph-spinner-gap ph-spin"></i><span>Finding free tables...</span></div></div>`,
+      subtitle: "Start a new order or manage an active table tab.",
+      body: `<div id="table-selection-host" style="max-height: 65vh; overflow-y: auto; margin: -10px -24px -24px -24px; background: var(--paper); border-bottom-left-radius: 20px; border-bottom-right-radius: 20px;"><div class="empty-state"><i class="ph ph-spinner-gap ph-spin"></i><span>Loading floor plan...</span></div></div>`,
       actions: [{ label: "Cancel", icon: "ph-x", className: "btn-quiet", onClick: (ctx) => ctx.close() }]
     });
 
-    supabase.from("dining_sessions").select("table_id")
-      .in("status", ["open", "bill_requested", "bill_ready"])
+    supabase.from("dining_sessions").select("id, table_id, status")
+      .neq("status", "closed")
       .eq("restaurant_id", activeTenantId)
       .then(({ data: activeSessions }) => {
-        const occupiedIds = new Set((activeSessions || []).map(s => s.table_id));
-        const freeTables = tables.filter(t => !occupiedIds.has(t.id));
+        const occupiedMap = new Map((activeSessions || []).map(s => [s.table_id, s]));
         
         const host = modal.root.querySelector("#table-selection-host");
         if (!host) return;
 
-        host.innerHTML = freeTables.length ? freeTables.map(t => `
-          <button class="btn btn-quiet table-select-btn" data-table-id="${t.id}" style="width: 100%; border-radius: 0; justify-content: flex-start; padding: 18px 24px; font-size: 16px; border-bottom: 1px solid var(--line); transition: background 0.15s;">
-            <i class="ph-bold ph-armchair" style="color: var(--forest-600); margin-right: 14px; font-size: 20px;"></i>
-            <strong style="color: var(--forest-950);">Table ${escapeHtml(t.table_no)}</strong>
-            <span style="margin-left: auto; font-size: 13px; font-weight: 700; color: var(--muted);">${t.capacity} seats</span>
-          </button>
-        `).join("") : `<div class="empty-state"><i class="ph-bold ph-armchair"></i><strong>No free tables</strong><span>All tables are currently occupied.</span></div>`;
+        host.innerHTML = tables.length ? tables.map(t => {
+          const activeSession = occupiedMap.get(t.id);
+          const isOccupied = !!activeSession;
+          const isBillReq = activeSession && activeSession.status !== 'open';
 
+          if (isOccupied) {
+            return `
+              <div class="table-occupied-row">
+                <div style="display: flex; align-items: center; gap: 14px;">
+                  <div style="width: 46px; height: 46px; border-radius: 14px; background: ${isBillReq ? 'var(--gold-100)' : '#e0e7ff'}; color: ${isBillReq ? 'var(--gold-600)' : '#4f46e5'}; display: flex; align-items: center; justify-content: center; flex-shrink: 0; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15);">
+                    <i class="ph-bold ${isBillReq ? 'ph-receipt' : 'ph-users'}" style="font-size: 22px;"></i>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <strong style="color: var(--forest-950); font-size: 15.5px; font-weight: 900;">Table ${escapeHtml(t.table_no)}</strong>
+                    <span style="font-size: 12.5px; color: ${isBillReq ? 'var(--gold-600)' : '#4f46e5'}; font-weight: 800; display: inline-flex; align-items: center; gap: 5px;">
+                      <span style="width: 6px; height: 6px; border-radius: 50%; background: ${isBillReq ? 'var(--gold-500)' : '#4f46e5'}; display: inline-block;"></span>
+                      ${isBillReq ? 'Bill Requested' : 'Occupied · Live Tab'}
+                    </span>
+                  </div>
+                </div>
+                <button class="manage-active-table-btn" data-table-id="${t.id}">
+                  Manage <i class="ph-bold ph-arrow-right"></i>
+                </button>
+              </div>
+            `;
+          } else {
+            return `
+              <button class="btn btn-quiet table-select-btn" data-table-id="${t.id}" style="width: 100%; border-radius: 0; border: none; justify-content: flex-start; padding: 14px 20px; font-size: 15px; border-bottom: 1px solid var(--line); background: transparent; transition: background 0.15s; text-align: left;">
+                <div style="width: 42px; height: 42px; border-radius: 12px; background: var(--sage-100); color: var(--forest-600); display: flex; align-items: center; justify-content: center; margin-right: 14px; flex-shrink: 0;">
+                  <i class="ph-bold ph-armchair" style="font-size: 22px;"></i>
+                </div>
+                <div style="display: flex; flex-direction: column; align-items: flex-start;">
+                  <strong style="color: var(--forest-950);">Table ${escapeHtml(t.table_no)}</strong>
+                  <span style="font-size: 13px; color: var(--muted); font-weight: 600;">Free · ${t.capacity} seats</span>
+                </div>
+              </button>
+            `;
+          }
+        }).join("") : `<div class="empty-state"><i class="ph-bold ph-armchair"></i><strong>No tables configured</strong><span>Please add tables in the Admin dashboard.</span></div>`;
+
+        // 1. FREE TABLE (Start New Round)
         host.querySelectorAll(".table-select-btn").forEach(btn => {
           btn.addEventListener("click", () => {
             const table = tables.find(t => t.id === btn.dataset.tableId) ?? null;
-            
             const savedCartItems = JSON.parse(JSON.stringify(state.getState().items || []));
-            
             state.setTable(table);
             
             if (state.getState().items.length === 0 && savedCartItems.length > 0) {
@@ -1393,6 +1457,30 @@ export async function render({ mount }) {
             onSelected?.(table);
           });
         });
+
+        // 2. OCCUPIED TABLE (Jump to Live Tab)
+        host.querySelectorAll(".manage-active-table-btn").forEach(btn => {
+          btn.addEventListener("click", () => {
+            const table = tables.find(t => t.id === btn.dataset.tableId) ?? null;
+            
+            // Set the table globally so the POS remembers where we are
+            state.setTable(table);
+            
+            // Retain any cart items they built before selecting the table
+            const savedCartItems = JSON.parse(JSON.stringify(state.getState().items || []));
+            if (state.getState().items.length === 0 && savedCartItems.length > 0) {
+                savedCartItems.forEach(item => {
+                    for (let i = 0; i < item.quantity; i++) state.addProduct(item);
+                });
+            }
+
+            modal.close();
+            
+            // Instantly open the Live Tab History for that specific table!
+            openLiveTabDashboard(table.id);
+          });
+        });
+
       })
       .catch(err => {
         console.error(err);
@@ -1554,16 +1642,19 @@ export async function render({ mount }) {
       state.clear();
       closeModal();
 
-      if (isCustomerMode) {
+      // BROADCAST ALL DINE-IN ORDERS TO ADMIN DASHBOARD (Customer & POS Waiter)
+      if (current.orderType === "dine_in" && current.tableId) {
         adminAlertChannel.send({
           type: "broadcast",
           event: "customer_order",
           payload: {
-            tableId: currentTableObj.id,
+            tableId: current.tableId,
             isNew: wasNewOrder
           }
         });
+      }
 
+      if (isCustomerMode) {
         showActiveOrderDashboard({
           order: result,
           settings,
@@ -1753,100 +1844,6 @@ export async function render({ mount }) {
         }
     };
 
-    const finalActionsList = isCustomerMode ? [
-      {
-        label: "Pay at Counter",
-        className: "btn-quiet",
-        style: "flex: 1;",
-        onClick: handleCustomerPaymentRequest
-      }
-    ] : [
-      {
-        label: "Cancel",
-        className: "btn-quiet",
-        onClick: (ctx) => ctx.close()
-      },
-      {
-        label: "Confirm Cash Received",
-        className: "btn-primary",
-        onClick: async (ctx) => {
-          window.__STAFF_MUTED_UNTIL = Date.now() + 3000;
-          ctx.button.disabled = true;
-          const originalHTML = ctx.button.innerHTML;
-          ctx.button.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Recording...`;
-
-          try {
-            const tenantId = window.__ACTIVE_TENANT__?.id;
-
-            if (!tenantId) {
-              throw new Error("The active restaurant could not be verified. Please sign in again.");
-            }
-
-            if (current_state.orderType !== "dine_in") {
-              // Takeaway Payment (Directly updates the order row)
-              const { error: paymentError } = await supabase
-                .from("orders")
-                .update({ status: 'completed', payment_status: 'paid', updated_at: new Date().toISOString() })
-                .eq("id", rootOrder.id)
-                .eq("restaurant_id", tenantId);
-              if (paymentError) throw paymentError;
-            } else {
-              // Dine-In Payment (Cascades through the active session)
-              const sessionId = session_id || rootOrder?.session_id;
-              let payableSessionId = sessionId;
-              if (!payableSessionId) {
-                const { data: session, error: sessionError } = await supabase
-                  .from("dining_sessions")
-                  .select("id, status")
-                  .eq("table_id", current_state.tableId)
-                  .eq("restaurant_id", tenantId)
-                  .in("status", ["open", "bill_requested", "bill_ready"])
-                  .maybeSingle();
-                if (sessionError) throw sessionError;
-                payableSessionId = session?.id;
-              }
-              if (!payableSessionId) throw new Error("No active session was found for this table. Refresh the table before proceeding.");
-
-              const { error: paymentError } = await supabase.rpc("complete_session_payment", {
-                p_session_id: payableSessionId,
-                p_payment_method: "cash"
-              });
-              if (paymentError) throw paymentError;
-            }
-
-            ctx.close();
-            modal.close();
-            delete activeTableOrders[sessionKey];
-
-            const flatItems = [];
-            displayRounds.forEach(round => {
-              round.items.forEach(item => flatItems.push(item));
-            });
-
-            showReceiptPreview({
-              order: {
-                ...rootOrder,
-                order_number: rootOrder?.order_number ?? displayRounds[displayRounds.length - 1]?.order_number ?? "Tab",
-                subtotal: aggregatedBill.subtotal,
-                cgst: aggregatedBill.cgst,
-                sgst: aggregatedBill.sgst,
-                rounding: aggregatedBill.rounding,
-                grand_total: aggregatedBill.grand_total
-              },
-              items: flatItems,
-              settings,
-              current_state
-            });
-          } catch (error) {
-            console.error("Cash payment confirmation failed:", error);
-            showToast("Payment not recorded", error?.message || "Please try again.", "error");
-            ctx.button.disabled = false;
-            ctx.button.innerHTML = originalHTML;
-          }
-        }
-      }
-    ];
-
     // Select pre-authored HTML templates; styling lives in styles.css, structure in index.html.
     const initialDashboardTemplateId = showPrepAnimation
       ? "kitchen-dispatch-template"
@@ -1872,12 +1869,111 @@ export async function render({ mount }) {
 
     const isTakeaway = current_state.orderType === "takeaway";
 
+    // Waiters on the POS never view/print bills directly; they trigger the Admin Golden Notification.
+    const handleStaffBillRequest = async (ctx) => {
+      const button = ctx?.button;
+      const originalHTML = button?.innerHTML;
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i> Notifying Admin...';
+      }
+
+      try {
+        const tableId = current_state.tableId;
+        if (!tableId) {
+          throw new Error("No active table selected for this bill request.");
+        }
+
+        // 1. Execute the SECURITY DEFINER RPC (computes totals & marks session bill_requested)
+        const { error: rpcError } = await supabase.rpc("request_session_bill", {
+          p_table_id: tableId,
+          p_session_token: null
+        });
+
+        if (rpcError) throw rpcError;
+
+        // 2. Ensure this session is removed from seen_sessions so Admin Golden Alert always lights up
+        const sid = session_id || rootOrder?.session_id;
+        if (sid) {
+          const updatedSessions = new Set(JSON.parse(localStorage.getItem("fourflavours.seen_sessions") || "[]"));
+          updatedSessions.delete(sid);
+          localStorage.setItem("fourflavours.seen_sessions", JSON.stringify([...updatedSessions]));
+        }
+
+        // 3. Set local alert badge & broadcast Golden Notification to Admin workspace
+        if (window.setTableAlert) {
+          window.setTableAlert(tableId, "bill_requested", "Bill Requested");
+        }
+        await adminAlertChannel.send({
+          type: "broadcast",
+          event: "customer_bill",
+          payload: { tableId }
+        });
+
+        ctx.close();
+        modal.close();
+        delete activeTableOrders[sessionKey];
+
+        // 4. Reset POS view cleanly back to the floor without aborting network/toast via reload
+        activeCuisine = null;
+        activeSubCategory = "All";
+        searchTerm = "";
+        const searchField = document.querySelector("#pos-search");
+        if (searchField) searchField.value = "";
+        renderProducts();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+
+        showToast("Bill Requested", "The Admin dashboard has been alerted with a golden notification.", "success");
+      } catch (error) {
+        console.error("Staff bill request failed:", error);
+        showToast("Request failed", error?.message || "Please try again.", "error");
+        if (button) {
+          button.disabled = false;
+          button.innerHTML = originalHTML;
+        }
+      }
+    };
+
     const modal = openAppModal({
       title: titleStr, subtitle: isTakeaway ? "Manage this takeaway order." : "Your live table tab.",
       body: liveTabModalBodyHTML,
       actions: [
-        { label: isTakeaway ? "Add Items" : "Keep Ordering", icon: "ph-plus-circle", className: "btn-quiet", onClick: ({ close }) => close() },
-        { label: isCustomerMode ? "Request Bill" : (isTakeaway ? "Generate Bill" : "Complete Order"), icon: "ph-receipt", className: "btn-primary", disabled: true, onClick: ({ close }) => {
+        { 
+          label: isTakeaway ? "Add Items" : "Keep Ordering", 
+          icon: "ph-plus-circle", 
+          className: "btn-quiet", 
+          onClick: ({ close }) => { 
+            close();
+            
+            // Trigger smooth visual page load transition
+            const workspace = mount.querySelector("#pos-dynamic-area") || mount;
+            workspace.style.transition = "opacity 0.05s ease";
+            workspace.style.opacity = "0.4";
+            workspace.style.pointerEvents = "none";
+            document.body.style.cursor = "wait";
+
+            setTimeout(() => {
+              activeCuisine = null;
+              activeSubCategory = "All";
+              searchTerm = "";
+              const searchInput = document.querySelector("#pos-search");
+              if (searchInput) searchInput.value = "";
+              renderProducts();
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+
+              workspace.style.opacity = "1";
+              workspace.style.pointerEvents = "auto";
+              document.body.style.cursor = "default";
+              setTimeout(() => { workspace.style.transition = ""; }, 150);
+            }, 500);
+          } 
+        },
+        { 
+          label: isCustomerMode ? "Request Bill" : (isTakeaway ? "Generate Bill" : "Request Bill from Admin"), 
+          icon: "ph-receipt", 
+          className: "btn-primary", 
+          disabled: true, 
+          onClick: ({ close }) => {
             const formattedTotal = money(aggregatedBill.grand_total, settings.currency_symbol);
             if (isCustomerMode) {
                 openAppModal({
@@ -1887,9 +1983,12 @@ export async function render({ mount }) {
                 });
             } else {
                 openAppModal({
-                  title: "Generate Final Bill?", subtitle: "Confirm you are finished adding items.",
-                  body: `<div class="danger-confirm" style="text-align: center;"><div class="danger-confirm-icon" style="background: var(--sage-200); color: var(--forest-900);"><i class="ph-bold ph-receipt"></i></div><h3>Generate Final Bill?</h3><p>This finalizes the tab.</p></div>`,
-                  actions: finalActionsList
+                  title: "Request Bill from Admin?", subtitle: "This will send an urgent bill request to the cashier's dashboard.",
+                  body: `<div class="danger-confirm" style="text-align: center;"><div class="danger-confirm-icon" style="background: var(--gold-100); color: var(--gold-600);"><i class="ph-bold ph-receipt"></i></div><h3>Notify Cashier?</h3><p>Table total is <strong>${formattedTotal}</strong>.</p></div>`,
+                  actions: [
+                    { label: "Cancel", className: "btn-quiet", onClick: (c) => c.close() },
+                    { label: "Yes, Send Request", className: "btn-primary", style: "background: var(--gold-500); color: var(--forest-950); border-color: var(--gold-500);", onClick: handleStaffBillRequest }
+                  ]
                 });
             }
         }}
@@ -1952,7 +2051,7 @@ export async function render({ mount }) {
               .select("id, status")
               .eq("table_id", current_state.tableId)
               .eq("restaurant_id", activeTenantId)
-              .in("status", ["open", "bill_requested", "bill_ready"])
+              .neq("status", "closed")
               .maybeSingle();
             if (activeSessionError) throw activeSessionError;
             if (!activeSession) {
@@ -2074,7 +2173,7 @@ export async function render({ mount }) {
               primaryBtn.innerHTML = `<i class="ph-bold ph-clock"></i> ${displayRounds.length ? "Items Pending" : "Loading tab…"}`;
           } else {
               primaryBtn.disabled = false;
-              primaryBtn.innerHTML = isCustomerMode ? `<i class="ph-bold ph-receipt"></i> Request Bill` : (isTakeaway ? `<i class="ph-bold ph-receipt"></i> Generate Bill` : `<i class="ph-bold ph-check-circle"></i> Complete Order`);
+              primaryBtn.innerHTML = `<i class="ph-bold ph-receipt"></i> ${isCustomerMode ? "Request Bill" : "Request Bill from Admin"}`;
           }
       }
 
@@ -2132,74 +2231,19 @@ export async function render({ mount }) {
     let tableString = "Takeaway";
     if (current_state && current_state.orderType === "dine_in" && current_state.tableId) {
       const t = tables.find(x => x.id === current_state.tableId);
-      if (t) tableString = `Dine-in · Table ${t.table_no}`;
+      if (t) tableString = "Dine-in · Table " + t.table_no;
     }
 
-    const date = new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-
-    const receiptHTML = `
-      <article class="thermal-receipt" id="thermal-receipt-content">
-        <header class="thermal-head">
-          ${restaurant.icon_url ? `<img class="thermal-logo" src="${versionedAsset(restaurant.icon_url)}" alt="Logo">` : ''}
-          <h1>${escapeHtml(settings.restaurant_name)}</h1>
-          ${settings.restaurant_address ? `<p>${escapeHtml(settings.restaurant_address).replace(/\n/g, '<br>')}</p>` : ''}
-          ${settings.gst_number ? `<p><strong>GSTIN:</strong> ${escapeHtml(settings.gst_number)}</p>` : ''}
-        </header>
-        <div class="thermal-meta">
-          <div><span>Order:</span> <strong>#${escapeHtml(order.order_number)}</strong></div>
-          <div><span>Date:</span> <strong>${date}</strong></div>
-          <div><span>Type:</span> <strong>${escapeHtml(tableString)}</strong></div>
-        </div>
-        <table class="thermal-items-table">
-          <thead>
-            <tr>
-              <th style="text-align: left;">Item</th>
-              <th style="text-align: center;">Qty</th>
-              <th style="text-align: right;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${items.map(i => `
-              <tr>
-                <td style="text-align: left;">${escapeHtml(i.name)}<br><small>${money(i.price, settings.currency_symbol)}</small></td>
-                <td style="text-align: center;">${i.quantity}</td>
-                <td style="text-align: right;">${money(Number(i.price) * Number(i.quantity), settings.currency_symbol)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-        <div class="thermal-totals-wrap">
-          <div class="thermal-line"><span>Subtotal</span><strong>${money(order.subtotal, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line"><span>CGST (${settings.cgst_rate}%)</span><strong>${money(order.cgst, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line"><span>SGST (${settings.sgst_rate}%)</span><strong>${money(order.sgst, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line"><span>Rounding</span><strong>${money(order.rounding, settings.currency_symbol)}</strong></div>
-          <div class="thermal-line thermal-grand"><span>GRAND TOTAL</span><strong>${money(order.grand_total, settings.currency_symbol)}</strong></div>
-        </div>
-        <footer class="thermal-foot">
-          <p>${escapeHtml(settings.receipt_footer || 'Thank you for dining with us!')}</p>
-          <div class="thermal-software-tag">Powered by Table Forge System</div>
-        </footer>
-      </article>
-    `;
-
-    const modal = openAppModal({
-      title: isCustomerMode ? "Your Digital Bill" : `Order #${order.order_number} Confirmed`,
-      subtitle: isCustomerMode ? "Please settle this bill with restaurant staff in person." : "Review the bill before printing.",
-      body: `<div class="receipt-preview-container">${receiptHTML}</div>`,
-      actions: isCustomerMode ? [
-        { label: "Exit", icon: "ph-check", className: "btn-primary", onClick: ({ close }) => { close(); window.location.reload(); } }
-      ] : [
-        { label: "Close", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() },
-        { label: "Print Bill", icon: "ph-printer", className: "btn-primary", onClick: () => {
-            const host = document.querySelector("#receipt-print-host");
-            if (host) {
-              host.innerHTML = modal.root.querySelector("#thermal-receipt-content").outerHTML;
-              window.print();
-            }
-        }}
-      ]
+    openUniversalReceipt({
+      order,
+      items,
+      settings,
+      tables,
+      tableString,
+      isCustomerMode,
+      modalTitle: isCustomerMode ? "Your Digital Bill" : ("Order #" + (order.order_number ?? "Tab") + " Confirmed"),
+      modalSubtitle: isCustomerMode ? "Please settle this bill with restaurant staff in person." : "Review, save, or print the bill."
     });
-
   }
 
   return async () => { 
