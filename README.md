@@ -254,3 +254,8 @@ Observability/error tracking
 
 If the database already has `MASTER_MIGRATION_TABLEFORGE.sql` and `DATE_RANGE_REPORT_PATCH.sql` applied, apply `sql/TABLEFORGE_WORKFLOW_FIX_PATCH.sql` once in Supabase SQL Editor. See `docs/release/WORKFLOW_FIX_PATCH_README.md` for the changed workflows and validation limits. Do not rerun the master migration merely to apply this patch.
 
+
+
+## Latest workflow release
+
+See `docs/release/WORKFLOW_FIX_PATCH_README.md`. The latest incremental patch adds per-restaurant workflow settings, a pre-bill payment-method requirement, and preparation-time inventory deduction when strict inventory is explicitly enabled. Never rerun the master migration for this patch.

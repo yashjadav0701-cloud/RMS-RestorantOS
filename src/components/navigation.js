@@ -212,6 +212,7 @@ export function openUniversalReceipt({
   modalSubtitle = "",
   isCustomerMode = false,
   allowPdf = true,
+  paymentMethod = null,
   extraActions = []
 }) {
   const tenant = window.__ACTIVE_TENANT__ || {};
@@ -293,12 +294,13 @@ export function openUniversalReceipt({
         '<div class="thermal-line"><span>Rounding</span><strong>' + currency + Number(order?.rounding || 0).toFixed(2) + '</strong></div>' +
         '<div class="thermal-line thermal-grand"><span>GRAND TOTAL</span><strong>' + currency + Number(order?.grand_total || 0).toFixed(2) + '</strong></div>' +
       '</div>' +
-      (settings.upi_id ?
+      (settings.upi_id && paymentMethod !== "cash" ?
         '<div class="thermal-payment-block">' +
           '<div class="thermal-qr" id="thermal-upi"></div>' +
           '<div class="thermal-upi-note"><strong>Scan to pay</strong><br>Supported by all UPI apps</div>' +
         '</div>'
       : '') +
+      (paymentMethod ? '<div style="margin-top:8px;text-align:center;font-size:11px;font-weight:800;">Payment method: ' + (paymentMethod === "cash" ? 'CASH' : 'UPI QR') + '</div>' : '') +
       '<footer class="thermal-foot">' +
         '<p>' + escapeHtml(settings.receipt_footer || "Thank you for dining with us!") + '</p>' +
         '<div class="thermal-software-tag">Powered by Table Forge System</div>' +

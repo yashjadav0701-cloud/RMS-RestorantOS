@@ -485,6 +485,14 @@ export async function render({ mount, route }) {
             ${isTakeaway ? "Takeaway bill" : "Dine-in bill request"}
           </div>
 
+          <label class="field" style="display:block;margin-top:12px;">
+            <span>Payment method required before bill generation</span>
+            <select data-cashier-queue-payment-method aria-label="Choose payment method before generating bill" style="width:100%;">
+              <option value="">Choose payment method…</option>
+              <option value="upi_qr">UPI QR</option>
+              <option value="cash">Cash</option>
+            </select>
+          </label>
           <button
             type="button"
             class="btn btn-primary"
@@ -492,7 +500,7 @@ export async function render({ mount, route }) {
             data-order-type="${escapeHtml(orderType)}"
             data-order-id="${escapeHtml(row.order_id || "")}"
             data-session-id="${escapeHtml(row.session_id || "")}"
-            ${canOpenBill ? "" : "disabled"}
+            ${canOpenBill ? "disabled" : "disabled"}
             style="width:100%;justify-content:center;margin-top:12px;"
           >
             <i class="ph-bold ph-receipt"></i>
@@ -503,6 +511,13 @@ export async function render({ mount, route }) {
     }).join("");
 
     const errorNode = mount.querySelector("[data-cashier-queue-error]");
+
+    content.querySelectorAll("[data-cashier-queue-payment-method]").forEach(select => {
+      select.addEventListener("change", () => {
+        const button = select.closest("article")?.querySelector("[data-cashier-generate-bill]");
+        if (button) button.disabled = !["upi_qr", "cash"].includes(select.value);
+      });
+    });
 
     content.querySelectorAll("[data-cashier-generate-bill]").forEach(button => {
       button.addEventListener("click", async () => {
@@ -531,6 +546,11 @@ export async function render({ mount, route }) {
         const orderType = button.dataset.orderType;
         const orderId = button.dataset.orderId || null;
         const sessionId = button.dataset.sessionId || null;
+        const paymentMethod = button.closest("article")?.querySelector("[data-cashier-queue-payment-method]")?.value;
+        if (!["upi_qr", "cash"].includes(paymentMethod)) {
+          if (errorNode) errorNode.textContent = "Choose UPI QR or Cash before generating the bill.";
+          return;
+        }
 
         if (
           (orderType === "takeaway" && !orderId) ||
@@ -618,6 +638,14 @@ export async function render({ mount, route }) {
             "../components/navigation.js"
           );
 
+          const { error: methodError } = await supabase.rpc("set_bill_payment_method", {
+            p_order_id: orderType === "takeaway" ? orderId : null,
+            p_session_id: orderType === "dine_in" ? sessionId : null,
+            p_payment_method: paymentMethod,
+            p_panel_token: access.token
+          });
+          if (methodError) throw methodError;
+
           openUniversalReceipt({
             order: bill.order,
             items: bill.items,
@@ -629,7 +657,8 @@ export async function render({ mount, route }) {
                 : `Dine-in · Table ${bill.table_label ?? ""}`),
             modalTitle: `Bill #${bill.order.order_number ?? ""}`,
             modalSubtitle:
-              "Print the physical bill with its UPI QR. Confirm payment only after the customer has paid.",
+              `Payment method: ${paymentMethod === "cash" ? "Cash" : "UPI QR"}. Confirm payment only after the customer has paid.`,
+            paymentMethod,
             allowPdf: true,
             extraActions: [{
               label: "Confirm payment received",
@@ -642,9 +671,9 @@ export async function render({ mount, route }) {
                   body: `
                     <label class="field">
                       <span>Payment method *</span>
-                      <select data-cashier-payment-method required>
-                        <option value="upi_qr">UPI QR</option>
-                        <option value="cash">Cash</option>
+                      <select data-cashier-payment-method required disabled>
+                        <option value="upi_qr" ${paymentMethod === "upi_qr" ? "selected" : ""}>UPI QR</option>
+                        <option value="cash" ${paymentMethod === "cash" ? "selected" : ""}>Cash</option>
                       </select>
                     </label>
                     <p style="font-size:12px;color:var(--muted);margin-top:12px;">

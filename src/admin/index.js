@@ -2868,10 +2868,11 @@ async function renderAdminWorkspace(
     const extraActions = [];
     if (isBillReady) {
       extraActions.push({
-        label: "Paid",
+        label: "✓",
         icon: "ph-bold ph-check-circle",
-        className: "btn-primary",
-        style: "background: var(--success); border-color: var(--success); font-weight: 900;",
+        className: "btn-primary paid-icon-action",
+        style: "background: var(--success); border-color: var(--success); font-weight: 900; min-width:44px; width:44px; height:40px; padding:0; justify-content:center;",
+
         onClick: ({ close }) => {
           openAppModal({
             title: "Confirm payment",
@@ -3873,6 +3874,7 @@ async function renderAdminWorkspace(
                           <button
                             class="admin-delete-item-btn icon-btn"
                             data-delete-id="${item.id}"
+                            ${item.status === "served" ? "hidden disabled" : ""}
                             title="Remove this dish from the active bill"
                             aria-label="Remove ${escapeHtml(item.name)} from the active bill"
                             style="width:30px;height:30px;border-radius:8px;border:none;background:#fee2e2;color:#ef4444;"
