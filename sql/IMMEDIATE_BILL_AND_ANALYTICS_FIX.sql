@@ -454,9 +454,9 @@ BEGIN
       FROM (
         SELECT
           date_trunc(CASE WHEN p_period_start IS NULL AND p_period_end IS NULL THEN 'month' ELSE 'day' END,
-            paid_at AT TIME ZONE 'Asia/Kolkata') AS bucket,
+            relevant_at AT TIME ZONE 'Asia/Kolkata') AS bucket,
           to_char(date_trunc(CASE WHEN p_period_start IS NULL AND p_period_end IS NULL THEN 'month' ELSE 'day' END,
-            paid_at AT TIME ZONE 'Asia/Kolkata'),
+            relevant_at AT TIME ZONE 'Asia/Kolkata'),
             CASE WHEN p_period_start IS NULL AND p_period_end IS NULL THEN 'Mon YYYY' ELSE 'DD Mon' END) AS label,
           SUM(amount)::numeric AS revenue,
           COUNT(*)::bigint AS bill_count

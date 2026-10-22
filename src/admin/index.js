@@ -1,6 +1,14 @@
 import { supabase } from "../core/supabase.js";
 import { requestPanelSignOut } from "../core/panelSession.js";
-import { createPresetRange, renderDateRangePicker, bindDateRangePicker, DATE_RANGE_STYLES, indiaDateStartISOString, indiaDateAfterISOString } from "../components/dateRangePicker.js";
+import {
+  createPresetRange,
+  renderDateRangePicker,
+  bindDateRangePicker,
+  DATE_RANGE_STYLES,
+  dateRangeLabel,
+  indiaDateStartISOString,
+  indiaDateAfterISOString
+} from "../components/dateRangePicker.js";
 import {
   DEFAULT_SETTINGS,
   versionedAsset,
