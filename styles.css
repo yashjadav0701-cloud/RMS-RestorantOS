@@ -433,16 +433,32 @@ h3{font-size:clamp(1rem,2vw+.8rem,1.25rem)!important}
 }
 
 .thermal-head { text-align: center; margin-bottom: 12px; border-bottom: 1px dashed #000; padding-bottom: 12px; }
-.thermal-logo { width: 64px; max-width: 100%; height: auto; object-fit: contain; margin: 0 auto 10px; display: block; filter: grayscale(100%) contrast(1.2); }
-.thermal-head h1 { 
-    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif !important; 
-    font-size: 16px !important; 
-    font-weight: 800 !important; 
-    text-transform: uppercase !important; 
-    margin: 0 0 4px !important; 
-    letter-spacing: normal !important; 
-    line-height: 1.2 !important; 
-    overflow-wrap: break-word !important; 
+/* Receipts use the square restaurant icon, not the landscape website logo. */
+.thermal-head img.thermal-brand-icon {
+  width: 15mm;
+  height: 15mm;
+  max-width: 15mm;
+  max-height: 15mm;
+  object-fit: contain;
+  object-position: center;
+  padding: 1mm;
+  border: 1px solid #e5e7e2;
+  border-radius: 3mm;
+  background: #fff;
+  margin: 0 auto 5px;
+  display: block;
+  filter: none;
+}
+.thermal-head h1.thermal-brand-title {
+    font-family: "Bebas Neue", "Arial Narrow", Impact, sans-serif !important;
+    font-size: 25px !important;
+    font-weight: 400 !important;
+    text-transform: uppercase !important;
+    margin: 0 0 4px !important;
+    letter-spacing: 1.35px !important;
+    line-height: 1 !important;
+    color: #122216 !important;
+    overflow-wrap: anywhere !important;
 }
 .thermal-head p { margin: 0; font-size: 11px; color: #333; }
 
@@ -930,28 +946,67 @@ h3{font-size:clamp(1rem,2vw+.8rem,1.25rem)!important}
 
 /* The toxic translateY transform has been permanently removed so it doesn't jump over the topbar */
 
-/* --- Perfect 3-Button Modal Layout --- */
+/* Responsive modal actions: no clipped labels or horizontal overflow. */
 .app-modal .modal-actions {
   display: flex !important;
   flex-direction: row !important;
-  flex-wrap: nowrap !important;
-  justify-content: space-between;
+  flex-wrap: wrap !important;
+  align-items: stretch;
+  justify-content: stretch;
   gap: 8px;
+  min-width: 0;
 }
 
 .app-modal .modal-actions button {
-  flex: 1; /* Makes all 3 buttons exactly the same width */
-  padding-left: 4px;
-  padding-right: 4px;
+  flex: 1 1 120px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 42px;
+  padding: 10px 8px;
   font-size: 13px;
+  line-height: 1.25;
   justify-content: center;
-  white-space: nowrap;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-@media (max-width: 400px) {
-  .app-modal .modal-actions button {
-    font-size: 11px; /* Scales text down slightly on very small phones to prevent cutting off */
-    gap: 4px;
+/* On phones, all modal actions use a balanced two-column layout.
+   Four bill actions naturally become a 2 × 2 grid. An unmatched final
+   action spans both columns rather than leaving a cramped half-button. */
+@media (max-width: 520px) {
+  .app-modal .modal-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 8px;
+    padding: 10px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+    min-width: 0;
+  }
+
+  .app-modal .modal-actions button,
+  .app-modal .modal-actions .btn {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    min-height: 44px;
+    height: auto !important;
+    padding: 10px 6px !important;
+    font-size: 12px;
+    line-height: 1.25;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  .app-modal .modal-actions button:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .app-modal .modal-actions button i {
+    flex: 0 0 auto;
+    font-size: 16px !important;
+    margin-right: 3px !important;
   }
 }
 
@@ -2478,6 +2533,37 @@ nav#admin-section-nav.admin-section-nav::after {
 .mini-cuisine-bg { position: absolute; inset: 0; }
 .mini-cuisine-bg img { width: 100%; height: 100%; object-fit: cover; }
 
+/* A real four-image collage for the All cuisines tile. */
+.all-cuisines-collage {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+  overflow: hidden;
+  background: #193b2a;
+}
+.all-cuisine-tile {
+  display: block;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: linear-gradient(135deg, #193b2a, #73936a);
+}
+.all-cuisine-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  transform: scale(1.02);
+}
+.all-cuisine-tile-empty {
+  display: grid;
+  place-items: center;
+  color: rgba(255,255,255,.62);
+}
+.all-cuisine-tile-empty i { font-size: 20px; }
+
 .mini-cuisine-overlay {
   position: absolute; inset: 0;
   background: linear-gradient(to top, rgba(18,34,22,0.95) 0%, rgba(18,34,22,0.2) 60%, transparent 100%);
@@ -3337,3 +3423,227 @@ h3 {
 .manage-active-table-btn:hover i {
   transform: translateX(3px) !important;
 }
+/* Customer menu: independent cuisine/category filters and centered QR-bound table chip. */
+.customer-menu-filters{width:min(calc(100% - 28px),1120px);margin:14px auto 12px;padding:14px 15px 12px;border:1px solid var(--line);border-radius:18px;background:var(--paper);box-shadow:0 6px 22px rgba(25,50,28,.045)}
+.customer-filter-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:11px;color:var(--forest-950);font-size:.94rem;font-weight:900}
+.customer-reset-filters{border:0;background:transparent;color:var(--forest-700);font:inherit;font-size:.69rem;font-weight:800;cursor:pointer;padding:5px 2px}
+.customer-filter-label{margin:0 0 7px;color:var(--muted);font-size:.62rem;font-weight:900;letter-spacing:.09em;text-transform:uppercase}
+.customer-filter-row{display:flex;align-items:center;gap:7px;overflow-x:auto;padding:1px 1px 7px;scrollbar-width:thin;-webkit-overflow-scrolling:touch}
+.customer-filter-chip{flex:0 0 auto;min-height:35px;padding:0 13px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--forest-900);font:inherit;font-size:.7rem;font-weight:800;white-space:nowrap;cursor:pointer;transition:background .16s ease,color .16s ease,border-color .16s ease,transform .16s ease}
+.customer-filter-chip:hover{border-color:var(--forest-500);transform:translateY(-1px)}
+.customer-filter-chip.active{border-color:var(--forest-950);background:var(--forest-950);color:#fff;box-shadow:0 3px 9px rgba(18,34,22,.12)}
+.customer-category-label{margin-top:5px}
+.customer-category-row .customer-filter-chip{min-height:32px;padding-inline:11px;font-size:.66rem}
+.customer-results-context{display:flex;align-items:center;gap:4px;margin-top:4px;color:var(--muted);font-size:.62rem;font-weight:750}
+.customer-results-context i{font-size:15px;color:var(--gold-500)}
+.pos-topbar .pos-brand-center:has(.customer-table-selector){display:flex!important;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;align-items:center;justify-content:center;max-width:36%;}
+.customer-table-selector{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;padding:0 11px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:var(--forest-950);color:#fff;font:inherit;font-size:.68rem;font-weight:900;white-space:nowrap;cursor:pointer;box-shadow:0 3px 12px rgba(18,34,22,.12)}
+.customer-table-selector i{font-size:15px;color:var(--gold-400)}
+@media(max-width:640px){.customer-menu-filters{width:calc(100% - 18px);margin:9px auto 8px;padding:11px 10px 9px;border-radius:15px}.customer-filter-chip{min-height:33px;padding-inline:11px;font-size:.66rem}.customer-category-row .customer-filter-chip{min-height:30px;padding-inline:9px;font-size:.62rem}.pos-topbar .pos-brand-center:has(.customer-table-selector){max-width:31%}.customer-table-selector{gap:4px;min-height:32px;padding:0 7px;font-size:.61rem}.customer-table-selector i{font-size:13px}}
+
+/* TableForge themed payment-method dropdown */
+.tf-payment-field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--forest-950);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.tf-payment-field-label b {
+  color: #a36b18;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.tf-payment-picker {
+  position: relative;
+  width: 100%;
+  z-index: 4;
+}
+
+.tf-payment-trigger {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 50px;
+  padding: 9px 13px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper, #fff);
+  color: var(--forest-950);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+
+.tf-payment-trigger:hover,
+.tf-payment-picker.is-open .tf-payment-trigger {
+  border-color: var(--forest-700);
+  box-shadow: 0 0 0 3px rgba(35, 75, 44, .08);
+}
+
+.tf-payment-selected-icon,
+.tf-payment-option-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
+  background: #edf3e9;
+  color: var(--forest-900);
+  font-size: 17px;
+}
+
+.tf-payment-selected-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.tf-payment-caret {
+  color: var(--muted);
+  transition: transform .18s ease;
+}
+
+.tf-payment-picker.is-open .tf-payment-caret {
+  transform: rotate(180deg);
+}
+
+.tf-payment-options {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--paper, #fff);
+  box-shadow: 0 16px 38px rgba(15, 32, 19, .18);
+  animation: tf-payment-menu-in .15s ease-out;
+}
+
+.tf-payment-options[hidden] {
+  display: none !important;
+}
+
+.tf-payment-options > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 53px;
+  padding: 8px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--forest-950);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tf-payment-options > button:hover,
+.tf-payment-options > button.is-selected {
+  border-color: #dce8d6;
+  background: #f1f6ed;
+}
+
+.tf-payment-options > button > span:nth-child(2) {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+}
+
+.tf-payment-options strong {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.tf-payment-options small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.tf-payment-option-check {
+  color: var(--forest-800);
+  opacity: 0;
+}
+
+.tf-payment-options > button.is-selected .tf-payment-option-check {
+  opacity: 1;
+}
+
+@keyframes tf-payment-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Admin bill discount editor and printed receipt line */
+.tf-admin-discount-form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.tf-admin-discount-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--cream-100, #f7f7f0);
+  color: var(--muted);
+  font-size: 12px;
+}
+.tf-admin-discount-summary strong {
+  color: var(--forest-950);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.tf-admin-discount-preview {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--sage-100, #edf3e9);
+  color: var(--forest-950);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.6;
+}
+.tf-admin-discount-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+.thermal-line.thermal-discount {
+  color: #24633d;
+  font-weight: 800;
+}
+.thermal-line.thermal-discount strong {
+  color: #24633d;
+}
+@media (max-width: 520px) {
+  .tf-admin-discount-form .field input,
+  .tf-admin-discount-form .field select {
+    width: 100%;
+    min-width: 0;
+  }
+}
+

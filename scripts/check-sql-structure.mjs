@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const files = [
   path.join(root, 'sql', 'MASTER_MIGRATION_TABLEFORGE.sql'),
-  path.join(root, 'sql', 'TABLEFORGE_WORKFLOW_FIX_PATCH.sql')
+  path.join(root, 'sql', 'TABLEFORGE_WORKFLOW_FIX_PATCH.sql'),
+  path.join(root, 'sql', 'IMMEDIATE_BILL_AND_ANALYTICS_FIX.sql'),
+  path.join(root, 'sql', 'ADMIN_BILL_DISCOUNT_PATCH.sql')
 ];
 const sources = await Promise.all(files.map(async (file) => ({ file, sql: await readFile(file, 'utf8') })));
 

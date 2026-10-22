@@ -259,3 +259,28 @@ If the database already has `MASTER_MIGRATION_TABLEFORGE.sql` and `DATE_RANGE_RE
 ## Latest workflow release
 
 See `docs/release/WORKFLOW_FIX_PATCH_README.md`. The latest incremental patch adds per-restaurant workflow settings, a pre-bill payment-method requirement, and preparation-time inventory deduction when strict inventory is explicitly enabled. Never rerun the master migration for this patch.
+
+## Immediate bill and analytics repair (2026-10-21)
+
+The supplied current-release repair includes `sql/IMMEDIATE_BILL_AND_ANALYTICS_FIX.sql`.
+Apply it once in the **correct Supabase project** after the existing
+`MASTER_MIGRATION_TABLEFORGE.sql` and `TABLEFORGE_WORKFLOW_FIX_PATCH.sql` have
+already been applied. It adds the missing `orders.payment_method` column seen
+in the bill-generation error, updates payment-method functions/policy for UPI
+QR, cash, card and bank transfer, and adds tenant-scoped reporting endpoints
+for Revenue, Product Analytics, Top Products and Activity & Audit. It does not
+mark a bill paid when a method is selected. Staff must still explicitly confirm
+receipt of payment.
+
+Do not run it against an unverified project. Back up the database first and
+stop if SQL Editor reports an error. `npm run verify` checks JavaScript syntax,
+SQL lexical structure and source regression tests, **not** PostgreSQL execution
+or the production browser/deployment. Use `docs/release/IMMEDIATE_FIX_TEST_PLAN.md`
+for a staged deployment and manual acceptance checklist. The SQL has not been
+executed against the production database from this workspace.
+
+## Admin bill discounts (incremental migration)
+
+For an existing TableForge database, apply `sql/ADMIN_BILL_DISCOUNT_PATCH.sql` **after** `MASTER_MIGRATION_TABLEFORGE.sql`, `TABLEFORGE_WORKFLOW_FIX_PATCH.sql`, and `IMMEDIATE_BILL_AND_ANALYTICS_FIX.sql`. Do not rerun the master migration merely to add discounts. The patch stores discounts at the dining-session level for consolidated dine-in bills and at the order level for takeaway, restricts changes to Admin-token-authorized unpaid/open bills, logs the action and reason in the audit trail, recalculates tax/rounding, and preserves the discount through Cashier reprints.
+
+Before production use, test: no discount, percent discount, fixed rupee discount, editing a discount, removing a discount with value `0`, invalid values, cross-tenant IDs, Manager/Cashier token rejection, paid bill rejection, closed bill rejection, same Admin and Cashier reprint totals, and correct printed/PDF discount lines. Automated source tests are not a substitute for running the SQL against the actual database.

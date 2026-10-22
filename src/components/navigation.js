@@ -216,8 +216,32 @@ export function openUniversalReceipt({
   extraActions = []
 }) {
   const tenant = window.__ACTIVE_TENANT__ || {};
+  // Receipt branding deliberately uses the square restaurant icon, never the
+  // landscape wordmark. The same icon is placed in the centre of the UPI QR.
   const iconUrl = tenant.icon_url ? versionedAsset(tenant.icon_url) : "";
+  const normalizedPaymentMethod = String(paymentMethod || "").trim().toLowerCase();
+  // The receipt must reproduce the bill as issued. Payment status is tracked
+  // separately and must not remove the original UPI QR from a paid bill copy.
+  // The saved payment method controls whether this receipt contains a UPI QR.
+  const showUpiQr = Boolean(
+    settings.upi_id && normalizedPaymentMethod === "upi_qr"
+  );
   const currency = settings.currency_symbol || "₹";
+  const discountType = String(
+    order?.bill_discount_type || order?.discount_type || order?.dining_sessions?.bill_discount_type || ""
+  ).toLowerCase();
+  const discountValue = Number(
+    order?.bill_discount_value ?? order?.discount_value ?? order?.dining_sessions?.bill_discount_value ?? 0
+  );
+  const discountAmount = Math.max(0, Number(
+    order?.bill_discount_amount ?? order?.discount_amount ?? order?.dining_sessions?.bill_discount_amount ?? 0
+  ));
+  const discountLabel = discountType === "percent"
+    ? `Discount (${discountValue.toLocaleString("en-IN", { maximumFractionDigits: 2 })}%)`
+    : "Discount";
+  const discountLineHtml = discountAmount > 0
+    ? '<div class="thermal-line thermal-discount"><span>' + escapeHtml(discountLabel) + '</span><strong>−' + currency + discountAmount.toFixed(2) + '</strong></div>'
+    : "";
 
   // 1. Resolve Table / Order Type String automatically
   let resolvedTypeString = tableString;
@@ -245,11 +269,22 @@ export function openUniversalReceipt({
 
   // 3. Normalize Items (Handles both POS items and Admin order_items snapshots)
   const rawItems = (items && items.length > 0) ? items : (order?.order_items || []);
-  const normalizedItems = rawItems.map(i => ({
-    name: i.name || i.name_snapshot || i.product_name || "Item",
-    price: Number(i.price ?? i.unit_price ?? 0),
-    quantity: Number(i.quantity ?? 1)
-  }));
+  const normalizedItems = rawItems
+    .map((i, index) => ({
+      name: i.name || i.name_snapshot || i.product_name || "Item",
+      price: Number(i.price ?? i.unit_price ?? 0),
+      quantity: Number(i.quantity ?? 1),
+      _round: Number(i.round_number ?? i.receipt_round_number ?? 0),
+      _orderTime: Date.parse(i.order_created_at || i.receipt_order_created_at || "") || 0,
+      _itemTime: Date.parse(i.created_at || "") || 0,
+      _index: index
+    }))
+    .sort((a, b) =>
+      a._round - b._round ||
+      a._orderTime - b._orderTime ||
+      a._itemTime - b._itemTime ||
+      a._index - b._index
+    );
 
   const rowsHtml = normalizedItems.map(item =>
     '<tr>' +
@@ -267,8 +302,8 @@ export function openUniversalReceipt({
   const receiptHTML =
     '<article class="thermal-receipt" id="thermal-receipt-content">' +
       '<header class="thermal-head">' +
-        (iconUrl ? '<img class="thermal-logo" src="' + iconUrl + '" alt="Restaurant logo">' : '') +
-        '<h1>' + escapeHtml(settings.restaurant_name || tenant.name || "Restaurant") + '</h1>' +
+        (iconUrl ? '<img class="thermal-brand-icon" src="' + iconUrl + '" alt="Restaurant icon">' : '') +
+        '<h1 class="thermal-brand-title">' + escapeHtml(settings.restaurant_name || tenant.name || "Four Flavours") + '</h1>' +
         addressHtml +
         (settings.gst_number ? '<p><strong>GSTIN:</strong> ' + escapeHtml(settings.gst_number) + '</p>' : '') +
       '</header>' +
@@ -289,18 +324,19 @@ export function openUniversalReceipt({
       '</table>' +
       '<div class="thermal-totals-wrap">' +
         '<div class="thermal-line"><span>Subtotal</span><strong>' + currency + Number(order?.subtotal || 0).toFixed(2) + '</strong></div>' +
+        discountLineHtml +
         '<div class="thermal-line"><span>CGST @ ' + Number(settings.cgst_rate || 0) + '%</span><strong>' + currency + Number(order?.cgst || 0).toFixed(2) + '</strong></div>' +
         '<div class="thermal-line"><span>SGST @ ' + Number(settings.sgst_rate || 0) + '%</span><strong>' + currency + Number(order?.sgst || 0).toFixed(2) + '</strong></div>' +
         '<div class="thermal-line"><span>Rounding</span><strong>' + currency + Number(order?.rounding || 0).toFixed(2) + '</strong></div>' +
         '<div class="thermal-line thermal-grand"><span>GRAND TOTAL</span><strong>' + currency + Number(order?.grand_total || 0).toFixed(2) + '</strong></div>' +
       '</div>' +
-      (settings.upi_id && paymentMethod !== "cash" ?
+      (showUpiQr ?
         '<div class="thermal-payment-block">' +
           '<div class="thermal-qr" id="thermal-upi"></div>' +
           '<div class="thermal-upi-note"><strong>Scan to pay</strong><br>Supported by all UPI apps</div>' +
         '</div>'
       : '') +
-      (paymentMethod ? '<div style="margin-top:8px;text-align:center;font-size:11px;font-weight:800;">Payment method: ' + (paymentMethod === "cash" ? 'CASH' : 'UPI QR') + '</div>' : '') +
+      (paymentMethod ? '<div style="margin-top:8px;text-align:center;font-size:11px;font-weight:800;">Payment method: ' + escapeHtml(({ upi_qr: 'UPI QR', cash: 'CASH', card: 'CARD', bank_transfer: 'BANK TRANSFER' })[paymentMethod] || 'NOT RECORDED') + '</div>' : '') +
       '<footer class="thermal-foot">' +
         '<p>' + escapeHtml(settings.receipt_footer || "Thank you for dining with us!") + '</p>' +
         '<div class="thermal-software-tag">Powered by Table Forge System</div>' +
@@ -416,7 +452,7 @@ export function openUniversalReceipt({
   });
 
   // 6. Universal UPI QR Code Generator with Center Brand Icon
-  if (settings.upi_id) {
+  if (showUpiQr) {
     const renderQR = () => {
       setTimeout(() => {
         const qrNode = modal.root.querySelector("#thermal-upi");
@@ -441,7 +477,7 @@ export function openUniversalReceipt({
           if (iconUrl) {
             const logoImg = document.createElement("img");
             logoImg.src = iconUrl;
-            logoImg.style.cssText = "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 36px; height: 36px; min-width: 36px; min-height: 36px; max-width: 36px; max-height: 36px; border-radius: 8px; border: 3px solid #ffffff; background-color: #ffffff; object-fit: cover; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 5;";
+            logoImg.style.cssText = "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 36px; height: 36px; min-width: 36px; min-height: 36px; max-width: 36px; max-height: 36px; border-radius: 8px; border: 3px solid #ffffff; background-color: #ffffff; object-fit: contain; padding: 2px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 5;";
             qrNode.appendChild(logoImg);
           }
         }

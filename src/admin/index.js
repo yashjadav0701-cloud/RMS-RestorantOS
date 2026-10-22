@@ -651,6 +651,8 @@ async function renderAdminWorkspace(
   window.__FF_TABLES__ = tables;
   let section = "overview";
   let orderDateRange = createPresetRange("today");
+  let revenueDateRange = createPresetRange("7");
+  let productAnalyticsDateRange = createPresetRange("7");
 
   // 1. Fetch dynamic tenant branding safely
   const activeTenant = window.__ACTIVE_TENANT__ || {};
@@ -951,494 +953,163 @@ async function renderAdminWorkspace(
   }
 
   function renderProductDashboard() {
+    const currentRange = productAnalyticsDateRange;
+    const periodArgs = () => currentRange.preset === "all" ? { p_period_start: null, p_period_end: null } : {
+      p_period_start: indiaDateStartISOString(currentRange.startDate),
+      p_period_end: indiaDateAfterISOString(currentRange.endDate)
+    };
+    const esc = value => escapeHtml(String(value ?? ""));
+    const count = value => Number(value || 0).toLocaleString("en-IN");
     area.innerHTML = `
       <style>
-        .product-analytics {
-          display: grid;
-          gap: 18px;
-        }
-
-        .product-analytics-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 12px;
-        }
-
-        .product-analytics-card {
-          min-width: 0;
-          padding: 16px;
-          border: 1px solid var(--line);
-          border-radius: 15px;
-          background: var(--paper);
-        }
-
-        .product-analytics-icon {
-          display: grid;
-          place-items: center;
-          width: 36px;
-          height: 36px;
-          margin-bottom: 13px;
-          border-radius: 11px;
-          background: var(--sage-100);
-          color: var(--forest-900);
-          font-size: 19px;
-        }
-
-        .product-analytics-value {
-          display: block;
-          margin-bottom: 5px;
-          font-size: 23px;
-          font-weight: 850;
-          color: var(--forest-950);
-        }
-
-        .product-analytics-label {
-          display: block;
-          color: var(--muted);
-          font-size: 12px;
-          line-height: 1.5;
-        }
-
-        .product-analytics-grid-two {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 14px;
-        }
-
-        .product-analytics-panel {
-          min-width: 0;
-          padding: 19px;
-          border: 1px solid var(--line);
-          border-radius: 16px;
-          background: var(--paper);
-        }
-
-        .product-analytics-panel h2 {
-          margin: 0 0 6px;
-          font-size: 16px;
-        }
-
-        .product-analytics-panel > p {
-          margin: 0;
-          color: var(--muted);
-          font-size: 12px;
-          line-height: 1.6;
-        }
-
-        .product-analytics-empty {
-          min-height: 135px;
-          margin-top: 15px;
-          padding: 18px;
-          display: grid;
-          place-content: center;
-          justify-items: center;
-          border: 1px dashed var(--line);
-          border-radius: 12px;
-          text-align: center;
-        }
-
-        .product-analytics-empty i {
-          font-size: 26px;
-          color: var(--forest-700);
-        }
-
-        .product-analytics-empty p {
-          max-width: 300px;
-          margin: 9px 0 0;
-          color: var(--muted);
-          font-size: 12px;
-          line-height: 1.6;
-        }
-
-        .product-analytics-note {
-          padding: 13px 15px;
-          border: 1px solid var(--line);
-          border-radius: 12px;
-          background: var(--cream-100);
-          color: var(--muted);
-          font-size: 12px;
-          line-height: 1.6;
-        }
-
-        @media (max-width: 900px) {
-          .product-analytics-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-        }
-
-        @media (max-width: 600px) {
-          .product-analytics-grid-two {
-            grid-template-columns: minmax(0, 1fr);
-          }
-
-          .product-analytics-card {
-            padding: 13px;
-          }
-
-          .product-analytics-value {
-            font-size: 21px;
-          }
-
-          .product-analytics-panel {
-            padding: 15px;
-          }
-        }
+        ${DATE_RANGE_STYLES}
+        .product-analytics{display:grid;gap:18px}.product-analytics-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+        .product-analytics-card{min-width:0;padding:16px;border:1px solid var(--line);border-radius:15px;background:var(--paper)}.product-analytics-icon{display:grid;place-items:center;width:36px;height:36px;margin-bottom:13px;border-radius:11px;background:var(--sage-100);color:var(--forest-900);font-size:19px}.product-analytics-value{display:block;margin-bottom:5px;font-size:23px;font-weight:850;color:var(--forest-950);overflow-wrap:anywhere}.product-analytics-label{display:block;color:var(--muted);font-size:12px;line-height:1.5}
+        .product-analytics-grid-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.product-analytics-panel{min-width:0;padding:19px;border:1px solid var(--line);border-radius:16px;background:var(--paper)}.product-analytics-panel h2{margin:0 0 6px;font-size:16px}.product-analytics-panel>p{margin:0;color:var(--muted);font-size:12px;line-height:1.6}.product-analytics-note{padding:13px 15px;border:1px solid var(--line);border-radius:12px;background:var(--cream-100);color:var(--muted);font-size:12px;line-height:1.6}
+        .tf-analytics-list{display:grid;gap:12px;margin-top:15px}.tf-analytics-row{display:grid;grid-template-columns:minmax(95px,1fr) minmax(70px,2fr) auto;align-items:center;gap:10px;font-size:12px}.tf-analytics-name{min-width:0;overflow-wrap:anywhere;color:var(--forest-950);font-weight:700}.tf-analytics-track{height:8px;overflow:hidden;border-radius:99px;background:var(--sage-100)}.tf-analytics-fill{height:100%;border-radius:99px;background:var(--forest-700)}.tf-analytics-value{font-variant-numeric:tabular-nums;color:var(--muted);white-space:nowrap}.tf-analytics-empty{padding:22px 14px;margin-top:14px;border:1px dashed var(--line);border-radius:12px;text-align:center;color:var(--muted);font-size:12px;line-height:1.6}
+        @media(max-width:900px){.product-analytics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.product-analytics-grid-two{grid-template-columns:1fr}.product-analytics-card{padding:13px}.product-analytics-value{font-size:21px}.product-analytics-panel{padding:15px}.tf-analytics-row{grid-template-columns:minmax(78px,1fr) minmax(45px,1fr) auto;gap:7px;font-size:11px}}
       </style>
-
-      <section class="section-title-row">
-        <div>
-          <span class="eyebrow">Business intelligence</span>
-          <h1>Product Analytics</h1>
-          <p>Understand what sells and how each dish performs.</p>
-        </div>
-      </section>
-
+      <section class="section-title-row"><div><span class="eyebrow">Business intelligence</span><h1>Product Analytics</h1><p>Understand what sells, cancellation patterns and category performance.</p></div></section>
       <section class="product-analytics">
-        <div class="product-analytics-note">
-          Product metrics will be shown after the order-item, cancellation,
-          billing and payment sources have been verified. No sales figures
-          or rankings are being assumed.
-        </div>
-
+        <div><label style="display:block;margin-bottom:7px;color:var(--muted);font-size:11px;font-weight:800">REPORTING PERIOD</label>${renderDateRangePicker("product-analytics", currentRange)}</div>
+        <div class="product-analytics-note" data-product-analytics-status role="status">Loading saved paid order-item data for ${esc(dateRangeLabel(currentRange))}…</div>
         <div class="product-analytics-grid">
-          <article class="product-analytics-card">
-            <div class="product-analytics-icon">
-              <i class="ph-bold ph-bowl-food"></i>
-            </div>
-            <strong class="product-analytics-value">—</strong>
-            <span class="product-analytics-label">Units sold</span>
-          </article>
-
-          <article class="product-analytics-card">
-            <div class="product-analytics-icon">
-              <i class="ph-bold ph-currency-inr"></i>
-            </div>
-            <strong class="product-analytics-value">—</strong>
-            <span class="product-analytics-label">Product revenue</span>
-          </article>
-
-          <article class="product-analytics-card">
-            <div class="product-analytics-icon">
-              <i class="ph-bold ph-x-circle"></i>
-            </div>
-            <strong class="product-analytics-value">—</strong>
-            <span class="product-analytics-label">Cancelled quantities</span>
-          </article>
-
-          <article class="product-analytics-card">
-            <div class="product-analytics-icon">
-              <i class="ph-bold ph-chart-line-up"></i>
-            </div>
-            <strong class="product-analytics-value">—</strong>
-            <span class="product-analytics-label">Best-performing category</span>
-          </article>
+          <article class="product-analytics-card"><div class="product-analytics-icon"><i class="ph-bold ph-bowl-food"></i></div><strong class="product-analytics-value" data-product-metric="units">—</strong><span class="product-analytics-label">Units sold (paid orders)</span></article>
+          <article class="product-analytics-card"><div class="product-analytics-icon"><i class="ph-bold ph-currency-inr"></i></div><strong class="product-analytics-value" data-product-metric="revenue">—</strong><span class="product-analytics-label">Paid product sales value</span></article>
+          <article class="product-analytics-card"><div class="product-analytics-icon"><i class="ph-bold ph-x-circle"></i></div><strong class="product-analytics-value" data-product-metric="cancelled">—</strong><span class="product-analytics-label">Cancelled item quantities</span></article>
+          <article class="product-analytics-card"><div class="product-analytics-icon"><i class="ph-bold ph-chart-line-up"></i></div><strong class="product-analytics-value" data-product-metric="category">—</strong><span class="product-analytics-label">Top category by paid sales</span></article>
         </div>
-
         <div class="product-analytics-grid-two">
-          <article class="product-analytics-panel">
-            <h2>Sales by product</h2>
-            <p>Compare dishes by quantities sold and net sales.</p>
-
-            <div class="product-analytics-empty">
-              <i class="ph-bold ph-chart-bar"></i>
-              <p>
-                The product comparison will use saved item names, prices,
-                quantities, cancellations and verified bill data.
-              </p>
-            </div>
-          </article>
-
-          <article class="product-analytics-panel">
-            <h2>Category performance</h2>
-            <p>Compare performance across your menu categories.</p>
-
-            <div class="product-analytics-empty">
-              <i class="ph-bold ph-chart-pie-slice"></i>
-              <p>
-                Category results will be calculated using the verified
-                product-to-category relationships.
-              </p>
-            </div>
-          </article>
-
-          <article class="product-analytics-panel">
-            <h2>Cancellation analysis</h2>
-            <p>Understand which dishes are cancelled and when.</p>
-
-            <div class="product-analytics-empty">
-              <i class="ph-bold ph-clipboard-text"></i>
-              <p>
-                Cancellation reporting requires reliable item-level
-                cancellation records and reasons.
-              </p>
-            </div>
-          </article>
-
-          <article class="product-analytics-panel">
-            <h2>Product profitability</h2>
-            <p>Compare dish revenue with recipe ingredient costs.</p>
-
-            <div class="product-analytics-empty">
-              <i class="ph-bold ph-chart-line-up"></i>
-              <p>
-                Profitability will only be calculated when recipe quantities,
-                ingredient costs and the selected cost method are available.
-              </p>
-            </div>
-          </article>
+          <article class="product-analytics-panel"><h2>Sales by product</h2><p>Top dishes ranked by paid net sales value.</p><div class="tf-analytics-list" data-product-chart="products"><div class="tf-analytics-empty">Loading product sales…</div></div></article>
+          <article class="product-analytics-panel"><h2>Category performance</h2><p>Menu categories compared by paid product sales value.</p><div class="tf-analytics-list" data-product-chart="categories"><div class="tf-analytics-empty">Loading category performance…</div></div></article>
+          <article class="product-analytics-panel"><h2>Cancellation analysis</h2><p>Cancellation quantities are counted from stored item statuses.</p><div class="tf-analytics-list" data-product-chart="cancellations"><div class="tf-analytics-empty">Loading cancellation data…</div></div></article>
+          <article class="product-analytics-panel"><h2>Product profitability</h2><p>Revenue is not the same as profit.</p><div class="tf-analytics-empty">Profitability is intentionally not estimated. Populate and validate each recipe, unit conversion and ingredient cost before using a gross-margin report.</div></article>
         </div>
-      </section>
-    `;
+      </section>`;
+    bindDateRangePicker(area, "product-analytics", currentRange, nextRange => { productAnalyticsDateRange = nextRange; renderProductDashboard(); });
+    void loadProductAnalytics();
+
+    async function loadProductAnalytics() {
+      const status = area.querySelector("[data-product-analytics-status]");
+      const access = window.__RMS_PANEL_ACCESS__;
+      if (!supabase || access?.panelId !== "admin" || !access.token) {
+        if (status) status.textContent = "A valid Admin session is required to view reporting data.";
+        return;
+      }
+      try {
+        const { data, error } = await supabase.rpc("get_admin_reporting_data", { p_panel_token: access.token, ...periodArgs() });
+        if (error) throw error;
+        if (section !== "products" || !area.querySelector("[data-product-analytics-status]")) return;
+        const products = Array.isArray(data?.top_products) ? data.top_products : [];
+        const categories = Array.isArray(data?.top_categories) ? data.top_categories : [];
+        const totalUnits = products.reduce((sum, row) => sum + Number(row.quantity_sold || 0), 0);
+        const totalRevenue = products.reduce((sum, row) => sum + Number(row.revenue || 0), 0);
+        area.querySelector('[data-product-metric="units"]').textContent = count(totalUnits);
+        area.querySelector('[data-product-metric="revenue"]').textContent = money(totalRevenue);
+        area.querySelector('[data-product-metric="cancelled"]').textContent = count(data?.cancelled_units);
+        area.querySelector('[data-product-metric="category"]').textContent = categories[0]?.category || "No paid sales";
+        if (status) status.textContent = `${products.length} product groups and ${categories.length} categories · ${dateRangeLabel(currentRange)}. Only paid, non-cancelled items are used in sales totals.`;
+        const renderBars = (rows, labelKey, valueKey, formatter) => {
+          if (!rows.length) return '<div class="tf-analytics-empty">No data available for this period.</div>';
+          const values = rows.map(row => Number(row[valueKey] || 0));
+          const max = Math.max(1, ...values);
+          return rows.slice(0, 10).map(row => {
+            const value = Number(row[valueKey] || 0);
+            return `<div class="tf-analytics-row"><span class="tf-analytics-name" title="${esc(row[labelKey])}">${esc(row[labelKey])}</span><span class="tf-analytics-track"><span class="tf-analytics-fill" style="display:block;width:${Math.max(value > 0 ? 2 : 0, value / max * 100)}%"></span></span><span class="tf-analytics-value">${esc(formatter(value))}</span></div>`;
+          }).join("");
+        };
+        area.querySelector('[data-product-chart="products"]').innerHTML = renderBars(products, "name", "revenue", money);
+        area.querySelector('[data-product-chart="categories"]').innerHTML = renderBars(categories, "category", "revenue", money);
+        const cancelled = Number(data?.cancelled_units || 0);
+        area.querySelector('[data-product-chart="cancellations"]').innerHTML = cancelled ? `<div class="tf-analytics-row"><span class="tf-analytics-name">Cancelled units</span><span class="tf-analytics-track"><span class="tf-analytics-fill" style="display:block;width:100%"></span></span><span class="tf-analytics-value">${count(cancelled)}</span></div><div class="tf-analytics-note">This total is quantity-based; individual cancellation reasons are shown only when recorded in the audit log.</div>` : '<div class="tf-analytics-empty">No cancelled item quantities recorded for this period.</div>';
+      } catch (error) {
+        console.error("Product Analytics failed:", error);
+        if (status) status.textContent = `Product analytics could not load: ${String(error?.message || "Unknown database error")}. Apply the included SQL migration, then refresh.`;
+      }
+    }
   }
 
   function renderRevenueDashboard() {
+    const currentRange = revenueDateRange;
+    const periodArgs = () => currentRange.preset === "all" ? { p_period_start: null, p_period_end: null } : {
+      p_period_start: indiaDateStartISOString(currentRange.startDate),
+      p_period_end: indiaDateAfterISOString(currentRange.endDate)
+    };
+    const esc = value => escapeHtml(String(value ?? ""));
+    const count = value => Number(value || 0).toLocaleString("en-IN");
     area.innerHTML = `
       <style>
-        .revenue-dashboard {
-          display: grid;
-          gap: 18px;
-        }
-
-        .revenue-summary-grid {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 12px;
-        }
-
-        .revenue-summary-card {
-          min-width: 0;
-          padding: 17px;
-          border: 1px solid var(--line);
-          border-radius: 15px;
-          background: var(--paper);
-        }
-
-        .revenue-summary-icon {
-          display: grid;
-          place-items: center;
-          width: 37px;
-          height: 37px;
-          margin-bottom: 14px;
-          border-radius: 11px;
-          background: var(--sage-100);
-          color: var(--forest-900);
-          font-size: 19px;
-        }
-
-        .revenue-summary-value {
-          display: block;
-          margin-bottom: 5px;
-          color: var(--forest-950);
-          font-size: 25px;
-          font-weight: 850;
-        }
-
-        .revenue-summary-label {
-          display: block;
-          color: var(--muted);
-          font-size: 12px;
-          line-height: 1.5;
-        }
-
-        .revenue-panel-grid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 14px;
-        }
-
-        .revenue-panel {
-          min-width: 0;
-          padding: 19px;
-          border: 1px solid var(--line);
-          border-radius: 16px;
-          background: var(--paper);
-        }
-
-        .revenue-panel h2 {
-          margin: 0 0 5px;
-          font-size: 16px;
-        }
-
-        .revenue-panel-description {
-          margin: 0;
-          color: var(--muted);
-          font-size: 12px;
-          line-height: 1.6;
-        }
-
-        .revenue-empty-chart {
-          display: grid;
-          align-content: center;
-          justify-items: center;
-          min-height: 155px;
-          margin-top: 16px;
-          padding: 16px;
-          border: 1px dashed var(--line);
-          border-radius: 12px;
-          text-align: center;
-        }
-
-        .revenue-empty-chart i {
-          color: var(--forest-700);
-          font-size: 26px;
-        }
-
-        .revenue-empty-chart p {
-          max-width: 300px;
-          margin: 9px 0 0;
-          color: var(--muted);
-          font-size: 12px;
-          line-height: 1.6;
-        }
-
-        .revenue-data-note {
-          padding: 13px 15px;
-          border: 1px solid var(--line);
-          border-radius: 12px;
-          background: var(--cream-100);
-          color: var(--muted);
-          font-size: 12px;
-          line-height: 1.6;
-        }
-
-        @media (max-width: 900px) {
-          .revenue-summary-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-          }
-        }
-
-        @media (max-width: 600px) {
-          .revenue-panel-grid {
-            grid-template-columns: minmax(0, 1fr);
-          }
-
-          .revenue-summary-card {
-            padding: 13px;
-          }
-
-          .revenue-summary-value {
-            font-size: 22px;
-          }
-
-          .revenue-panel {
-            padding: 15px;
-          }
-        }
+        ${DATE_RANGE_STYLES}
+        .revenue-dashboard{display:grid;gap:18px}.revenue-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.revenue-summary-card{min-width:0;padding:17px;border:1px solid var(--line);border-radius:15px;background:var(--paper)}.revenue-summary-icon{display:grid;place-items:center;width:37px;height:37px;margin-bottom:14px;border-radius:11px;background:var(--sage-100);color:var(--forest-900);font-size:19px}.revenue-summary-value{display:block;margin-bottom:5px;color:var(--forest-950);font-size:24px;font-weight:850;overflow-wrap:anywhere}.revenue-summary-label{display:block;color:var(--muted);font-size:12px;line-height:1.5}
+        .revenue-panel-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.revenue-panel{min-width:0;padding:19px;border:1px solid var(--line);border-radius:16px;background:var(--paper)}.revenue-panel h2{margin:0 0 5px;font-size:16px}.revenue-panel-description{margin:0;color:var(--muted);font-size:12px;line-height:1.6}.revenue-data-note{padding:13px 15px;border:1px solid var(--line);border-radius:12px;background:var(--cream-100);color:var(--muted);font-size:12px;line-height:1.6}.revenue-chart{display:grid;gap:12px;margin-top:16px}.revenue-bar-row{display:grid;grid-template-columns:minmax(66px,1fr) minmax(50px,2fr) auto;align-items:center;gap:10px;font-size:12px}.revenue-bar-label{color:var(--forest-950);font-weight:700;overflow-wrap:anywhere}.revenue-bar-track{height:9px;overflow:hidden;border-radius:99px;background:var(--sage-100)}.revenue-bar-fill{height:100%;border-radius:99px;background:var(--forest-700)}.revenue-bar-value{color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}.revenue-empty-chart{padding:24px 14px;margin-top:15px;border:1px dashed var(--line);border-radius:12px;text-align:center;color:var(--muted);font-size:12px;line-height:1.6}.revenue-reconcile{display:grid;gap:0;margin-top:14px}.revenue-reconcile-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line);font-size:12px}.revenue-reconcile-row span{color:var(--muted)}.revenue-reconcile-row strong{color:var(--forest-950);text-align:right}
+        @media(max-width:900px){.revenue-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.revenue-panel-grid{grid-template-columns:1fr}.revenue-summary-card{padding:13px}.revenue-summary-value{font-size:21px}.revenue-panel{padding:15px}.revenue-bar-row{grid-template-columns:minmax(65px,1fr) minmax(35px,1fr) auto;gap:7px;font-size:11px}}
       </style>
-
-      <section class="section-title-row">
-        <div>
-          <span class="eyebrow">Business intelligence</span>
-          <h1>Revenue</h1>
-          <p>Understand sales, collections and outstanding bills.</p>
-        </div>
-      </section>
-
+      <section class="section-title-row"><div><span class="eyebrow">Business intelligence</span><h1>Revenue</h1><p>Separate collected payments from issued bills and unpaid balances.</p></div></section>
       <section class="revenue-dashboard">
-        <div class="revenue-data-note">
-          <i class="ph-bold ph-info"></i>
-          Financial figures will appear after the billing and payment
-          data sources are verified. No estimated or fabricated totals
-          are displayed here.
-        </div>
-
+        <div><label style="display:block;margin-bottom:7px;color:var(--muted);font-size:11px;font-weight:800">REPORTING PERIOD</label>${renderDateRangePicker("revenue-report", currentRange)}</div>
+        <div class="revenue-data-note" data-revenue-status role="status">Loading saved billing records for ${esc(dateRangeLabel(currentRange))}…</div>
         <div class="revenue-summary-grid">
-          <article class="revenue-summary-card">
-            <div class="revenue-summary-icon">
-              <i class="ph-bold ph-wallet"></i>
-            </div>
-            <strong class="revenue-summary-value">—</strong>
-            <span class="revenue-summary-label">Paid revenue</span>
-          </article>
-
-          <article class="revenue-summary-card">
-            <div class="revenue-summary-icon">
-              <i class="ph-bold ph-receipt"></i>
-            </div>
-            <strong class="revenue-summary-value">—</strong>
-            <span class="revenue-summary-label">Bills issued</span>
-          </article>
-
-          <article class="revenue-summary-card">
-            <div class="revenue-summary-icon">
-              <i class="ph-bold ph-hourglass-medium"></i>
-            </div>
-            <strong class="revenue-summary-value">—</strong>
-            <span class="revenue-summary-label">Outstanding amount</span>
-          </article>
-
-          <article class="revenue-summary-card">
-            <div class="revenue-summary-icon">
-              <i class="ph-bold ph-arrow-counter-clockwise"></i>
-            </div>
-            <strong class="revenue-summary-value">—</strong>
-            <span class="revenue-summary-label">Refunds and adjustments</span>
-          </article>
+          <article class="revenue-summary-card"><div class="revenue-summary-icon"><i class="ph-bold ph-wallet"></i></div><strong class="revenue-summary-value" data-revenue-metric="paid_revenue">—</strong><span class="revenue-summary-label">Paid revenue</span></article>
+          <article class="revenue-summary-card"><div class="revenue-summary-icon"><i class="ph-bold ph-receipt"></i></div><strong class="revenue-summary-value" data-revenue-metric="bills_issued">—</strong><span class="revenue-summary-label">Bills issued</span></article>
+          <article class="revenue-summary-card"><div class="revenue-summary-icon"><i class="ph-bold ph-hourglass-medium"></i></div><strong class="revenue-summary-value" data-revenue-metric="outstanding_amount">—</strong><span class="revenue-summary-label">Outstanding amount</span></article>
+          <article class="revenue-summary-card"><div class="revenue-summary-icon"><i class="ph-bold ph-arrow-counter-clockwise"></i></div><strong class="revenue-summary-value" data-revenue-metric="refunded_amount">—</strong><span class="revenue-summary-label">Recorded refunded amount</span></article>
         </div>
-
         <div class="revenue-panel-grid">
-          <article class="revenue-panel">
-            <h2>Revenue over time</h2>
-            <p class="revenue-panel-description">
-              Compare paid sales across days and reporting periods.
-            </p>
-
-            <div class="revenue-empty-chart">
-              <i class="ph-bold ph-chart-line-up"></i>
-              <p>
-                The revenue chart will be connected to verified bill and
-                payment records during database integration.
-              </p>
-            </div>
-          </article>
-
-          <article class="revenue-panel">
-            <h2>Payment breakdown</h2>
-            <p class="revenue-panel-description">
-              Understand collections by payment method.
-            </p>
-
-            <div class="revenue-empty-chart">
-              <i class="ph-bold ph-chart-pie-slice"></i>
-              <p>
-                Payment-method totals will appear when recorded payment
-                transactions can be reconciled reliably.
-              </p>
-            </div>
-          </article>
-
-          <article class="revenue-panel">
-            <h2>Sales by hour</h2>
-            <p class="revenue-panel-description">
-              Identify your busiest revenue periods.
-            </p>
-
-            <div class="revenue-empty-chart">
-              <i class="ph-bold ph-clock"></i>
-              <p>
-                Hourly analysis will use the appropriate paid transaction
-                timestamps and the restaurant's local time zone.
-              </p>
-            </div>
-          </article>
-
-          <article class="revenue-panel">
-            <h2>Billing reconciliation</h2>
-            <p class="revenue-panel-description">
-              Compare issued bills, collected payments, refunds and balances.
-            </p>
-
-            <div class="revenue-empty-chart">
-              <i class="ph-bold ph-scales"></i>
-              <p>
-                Reconciliation results will be calculated from the verified
-                billing and payment lifecycle, not from order counts alone.
-              </p>
-            </div>
-          </article>
+          <article class="revenue-panel"><h2>Revenue over time</h2><p class="revenue-panel-description">Paid bill totals grouped in India Standard Time.</p><div class="revenue-chart" data-revenue-chart="trend"><div class="revenue-empty-chart">Loading revenue trend…</div></div></article>
+          <article class="revenue-panel"><h2>Payment breakdown</h2><p class="revenue-panel-description">Collected revenue grouped by the recorded payment method.</p><div class="revenue-chart" data-revenue-chart="payments"><div class="revenue-empty-chart">Loading payment methods…</div></div></article>
+          <article class="revenue-panel"><h2>Sales by hour</h2><p class="revenue-panel-description">Paid bill totals grouped by hour (IST).</p><div class="revenue-chart" data-revenue-chart="hours"><div class="revenue-empty-chart">Loading hourly sales…</div></div></article>
+          <article class="revenue-panel"><h2>Billing reconciliation</h2><p class="revenue-panel-description">Bills issued, paid and outstanding are separate lifecycle states.</p><div class="revenue-reconcile" data-revenue-chart="reconcile"><div class="revenue-empty-chart">Loading reconciliation…</div></div></article>
         </div>
-      </section>
-    `;
+      </section>`;
+    bindDateRangePicker(area, "revenue-report", currentRange, nextRange => { revenueDateRange = nextRange; renderRevenueDashboard(); });
+    void loadRevenueReport();
+
+    async function loadRevenueReport() {
+      const status = area.querySelector("[data-revenue-status]");
+      const access = window.__RMS_PANEL_ACCESS__;
+      if (!supabase || access?.panelId !== "admin" || !access.token) {
+        if (status) status.textContent = "A valid Admin session is required to view revenue reporting.";
+        return;
+      }
+      try {
+        const { data, error } = await supabase.rpc("get_admin_reporting_data", { p_panel_token: access.token, ...periodArgs() });
+        if (error) throw error;
+        if (section !== "revenue" || !area.querySelector("[data-revenue-status]")) return;
+        const metrics = data?.metrics || {};
+        for (const key of ["paid_revenue", "outstanding_amount", "refunded_amount"]) {
+          const node = area.querySelector(`[data-revenue-metric="${key}"]`);
+          if (node) node.textContent = money(metrics[key] || 0);
+        }
+        area.querySelector('[data-revenue-metric="bills_issued"]').textContent = count(metrics.bills_issued);
+        if (status) status.textContent = `Reporting ${dateRangeLabel(currentRange)}. Revenue includes only paid bills; outstanding amounts remain unpaid and are not included in revenue.`;
+        const renderBars = (rows, labelFn, valueKey, formatter) => {
+          if (!rows.length) return '<div class="revenue-empty-chart">No recorded data for this period.</div>';
+          const max = Math.max(1, ...rows.map(row => Number(row[valueKey] || 0)));
+          return rows.slice(-24).map(row => {
+            const value = Number(row[valueKey] || 0);
+            return `<div class="revenue-bar-row"><span class="revenue-bar-label">${esc(labelFn(row))}</span><span class="revenue-bar-track"><span class="revenue-bar-fill" style="display:block;width:${Math.max(value > 0 ? 2 : 0, value / max * 100)}%"></span></span><span class="revenue-bar-value">${esc(formatter(value))}</span></div>`;
+          }).join("");
+        };
+        const trend = Array.isArray(data?.trend) ? data.trend : [];
+        const payments = Array.isArray(data?.payment_breakdown) ? data.payment_breakdown : [];
+        const hours = Array.isArray(data?.sales_by_hour) ? data.sales_by_hour : [];
+        area.querySelector('[data-revenue-chart="trend"]').innerHTML = renderBars(trend, row => row.label, "revenue", money);
+        const paymentLabels = { upi_qr: "UPI QR", cash: "Cash", card: "Card", bank_transfer: "Bank transfer", Unrecorded: "Not recorded" };
+        area.querySelector('[data-revenue-chart="payments"]').innerHTML = renderBars(payments, row => paymentLabels[row.method] || row.method || "Unknown", "amount", money);
+        area.querySelector('[data-revenue-chart="hours"]').innerHTML = renderBars(hours, row => `${String(row.hour).padStart(2,"0")}:00`, "amount", money);
+        area.querySelector('[data-revenue-chart="reconcile"]').innerHTML = `
+          <div class="revenue-reconcile-row"><span>Issued bills</span><strong>${count(metrics.bills_issued)}</strong></div>
+          <div class="revenue-reconcile-row"><span>Paid bills</span><strong>${count(metrics.paid_bills)}</strong></div>
+          <div class="revenue-reconcile-row"><span>Outstanding bills</span><strong>${count(metrics.outstanding_bills)}</strong></div>
+          <div class="revenue-reconcile-row"><span>Outstanding balance</span><strong>${esc(money(metrics.outstanding_amount || 0))}</strong></div>
+          <div class="revenue-reconcile-row"><span>Refunded bills recorded</span><strong>${count(metrics.refunded_bills)}</strong></div>
+          <div class="revenue-reconcile-row"><span>Refunded amount recorded</span><strong>${esc(money(metrics.refunded_amount || 0))}</strong></div>`;
+      } catch (error) {
+        console.error("Revenue report failed:", error);
+        if (status) status.textContent = `Revenue report could not load: ${String(error?.message || "Unknown database error")}. Apply the included SQL migration, then refresh.`;
+        for (const node of area.querySelectorAll("[data-revenue-chart]")) node.innerHTML = '<div class="revenue-empty-chart">Report unavailable. Check the SQL migration and database error details.</div>';
+      }
+    }
   }
 
   function renderInventory() {
@@ -1622,26 +1293,26 @@ async function renderAdminWorkspace(
         <div class="inventory-summary">
           <article class="inventory-summary-card">
             <i class="ph-bold ph-package"></i>
-            <strong>—</strong>
+            <strong data-inventory-metric="ingredients">—</strong>
             <span>Ingredients</span>
           </article>
 
           <article class="inventory-summary-card">
             <i class="ph-bold ph-cooking-pot"></i>
-            <strong>—</strong>
+            <strong data-inventory-metric="recipes">—</strong>
             <span>Recipes configured</span>
           </article>
 
           <article class="inventory-summary-card">
             <i class="ph-bold ph-warning-circle"></i>
-            <strong>—</strong>
+            <strong data-inventory-metric="low-stock">—</strong>
             <span>Low-stock items</span>
           </article>
 
           <article class="inventory-summary-card">
             <i class="ph-bold ph-calendar-check"></i>
-            <strong>—</strong>
-            <span>Estimated stock days</span>
+            <strong data-inventory-metric="stock-days">—</strong>
+            <span>Average estimated stock days</span>
           </article>
         </div>
 
@@ -1671,6 +1342,29 @@ async function renderAdminWorkspace(
 
     const panel = area.querySelector("#inventory-view-panel");
     const tabs = [...area.querySelectorAll("[data-inventory-view]")];
+
+    function updateInventorySummary() {
+      const setMetric = (key, value) => {
+        const node = area.querySelector(`[data-inventory-metric="${key}"]`);
+        if (node) node.textContent = String(value);
+      };
+      const activeIngredients = ingredientDrafts.filter(item => item.isActive !== false);
+      const activeProducts = products.filter(item => item.is_active);
+      const recipeCount = activeProducts.filter(item => (productRecipeDrafts.get(item.id) || []).length > 0).length;
+      const balances = new Map(activeIngredients.map(item => [item.id, Number(item.currentStock || 0)]));
+      const lowStockCount = activeIngredients.filter(item => Number(item.currentStock || 0) <= Number(item.reorderLevel || 0)).length;
+      const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const estimatedDays = activeIngredients.map(ingredient => {
+        const movements = inventoryMovementDrafts.filter(item => item.ingredientId === ingredient.id);
+        const hasOpening = movements.some(item => item.movementType === "opening_stock");
+        const usedLast7 = movements.filter(item => item.movementType === "sale" && item.createdAt >= since && item.quantityDelta < 0).reduce((sum, item) => sum + Math.abs(item.quantityDelta), 0);
+        return hasOpening && usedLast7 > 0 ? Math.max(0, balances.get(ingredient.id) || 0) / (usedLast7 / 7) : null;
+      }).filter(value => value !== null && Number.isFinite(value));
+      setMetric("ingredients", activeIngredients.length.toLocaleString("en-IN"));
+      setMetric("recipes", `${recipeCount}/${activeProducts.length}`);
+      setMetric("low-stock", lowStockCount.toLocaleString("en-IN"));
+      setMetric("stock-days", estimatedDays.length ? (estimatedDays.reduce((sum, value) => sum + value, 0) / estimatedDays.length).toLocaleString("en-IN", { maximumFractionDigits: 1 }) : "—");
+    }
 
     function renderInventoryView() {
       const view = views[activeView];
@@ -2042,7 +1736,7 @@ async function renderAdminWorkspace(
           // Wastage and stock adjustments are not demand.
           const consumptionLast7Days = movements
             .filter(item =>
-              item.movementType === "recipe_consumption" &&
+              item.movementType === "sale" &&
               item.createdAt >= sevenDaysAgo &&
               item.quantityDelta < 0
             )
@@ -2106,10 +1800,7 @@ async function renderAdminWorkspace(
           </div>
 
           <div class="inventory-data-status">
-            These figures are calculated from current-session draft movements
-            only. They are not live inventory records. Forecasts require a
-            recorded opening balance and recipe-consumption history for the
-            previous seven days.
+These estimates use saved stock movements and recipe-consumption records for the last seven days. Forecasts require a recorded opening balance and at least one saved recipe-consumption movement.
           </div>
 
           <div
@@ -2203,6 +1894,34 @@ async function renderAdminWorkspace(
             </table>
           </div>
         `;
+      } else if (activeView === "recipes") {
+        const activeProducts = products.filter(item => item.is_active);
+        const configuredProducts = activeProducts.filter(item => (productRecipeDrafts.get(item.id) || []).length > 0);
+        const missingRecipeProducts = activeProducts.filter(item => (productRecipeDrafts.get(item.id) || []).length === 0);
+        panel.innerHTML = `
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+            <div>
+              <div class="inventory-view-panel-icon"><i class="ph-bold ph-cooking-pot"></i></div>
+              <h2>Recipe coverage</h2>
+              <p>Review which active menu dishes have saved ingredient recipes. Recipes are edited inside each dish in the Menu section.</p>
+            </div>
+            <button class="btn btn-primary" type="button" data-open-menu-to-edit-recipes><i class="ph-bold ph-fork-knife"></i> Manage recipes in Menu</button>
+          </div>
+          <div class="inventory-data-status">${configuredProducts.length} of ${activeProducts.length} active dishes have at least one saved ingredient recipe. This count is based on persisted recipe data, not a draft estimate.</div>
+          <div style="overflow-x:auto;margin-top:18px;">
+            <table class="data-table" style="width:100%;min-width:560px;">
+              <thead><tr><th>Dish</th><th>Recipe ingredients</th><th>Coverage</th></tr></thead>
+              <tbody>
+                ${activeProducts.length ? activeProducts.map(item => {
+                  const recipe = productRecipeDrafts.get(item.id) || [];
+                  return `<tr><td><strong>${escapeHtml(item.name)}</strong><div style="color:var(--muted);font-size:11px;margin-top:3px;">${escapeHtml(item.category || "Uncategorized")}</div></td><td>${recipe.length ? recipe.map(row => `${escapeHtml(ingredientDrafts.find(ingredient => ingredient.id === row.ingredient_id)?.name || "Unknown ingredient")} · ${escapeHtml(row.quantity_per_serving)} per serving`).join("<br>") : "No recipe saved"}</td><td><span style="font-size:11px;font-weight:850;color:${recipe.length ? "var(--forest-800)" : "var(--danger)"};">${recipe.length ? "Configured" : "Missing recipe"}</span></td></tr>`;
+                }).join("") : `<tr><td colspan="3"><div style="padding:20px;text-align:center;color:var(--muted);">No active menu dishes are available for recipe coverage.</div></td></tr>`}
+              </tbody>
+            </table>
+          </div>
+          ${missingRecipeProducts.length ? `<p style="margin-top:14px;color:var(--muted);font-size:12px;">${missingRecipeProducts.length} dishes do not yet have a recipe. They are not included in ingredient-consumption reporting until recipes are saved.</p>` : ""}
+        `;
+        panel.querySelector("[data-open-menu-to-edit-recipes]")?.addEventListener("click", () => { section = "menu"; updateNavUI(); renderSection(); });
       } else if (activeView !== "ingredients") {
         panel.innerHTML = `
           <div class="inventory-view-panel-icon">
@@ -2213,9 +1932,7 @@ async function renderAdminWorkspace(
           <p>${escapeHtml(view.description)}</p>
 
           <div class="inventory-data-status">
-            This section will be connected after the inventory data model
-            and database migration have been verified. No stock figures
-            or usage values are being assumed.
+This inventory view is unavailable. Use Ingredient Usage for the server-backed consumption report and Recipes to review saved recipe coverage.
           </div>
         `;
       } else {
@@ -2540,6 +2257,7 @@ async function renderAdminWorkspace(
         tab.classList.toggle("active", selected);
         tab.setAttribute("aria-selected", String(selected));
       });
+      updateInventorySummary();
     }
 
     tabs.forEach(tab => {
@@ -2589,7 +2307,7 @@ async function renderAdminWorkspace(
     try {
         // 1. Build Query with Strict Time Range Logic
         let query = supabase.from("orders")
-          .select("*, order_items(*), dining_sessions(status)")
+          .select("*, order_items(*), dining_sessions(status, payment_method, payment_status, table_id, closed_at, bill_subtotal, bill_cgst, bill_sgst, bill_rounding, bill_grand_total, bill_cgst_rate, bill_sgst_rate, bill_discount_type, bill_discount_value, bill_discount_amount, bill_discount_reason)")
           .eq("restaurant_id", window.__ACTIVE_TENANT__.id);
 
         if (currentRange.startDate && currentRange.endDate) {
@@ -2605,9 +2323,12 @@ async function renderAdminWorkspace(
         if (error) throw error;
 
         // 2. Filter out open sessions that haven't requested bills yet
-        const validOrders = rawOrders.filter(o => 
-            o.order_type === 'takeaway' || 
-            (o.dining_sessions && ['closed', 'bill_requested', 'bill_ready'].includes(o.dining_sessions.status))
+        const validOrders = rawOrders.filter(o =>
+            String(o.status || "").toLowerCase() !== "cancelled" &&
+            (
+              o.order_type === "takeaway" ||
+              (o.dining_sessions && ["closed", "bill_requested", "bill_ready"].includes(o.dining_sessions.status))
+            )
         );
 
         // 3. CONSOLIDATE ROUNDS INTO A SINGLE MASTER BILL
@@ -2625,7 +2346,13 @@ async function renderAdminWorkspace(
                     sgst: Number(o.sgst || 0),
                     rounding: Number(o.rounding || 0),
                     grand_total: Number(o.grand_total || 0),
-                    order_items: [...(o.order_items || [])]
+                    order_items: (o.order_items || [])
+                      .filter(item => String(item.serving_status || "").toLowerCase() !== "cancelled")
+                      .map(item => ({
+                        ...item,
+                        receipt_round_number: Number(o.round_number || 0),
+                        receipt_order_created_at: o.created_at
+                      }))
                 });
             } else {
                 const master = groupedOrdersMap.get(key);
@@ -2637,7 +2364,13 @@ async function renderAdminWorkspace(
                 master.sgst += Number(o.sgst || 0);
                 master.rounding += Number(o.rounding || 0);
                 master.grand_total += Number(o.grand_total || 0);
-                master.order_items.push(...(o.order_items || []));
+                master.order_items.push(...(o.order_items || [])
+                  .filter(item => String(item.serving_status || "").toLowerCase() !== "cancelled")
+                  .map(item => ({
+                    ...item,
+                    receipt_round_number: Number(o.round_number || 0),
+                    receipt_order_created_at: o.created_at
+                  })));
                 
                 // Keep the timestamp anchored to their FIRST round (when they sat down)
                 if (new Date(o.created_at) < new Date(master.created_at)) {
@@ -2646,8 +2379,34 @@ async function renderAdminWorkspace(
             }
         });
 
-        // Filter out any orders that have been completely emptied (0 items)
-        const orders = Array.from(groupedOrdersMap.values()).filter(o => o.order_items && o.order_items.length > 0);
+        // Keep Admin receipt data aligned with the canonical Cashier bill:
+        // omit cancelled items/orders and use the earliest order number for a session.
+        const orders = Array.from(groupedOrdersMap.values())
+          .filter(o => String(o.status || "").toLowerCase() !== "cancelled" && o.order_items && o.order_items.length > 0)
+          .map(o => {
+            const orderNumbers = (o.all_order_numbers || []).filter(n => Number.isFinite(n) && n > 0);
+            const normalized = {
+              ...o,
+              order_number: orderNumbers.length ? Math.min(...orderNumbers) : o.order_number
+            };
+
+            // Dining sessions are the canonical source for consolidated bill totals.
+            // This also ensures an Admin-applied discount matches Cashier reprints.
+            if (o.session_id && o.dining_sessions) {
+              const session = o.dining_sessions;
+              normalized.subtotal = Number(session.bill_subtotal ?? o.subtotal ?? 0);
+              normalized.cgst = Number(session.bill_cgst ?? o.cgst ?? 0);
+              normalized.sgst = Number(session.bill_sgst ?? o.sgst ?? 0);
+              normalized.rounding = Number(session.bill_rounding ?? o.rounding ?? 0);
+              normalized.grand_total = Number(session.bill_grand_total ?? o.grand_total ?? 0);
+              normalized.bill_discount_type = session.bill_discount_type || null;
+              normalized.bill_discount_value = Number(session.bill_discount_value || 0);
+              normalized.bill_discount_amount = Number(session.bill_discount_amount || 0);
+              normalized.bill_discount_reason = session.bill_discount_reason || "";
+              normalized.payment_status = session.payment_status || o.payment_status;
+            }
+            return normalized;
+          });
 
         // ==========================================
         // EXPORT TO EXCEL LOGIC (WYSIWYG: Only exports what is filtered!)
@@ -2866,18 +2625,194 @@ async function renderAdminWorkspace(
     );
 
     const extraActions = [];
+    const panelAccess = window.__RMS_PANEL_ACCESS__;
+    const isAdminPanel = !managerMode && panelAccess?.panelId === "admin" &&
+      Boolean(panelAccess?.token) && Number.isFinite(panelAccess?.expiresAt) &&
+      panelAccess.expiresAt > Date.now();
+    const sessionStatus = String(order.dining_sessions?.status || "").toLowerCase();
+    const sessionPaymentStatus = String(order.dining_sessions?.payment_status || order.payment_status || "pending").toLowerCase();
+    const isSessionBill = Boolean(order.session_id);
+    const isEditableTakeawayBill = order.order_type === "takeaway" &&
+      ["bill_ready", "issued"].includes(String(order.billing_status || "").toLowerCase()) &&
+      !["closed"].includes(String(order.billing_status || "").toLowerCase()) &&
+      !["completed", "cancelled"].includes(String(order.status || "").toLowerCase()) &&
+      String(order.payment_status || "pending").toLowerCase() !== "paid";
+    const isEditableSessionBill = isSessionBill && sessionStatus === "bill_ready" &&
+      sessionPaymentStatus !== "paid" && !order.dining_sessions?.closed_at;
+    const canApplyBillDiscount = isAdminPanel && (isEditableSessionBill || isEditableTakeawayBill);
+    const currentDiscountType = String(
+      order.bill_discount_type || order.discount_type || order.dining_sessions?.bill_discount_type || ""
+    ).toLowerCase();
+    const currentDiscountValue = Number(
+      order.bill_discount_value ?? order.discount_value ?? order.dining_sessions?.bill_discount_value ?? 0
+    );
+    const currentDiscountAmount = Number(
+      order.bill_discount_amount ?? order.discount_amount ?? order.dining_sessions?.bill_discount_amount ?? 0
+    );
+
+    if (canApplyBillDiscount) {
+      extraActions.push({
+        label: currentDiscountAmount > 0 ? "Edit Discount" : "Discount",
+        icon: "ph-bold ph-percent",
+        className: "btn-quiet",
+        style: "font-weight:850;",
+        onClick: ({ close: closeReceipt }) => {
+          const subtotal = Math.max(0, Number(order.subtotal || 0));
+          const currentType = currentDiscountType === "amount" || currentDiscountType === "percent"
+            ? currentDiscountType
+            : "percent";
+          const { root: discountRoot, close: closeDiscount } = openAppModal({
+            title: currentDiscountAmount > 0 ? "Edit bill discount" : "Apply bill discount",
+            subtitle: "Available only while this bill is unpaid and open.",
+            body: `
+              <div class="tf-admin-discount-form">
+                <div class="tf-admin-discount-summary">
+                  <span>Bill subtotal</span>
+                  <strong>${escapeHtml(settings.currency_symbol || "₹")}${subtotal.toFixed(2)}</strong>
+                </div>
+                ${currentDiscountAmount > 0 ? `<div class="tf-admin-discount-summary"><span>Current discount</span><strong>−${escapeHtml(settings.currency_symbol || "₹")}${currentDiscountAmount.toFixed(2)}</strong></div>` : ""}
+                <label class="field"><span>Discount type *</span>
+                  <select data-admin-discount-type>
+                    <option value="percent" ${currentType === "percent" ? "selected" : ""}>Percentage (%)</option>
+                    <option value="amount" ${currentType === "amount" ? "selected" : ""}>Fixed amount (₹)</option>
+                  </select>
+                </label>
+                <label class="field"><span data-admin-discount-value-label>Discount percentage *</span>
+                  <input data-admin-discount-value type="number" min="0" max="${currentType === "percent" ? "100" : subtotal.toFixed(2)}" step="0.01" inputmode="decimal" value="${currentDiscountAmount > 0 ? escapeHtml(String(currentDiscountValue)) : ""}" placeholder="${currentType === "percent" ? "e.g. 10" : "e.g. 100"}" required />
+                </label>
+                <label class="field"><span>Reason (optional, saved in audit log)</span>
+                  <input data-admin-discount-reason type="text" maxlength="300" placeholder="e.g. Customer loyalty or service recovery" />
+                </label>
+                <div class="tf-admin-discount-preview" data-admin-discount-preview role="status">Enter a discount to see the estimated reduction.</div>
+                <p class="tf-admin-discount-note">Discount is applied before GST. The server recalculates tax and rounding. Enter 0 to remove an existing discount. Paid or closed bills cannot be changed.</p>
+              </div>
+            `,
+            actions: [
+              { label: "Cancel", className: "btn-quiet", onClick: ({ close }) => close() },
+              {
+                label: currentDiscountAmount > 0 ? "Save discount" : "Apply discount",
+                icon: "ph-check",
+                className: "btn-primary",
+                onClick: async ({ root, close, button }) => {
+                  const type = root.querySelector("[data-admin-discount-type]")?.value;
+                  const rawValue = root.querySelector("[data-admin-discount-value]")?.value;
+                  const reason = String(root.querySelector("[data-admin-discount-reason]")?.value || "").trim();
+                  const value = rawValue === "" ? NaN : Number(rawValue);
+                  const errorNode = root.querySelector("[data-admin-discount-error]");
+                  if (!Number.isFinite(value) || value < 0 || (type === "percent" && value > 100) || (type === "amount" && value > subtotal)) {
+                    if (errorNode) errorNode.textContent = "Enter a valid discount. Percentage must be 0–100%; rupee discount cannot exceed the subtotal.";
+                    else showToast("Invalid discount", "Percentage must be 0–100%; rupee discount cannot exceed the subtotal.", "error");
+                    return;
+                  }
+                  const access = window.__RMS_PANEL_ACCESS__;
+                  if (!access?.token || access.panelId !== "admin" || !Number.isFinite(access.expiresAt) || access.expiresAt <= Date.now()) {
+                    showToast("Admin access expired", "Verify the Admin PIN again before changing a bill.", "error");
+                    return;
+                  }
+                  button.disabled = true;
+                  const originalHTML = button.innerHTML;
+                  button.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i> Saving…';
+                  try {
+                    const { data, error } = await supabase.rpc("apply_admin_bill_discount", {
+                      p_session_id: isSessionBill ? order.session_id : null,
+                      p_order_id: isSessionBill ? null : order.id,
+                      p_discount_type: type,
+                      p_discount_value: value,
+                      p_reason: reason,
+                      p_panel_token: access.token
+                    });
+                    if (error) throw error;
+                    const result = Array.isArray(data) ? data[0] : data;
+                    if (!result || result.ok !== true) throw new Error("The server did not confirm the discount update.");
+
+                    order.subtotal = Number(result.subtotal ?? order.subtotal ?? 0);
+                    order.cgst = Number(result.cgst ?? order.cgst ?? 0);
+                    order.sgst = Number(result.sgst ?? order.sgst ?? 0);
+                    order.rounding = Number(result.rounding ?? order.rounding ?? 0);
+                    order.grand_total = Number(result.grand_total ?? order.grand_total ?? 0);
+                    if (isSessionBill) {
+                      order.bill_discount_type = result.discount_type || null;
+                      order.bill_discount_value = Number(result.discount_value || 0);
+                      order.bill_discount_amount = Number(result.discount_amount || 0);
+                      order.bill_discount_reason = result.discount_reason || "";
+                      order.dining_sessions = {
+                        ...order.dining_sessions,
+                        status: result.status || order.dining_sessions?.status,
+                        payment_status: result.payment_status || order.dining_sessions?.payment_status,
+                        bill_subtotal: order.subtotal,
+                        bill_cgst: order.cgst,
+                        bill_sgst: order.sgst,
+                        bill_rounding: order.rounding,
+                        bill_grand_total: order.grand_total,
+                        bill_discount_type: order.bill_discount_type,
+                        bill_discount_value: order.bill_discount_value,
+                        bill_discount_amount: order.bill_discount_amount,
+                        bill_discount_reason: order.bill_discount_reason
+                      };
+                    } else {
+                      order.discount_type = result.discount_type || null;
+                      order.discount_value = Number(result.discount_value || 0);
+                      order.discount_amount = Number(result.discount_amount || 0);
+                      order.discount_reason = result.discount_reason || "";
+                    }
+                    closeDiscount();
+                    closeReceipt();
+                    showToast(
+                      Number(result.discount_amount || 0) > 0 ? "Discount saved" : "Discount removed",
+                      `Updated bill total: ${escapeHtml(settings.currency_symbol || "₹")}${Number(result.grand_total || 0).toFixed(2)}.`,
+                      "success"
+                    );
+                    await reload();
+                    showAdminReceiptPreview(order);
+                  } catch (error) {
+                    showToast("Discount not saved", error.message || "The bill was not changed.", "error");
+                    button.disabled = false;
+                    button.innerHTML = originalHTML;
+                  }
+                }
+              }
+            ]
+          });
+
+          const typeControl = discountRoot.querySelector("[data-admin-discount-type]");
+          const valueControl = discountRoot.querySelector("[data-admin-discount-value]");
+          const valueLabel = discountRoot.querySelector("[data-admin-discount-value-label]");
+          const preview = discountRoot.querySelector("[data-admin-discount-preview]");
+          const updateDiscountPreview = () => {
+            const type = typeControl?.value || "percent";
+            const raw = valueControl?.value;
+            const value = raw === "" ? NaN : Number(raw);
+            if (valueLabel) valueLabel.textContent = type === "percent" ? "Discount percentage *" : "Discount amount (₹) *";
+            if (valueControl) valueControl.max = type === "percent" ? "100" : String(subtotal);
+            if (!Number.isFinite(value) || value < 0 || (type === "percent" && value > 100) || (type === "amount" && value > subtotal)) {
+              if (preview) preview.textContent = "Enter a valid discount. Fixed discount cannot exceed the bill subtotal.";
+              return;
+            }
+            const amount = Math.min(subtotal, Math.round((type === "percent" ? subtotal * value / 100 : value) * 100) / 100);
+            if (preview) preview.textContent = amount > 0
+              ? `Estimated discount: ${settings.currency_symbol || "₹"}${amount.toFixed(2)}. GST and final rounding are recalculated when saved.`
+              : "No discount will be applied. This removes any current discount.";
+          };
+          typeControl?.addEventListener("change", updateDiscountPreview);
+          valueControl?.addEventListener("input", updateDiscountPreview);
+          updateDiscountPreview();
+        }
+      });
+    }
+
     if (isBillReady) {
       extraActions.push({
-        label: "✓",
-        icon: "ph-bold ph-check-circle",
-        className: "btn-primary paid-icon-action",
-        style: "background: var(--success); border-color: var(--success); font-weight: 900; min-width:44px; width:44px; height:40px; padding:0; justify-content:center;",
-
+        label: "Paid",
+        className: "btn-primary paid-action-button",
+        style: "background: var(--success); border-color: var(--success); color: #fff; font-weight: 900;",
         onClick: ({ close }) => {
           openAppModal({
             title: "Confirm payment",
             subtitle: "Choose the method the customer actually used.",
-            body: `<label class="field"><span>Payment method *</span><select data-admin-receipt-payment-method required><option value="upi_qr">UPI QR</option><option value="cash">Cash</option></select></label>`,
+            body: `<label class="field"><span>Payment method *</span><select data-admin-receipt-payment-method required><option value="upi_qr">UPI QR</option>
+<option value="cash">Cash</option>
+<option value="card">Card</option>
+<option value="bank_transfer">Bank transfer</option></select></label>`,
             actions: [
               { label: "Back", className: "btn-quiet", onClick: ({ close: closeMethodModal }) => closeMethodModal() },
               {
@@ -2886,8 +2821,8 @@ async function renderAdminWorkspace(
                 onClick: async ({ root, close: closeMethodModal, button }) => {
                   const method = root.querySelector("[data-admin-receipt-payment-method]")?.value;
                   const access = window.__RMS_PANEL_ACCESS__;
-                  if (!["upi_qr", "cash"].includes(method)) {
-                    showToast("Choose a method", "Select UPI QR or Cash.", "error");
+                  if (!["upi_qr", "cash", "card", "bank_transfer"].includes(method)) {
+                    showToast("Choose a method", "Select a valid payment method.", "error");
                     return;
                   }
                   if (!access?.token || !["admin", "manager"].includes(access.panelId) || !Number.isFinite(access.expiresAt) || access.expiresAt <= Date.now()) {
@@ -2904,7 +2839,13 @@ async function renderAdminWorkspace(
                     if (error) throw error;
                     closeMethodModal();
                     close();
-                    showToast("Payment confirmed", `Payment recorded as ${method === "cash" ? "Cash" : "UPI QR"}.`, "success");
+                    const methodLabel = {
+                      upi_qr: "UPI QR",
+                      cash: "Cash",
+                      card: "Card",
+                      bank_transfer: "Bank transfer"
+                    }[method] || method;
+                    showToast("Payment confirmed", `Payment recorded as ${methodLabel}.`, "success");
                     await reload();
                   } catch (error) {
                     showToast("Could not record payment", error.message || "Please try again.", "error");
@@ -2922,6 +2863,14 @@ async function renderAdminWorkspace(
       order,
       settings,
       tables,
+      paymentMethod: order.dining_sessions?.payment_method || order.payment_method || null,
+      items: (order.order_items || [])
+        .filter(item => String(item.serving_status || "").toLowerCase() !== "cancelled")
+        .sort((a, b) =>
+          Number(a.receipt_round_number || 0) - Number(b.receipt_round_number || 0) ||
+          (Date.parse(a.receipt_order_created_at || "") || 0) - (Date.parse(b.receipt_order_created_at || "") || 0) ||
+          (Date.parse(a.created_at || "") || 0) - (Date.parse(b.created_at || "") || 0)
+        ),
       modalTitle: "Order #" + order.order_number + " Bill",
       modalSubtitle: isBillReady
         ? "Print the bill with its payment QR, then confirm payment after staff verifies receipt."
@@ -4244,7 +4193,10 @@ async function renderAdminWorkspace(
            openAppModal({
               title: `Close Table ${table.table_no}?`,
               subtitle: "The bill must be generated before staff can confirm payment.",
-              body: `<div class="danger-confirm"><div class="danger-confirm-icon" style="background: var(--success-soft); color: var(--success);"><i class="ph-bold ph-check-circle"></i></div><h3>Confirm payment?</h3><p>Customer total is <strong>${money(grandTotal, settings.currency_symbol)}</strong>.</p><label class="field" style="display:block;text-align:left;margin-top:14px;"><span>Payment method *</span><select data-admin-close-payment-method required><option value="upi_qr">UPI QR</option><option value="cash">Cash</option></select></label><p style="font-size:12px;color:var(--muted);">Only continue after the customer has paid.</p></div>`,
+              body: `<div class="danger-confirm"><div class="danger-confirm-icon" style="background: var(--success-soft); color: var(--success);"><i class="ph-bold ph-check-circle"></i></div><h3>Confirm payment?</h3><p>Customer total is <strong>${money(grandTotal, settings.currency_symbol)}</strong>.</p><label class="field" style="display:block;text-align:left;margin-top:14px;"><span>Payment method *</span><select data-admin-close-payment-method required><option value="upi_qr">UPI QR</option>
+<option value="cash">Cash</option>
+<option value="card">Card</option>
+<option value="bank_transfer">Bank transfer</option></select></label><p style="font-size:12px;color:var(--muted);">Only continue after the customer has paid.</p></div>`,
               actions: [
                 { label: "Cancel", className: "btn-quiet", onClick: (ctx) => ctx.close() },
                 { label: "Yes, Close Table", className: "btn-primary", onClick: async (ctx) => {

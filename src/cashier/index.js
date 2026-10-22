@@ -4,6 +4,8 @@ import { supabase } from "../core/supabase.js";
 import { showToast, openAppModal } from "../components/navigation.js";
 import { installPanelSignOut, requestPanelSignOut } from "../core/panelSession.js";
 
+let cashierPaymentOutsideClickInstalled = false;
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -485,14 +487,44 @@ export async function render({ mount, route }) {
             ${isTakeaway ? "Takeaway bill" : "Dine-in bill request"}
           </div>
 
-          <label class="field" style="display:block;margin-top:12px;">
-            <span>Payment method required before bill generation</span>
-            <select data-cashier-queue-payment-method aria-label="Choose payment method before generating bill" style="width:100%;">
-              <option value="">Choose payment method…</option>
-              <option value="upi_qr">UPI QR</option>
-              <option value="cash">Cash</option>
-            </select>
-          </label>
+          <div class="field tf-payment-field" style="display:block;margin-top:12px;">
+            <span class="tf-payment-field-label">Payment method <b>Required</b></span>
+            <div class="tf-payment-picker" data-cashier-payment-picker>
+              <button
+                type="button"
+                class="tf-payment-trigger"
+                data-payment-trigger
+                aria-haspopup="listbox"
+                aria-expanded="false"
+              >
+                <span class="tf-payment-selected-icon"><i class="ph-bold ph-wallet"></i></span>
+                <span class="tf-payment-selected-text" data-payment-label>Choose payment method</span>
+                <i class="ph-bold ph-caret-down tf-payment-caret"></i>
+              </button>
+              <div class="tf-payment-options" data-payment-options role="listbox" hidden>
+                <button type="button" role="option" aria-selected="false" data-payment-value="upi_qr">
+                  <span class="tf-payment-option-icon"><i class="ph-bold ph-qr-code"></i></span>
+                  <span><strong>UPI QR</strong><small>Scan and pay</small></span>
+                  <i class="ph-bold ph-check tf-payment-option-check"></i>
+                </button>
+                <button type="button" role="option" aria-selected="false" data-payment-value="cash">
+                  <span class="tf-payment-option-icon"><i class="ph-bold ph-money"></i></span>
+                  <span><strong>Cash</strong><small>Pay at the counter</small></span>
+                  <i class="ph-bold ph-check tf-payment-option-check"></i>
+                </button>
+                <button type="button" role="option" aria-selected="false" data-payment-value="card">
+                  <span class="tf-payment-option-icon"><i class="ph-bold ph-credit-card"></i></span>
+                  <span><strong>Card</strong><small>Debit or credit card</small></span>
+                  <i class="ph-bold ph-check tf-payment-option-check"></i>
+                </button>
+                <button type="button" role="option" aria-selected="false" data-payment-value="bank_transfer">
+                  <span class="tf-payment-option-icon"><i class="ph-bold ph-bank"></i></span>
+                  <span><strong>Bank transfer</strong><small>Direct account transfer</small></span>
+                  <i class="ph-bold ph-check tf-payment-option-check"></i>
+                </button>
+              </div>
+            </div>
+          </div>
           <button
             type="button"
             class="btn btn-primary"
@@ -512,11 +544,71 @@ export async function render({ mount, route }) {
 
     const errorNode = mount.querySelector("[data-cashier-queue-error]");
 
-    content.querySelectorAll("[data-cashier-queue-payment-method]").forEach(select => {
-      select.addEventListener("change", () => {
-        const button = select.closest("article")?.querySelector("[data-cashier-generate-bill]");
-        if (button) button.disabled = !["upi_qr", "cash"].includes(select.value);
+    // One delegated listener is enough for every queue row. Installing a
+    // document listener inside each picker would leak handlers on every refresh.
+    if (!cashierPaymentOutsideClickInstalled) {
+      document.addEventListener("click", event => {
+        const clickedPicker = event.target?.closest?.("[data-cashier-payment-picker]");
+        document.querySelectorAll("[data-cashier-payment-picker]").forEach(openPicker => {
+          if (openPicker === clickedPicker) return;
+          const menu = openPicker.querySelector("[data-payment-options]");
+          const trigger = openPicker.querySelector("[data-payment-trigger]");
+          if (menu) menu.hidden = true;
+          trigger?.setAttribute("aria-expanded", "false");
+          openPicker.classList.remove("is-open");
+        });
       });
+      cashierPaymentOutsideClickInstalled = true;
+    }
+
+    content.querySelectorAll("[data-cashier-payment-picker]").forEach(picker => {
+      const trigger = picker.querySelector("[data-payment-trigger]");
+      const options = picker.querySelector("[data-payment-options]");
+      const label = picker.querySelector("[data-payment-label]");
+      const article = picker.closest("article");
+      const generateButton = article?.querySelector("[data-cashier-generate-bill]");
+
+      const closeOptions = () => {
+        options.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+        picker.classList.remove("is-open");
+      };
+
+      trigger.addEventListener("click", () => {
+        const willOpen = options.hidden;
+        content.querySelectorAll("[data-payment-options]").forEach(menu => {
+          menu.hidden = true;
+          menu.closest("[data-cashier-payment-picker]")?.classList.remove("is-open");
+          menu.closest("[data-cashier-payment-picker]")?.querySelector("[data-payment-trigger]")?.setAttribute("aria-expanded", "false");
+        });
+
+        options.hidden = !willOpen;
+        trigger.setAttribute("aria-expanded", String(willOpen));
+        picker.classList.toggle("is-open", willOpen);
+      });
+
+      picker.querySelectorAll("[data-payment-value]").forEach(option => {
+        option.addEventListener("click", () => {
+          const value = option.dataset.paymentValue;
+          const title = option.querySelector("strong")?.textContent || "Payment method";
+          const icon = option.querySelector(".tf-payment-option-icon")?.innerHTML || "";
+
+          picker.dataset.value = value;
+          label.textContent = title;
+          picker.querySelector(".tf-payment-selected-icon").innerHTML = icon;
+
+          picker.querySelectorAll("[data-payment-value]").forEach(item => {
+            const selected = item.dataset.paymentValue === value;
+            item.setAttribute("aria-selected", String(selected));
+            item.classList.toggle("is-selected", selected);
+          });
+
+          if (generateButton) generateButton.disabled = false;
+          closeOptions();
+        });
+      });
+
+      if (generateButton) generateButton.disabled = true;
     });
 
     content.querySelectorAll("[data-cashier-generate-bill]").forEach(button => {
@@ -546,9 +638,9 @@ export async function render({ mount, route }) {
         const orderType = button.dataset.orderType;
         const orderId = button.dataset.orderId || null;
         const sessionId = button.dataset.sessionId || null;
-        const paymentMethod = button.closest("article")?.querySelector("[data-cashier-queue-payment-method]")?.value;
-        if (!["upi_qr", "cash"].includes(paymentMethod)) {
-          if (errorNode) errorNode.textContent = "Choose UPI QR or Cash before generating the bill.";
+        const paymentMethod = button.closest("article")?.querySelector("[data-cashier-payment-picker]")?.dataset.value;
+        if (!["upi_qr", "cash", "card", "bank_transfer"].includes(paymentMethod)) {
+          if (errorNode) errorNode.textContent = "Choose a payment method before generating the bill.";
           return;
         }
 
@@ -573,6 +665,7 @@ export async function render({ mount, route }) {
 
         if (errorNode) errorNode.textContent = "";
 
+        let billWasGenerated = false;
         try {
           /*
            * Database contract installed by the TableForge master migration:
@@ -633,6 +726,11 @@ export async function render({ mount, route }) {
           if (orderType === "dine_in" && !sessionId) {
             throw new Error("The dining session could not be verified.");
           }
+          billWasGenerated = true;
+
+          if (paymentMethod === "upi_qr" && !String(bill.settings.upi_id || "").trim()) {
+            throw new Error("UPI QR is not configured for this restaurant. Add the UPI ID under Admin → Settings, or choose another payment method.");
+          }
 
           const { openUniversalReceipt } = await import(
             "../components/navigation.js"
@@ -657,7 +755,7 @@ export async function render({ mount, route }) {
                 : `Dine-in · Table ${bill.table_label ?? ""}`),
             modalTitle: `Bill #${bill.order.order_number ?? ""}`,
             modalSubtitle:
-              `Payment method: ${paymentMethod === "cash" ? "Cash" : "UPI QR"}. Confirm payment only after the customer has paid.`,
+              `Payment method: ${{ upi_qr: "UPI QR", cash: "Cash", card: "Card", bank_transfer: "Bank transfer" }[paymentMethod] || "Selected method"}. Confirm payment only after the customer has paid.`,
             paymentMethod,
             allowPdf: true,
             extraActions: [{
@@ -674,6 +772,8 @@ export async function render({ mount, route }) {
                       <select data-cashier-payment-method required disabled>
                         <option value="upi_qr" ${paymentMethod === "upi_qr" ? "selected" : ""}>UPI QR</option>
                         <option value="cash" ${paymentMethod === "cash" ? "selected" : ""}>Cash</option>
+                        <option value="card" ${paymentMethod === "card" ? "selected" : ""}>Card</option>
+                        <option value="bank_transfer" ${paymentMethod === "bank_transfer" ? "selected" : ""}>Bank transfer</option>
                       </select>
                     </label>
                     <p style="font-size:12px;color:var(--muted);margin-top:12px;">
@@ -688,8 +788,8 @@ export async function render({ mount, route }) {
                       onClick: async ({ root, close: closeMethodModal, button }) => {
                         const method = root.querySelector("[data-cashier-payment-method]")?.value;
                         const access = window.__RMS_PANEL_ACCESS__;
-                        if (!["upi_qr", "cash"].includes(method)) {
-                          showToast("Choose a method", "Select UPI QR or Cash.", "error");
+                        if (!["upi_qr", "cash", "card", "bank_transfer"].includes(method)) {
+                          showToast("Choose a method", "Select a valid payment method.", "error");
                           return;
                         }
                         if (!access?.token || !["cashier", "manager"].includes(access.panelId) || !Number.isFinite(access.expiresAt) || access.expiresAt <= Date.now()) {
@@ -709,7 +809,13 @@ export async function render({ mount, route }) {
                           if (error) throw error;
                           closeMethodModal();
                           close();
-                          showToast("Payment confirmed", `Payment recorded as ${method === "cash" ? "Cash" : "UPI QR"}.`, "success");
+                          const methodLabel = {
+                            upi_qr: "UPI QR",
+                            cash: "Cash",
+                            card: "Card",
+                            bank_transfer: "Bank transfer"
+                          }[method] || method;
+                          showToast("Payment confirmed", `Payment recorded as ${methodLabel}.`, "success");
                           if (activeView === "queue") await loadBillQueue();
                           else renderHome();
                         } catch (error) {
@@ -730,8 +836,12 @@ export async function render({ mount, route }) {
           console.error("Cashier bill generation failed:", error);
 
           if (errorNode) {
-            errorNode.textContent =
-              "The bill could not be prepared. Please try again.";
+            const message = String(error?.message || "").trim();
+            errorNode.textContent = billWasGenerated
+              ? `The bill was generated, but its payment method was not saved: ${message || "Database error"}. Apply the SQL fix, then retry; do not mark this bill paid until payment is received.`
+              : message
+                ? `Bill generation failed: ${message}`
+                : "Bill generation failed. Check your connection and try again.";
           }
 
           button.disabled = false;

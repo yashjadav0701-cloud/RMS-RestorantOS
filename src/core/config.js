@@ -1,5 +1,5 @@
 /** Four Flavours global configuration. */
-export const APP_VERSION = "2.0.1";
+export const APP_VERSION = "2.0.3";
 export const VERSION_SUFFIX = `?v=${encodeURIComponent(APP_VERSION)}`;
 
 export const ROUTES = Object.freeze({

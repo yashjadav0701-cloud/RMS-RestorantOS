@@ -20,8 +20,8 @@ test("Captain workspace URL is mapped to its actual module", async () => {
 
 test("Cashier POS cannot offer a second order-type selector", async () => {
   const pos = await source("src/pos/index.js");
-  assert.match(pos, /\(isCaptainPanel\s*\|\|\s*isCashierPanel\)\s*\?\s*""\s*:/);
-  assert.match(pos, /if\s*\(isCashierPanel\s*&&\s*oType\s*!==\s*"takeaway"\)/);
+  assert.match(pos, /\$\{isCashierPanel\s*\?\s*""\s*:/);
+  assert.match(pos, /if\s*\(isCashierPanel\s*&&\s*nextType\s*!==\s*"takeaway"\)/);
 });
 
 test("every operational panel has a sign-out action and panel-only sign-out semantics", async () => {
@@ -84,4 +84,14 @@ test("inventory report migration handles custom ranges and applies date bounds t
   const patch = await source("sql/DATE_RANGE_REPORT_PATCH.sql");
   assert.match(patch, /CREATE OR REPLACE FUNCTION public\.get_inventory_usage_report/);
   assert.match(patch, /GRANT EXECUTE ON FUNCTION public\.get_inventory_usage_report\(text,text\) TO authenticated/);
+});
+
+
+test("menu opens directly with All cuisine and All category instead of a cuisine landing page", async () => {
+  const pos = await source("src/pos/index.js");
+  assert.match(pos, /let activeCuisine = null/);
+  assert.match(pos, /let activeSubCategory = "All"/);
+  assert.match(pos, /data-mega-cuisine="All"/);
+  assert.match(pos, /activeCuisine\s*&&\s*pCuisine\s*!==\s*activeCuisine/);
+  assert.doesNotMatch(pos, /Choose a Cuisine/);
 });

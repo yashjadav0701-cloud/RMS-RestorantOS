@@ -18,7 +18,13 @@ test('master migration is transactional and avoids destructive table rebuilds', 
 test('all frontend RPCs missing from the audited database have migration definitions', async () => {
   const inventory = JSON.parse(await read('docs/release/RPC_CONTRACT_INVENTORY.json'));
   const catalog = JSON.parse(await read('tests/fixtures/live-public-rpc-catalog.json'));
-  const sql = await read('sql/MASTER_MIGRATION_TABLEFORGE.sql');
+  const migrationFiles = [
+    'sql/MASTER_MIGRATION_TABLEFORGE.sql',
+    'sql/TABLEFORGE_WORKFLOW_FIX_PATCH.sql',
+    'sql/IMMEDIATE_BILL_AND_ANALYTICS_FIX.sql',
+    'sql/ADMIN_BILL_DISCOUNT_PATCH.sql'
+  ];
+  const sql = (await Promise.all(migrationFiles.map(read))).join('\n');
   const missing = Object.entries(inventory.rpc_calls)
     .filter(([name]) => !catalog.functions.includes(name))
     .map(([name]) => name);

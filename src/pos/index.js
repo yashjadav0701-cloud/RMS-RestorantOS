@@ -639,10 +639,7 @@ export async function render({ mount, route }) {
       <header class="app-topbar pos-topbar">
         <div class="topbar-side topbar-left" style="gap: 14px; align-items: center; display: flex;">
           ${isCustomerMode ? `
-            <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; width: auto; height: 42px; padding: 4px 12px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 6px; flex-shrink: 0;">
-              <i class="ph-bold ph-armchair" style="color: var(--gold-400); font-size: 18px; line-height: 1; margin-bottom: 4px;"></i>
-              <span style="color: #fff; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; line-height: 1; text-transform: uppercase; white-space: nowrap;">Table ${escapeHtml(currentTableObj?.table_no ?? "—")}</span>
-            </div>
+
           ` : (isCaptainPanel || isCashierPanel) ? `
             <button
               class="icon-btn icon-btn-dark"
@@ -652,9 +649,7 @@ export async function render({ mount, route }) {
             >
               <i class="ph-bold ph-arrow-left"></i>
             </button>
-            <span style="font-size: 13px; font-weight: 800; color: var(--forest-900);">
-              ${isCashierPanel ? "Cashier" : "Captain"}
-            </span>
+
           ` : `
             <button class="icon-btn icon-btn-dark" id="pos-menu" title="Open menu" aria-label="Open menu" style="position: relative;">
               <i class="ph ph-list"></i>
@@ -666,7 +661,9 @@ export async function render({ mount, route }) {
              : `<div style="font-weight: 900; font-size: 1.2rem; color: var(--forest-950);">${escapeHtml(restaurant.name)}</div>`
           }
         </div>
-        <div class="brand-center pos-brand-center main-logo-only"></div>
+        <div class="brand-center pos-brand-center main-logo-only">
+          ${isCustomerMode ? `<button type="button" class="customer-table-selector" id="customer-table-selector" aria-label="Current table. Table selection is locked to this QR code."><i class="ph-bold ph-armchair"></i><span>Table ${escapeHtml(currentTableObj?.table_no ?? "—")}</span><i class="ph-bold ph-caret-down"></i></button>` : ``}
+        </div>
         <div class="topbar-side topbar-right">
           <button class="icon-btn icon-btn-dark" id="pos-search-toggle" title="Search"><i class="ph ph-magnifying-glass"></i></button>
           ${isCustomerMode ? `
@@ -806,6 +803,9 @@ export async function render({ mount, route }) {
   const searchOverlay = mount.querySelector("#pos-search-overlay");
 
   const customerCaptainButton = mount.querySelector("#customer-call-captain");
+  mount.querySelector("#customer-table-selector")?.addEventListener("click", () => {
+    showToast(`Table ${currentTableObj?.table_no ?? "—"}`, "Your order is securely linked to this table's QR session. To switch tables, scan the QR code at the other table.", "warning");
+  });
 
   const handleCustomerCaptainClick = () => {
     openCaptainRequestConfirmation();
@@ -1182,16 +1182,54 @@ export async function render({ mount, route }) {
     return "ph-fork-knife";
   }
 
+  // Categories are a customer-facing taxonomy, independent of the stored cuisine prefix.
+  // Existing database values such as "Indian - Salads" and "Continental - Salads"
+  // therefore converge on the same global filter without requiring a risky DB migration.
+  function getProductCuisine(product) {
+    const parts = String(product.category || "").split(" - ");
+    return parts.length > 1 ? parts[0].trim() : (product.cuisine || "Other");
+  }
+
+  function getGlobalCategory(product) {
+    const parts = String(product.category || "").split(" - ");
+    const raw = (parts.length > 1 ? parts.slice(1).join(" - ") : parts[0]).trim();
+    const value = raw.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim();
+    const rules = [
+      [/\b(soup|soups)\b/, "Soups"],
+      [/\b(salad|salads)\b/, "Salads"],
+      [/\b(starter|starters|appetizer|appetizers|veg starter|chinese starter)\b/, "Starters"],
+      [/\b(platter|platters|kebab platter)\b/, "Platters"],
+      [/\b(papad|papadum|papadums)\b/, "Papad"],
+      [/\b(sizzler|sizzlers)\b/, "Sizzlers"],
+      [/\b(main course|mains|curries|curry)\b/, "Main Course"],
+      [/\b(dal|daal|lentils)\b/, "Dal & Lentils"],
+      [/\b(bread|breads|roti|naan|paratha)\b/, "Indian Breads"],
+      [/\b(rice|biryani|pulao)\b/, "Rice & Biryani"],
+      [/\b(noodle|noodles|chow mein)\b/, "Noodles"],
+      [/\b(pasta|spaghetti|macaroni|lasagna|lasagne)\b/, "Pasta"],
+      [/\b(pizza|pizzas)\b/, "Pizza"],
+      [/\b(taco|tacos|burrito|burritos|quesadilla|quesadillas|wrap|wraps)\b/, "Tacos & Wraps"],
+      [/\b(baked|bakes|bake|gratin|mac and cheese)\b/, "Baked Dishes"],
+      [/\b(quick bite|quick bites|sandwich|sandwiches|burger|burgers|fries|garlic bread|bruschetta|nuggets|nachos)\b/, "Quick Bites"],
+      [/\b(dessert|desserts|ice cream|icecream|sundae|sweet|sweets|brownie|cake|cakes)\b/, "Desserts"],
+      [/\b(tea|coffee|tea and coffee|hot beverages)\b/, "Tea & Coffee"],
+      [/\b(traditional drink|traditional drinks|lassi|chaas)\b/, "Traditional Drinks"],
+      [/\b(signature cooler|signature coolers|cooler|coolers|mocktail|mocktails)\b/, "Signature Coolers"],
+      [/\b(shake|shakes|milkshake|milkshakes|frappe|frappes)\b/, "Shakes & Frappes"],
+      [/\b(beverage|beverages|drink|drinks|juice|juices|aerated)\b/, "Other Drinks"]
+    ];
+    for (const [pattern, label] of rules) if (pattern.test(value)) return label;
+    if (!raw || value === "other" || value === "others") return "Other";
+    return raw.split(/\s+/).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+  }
+
   function getAvailableSubCategories() {
-    if (!activeCuisine) return [];
     const subs = new Set();
-    products.forEach(p => {
-      const parts = String(p.category || "").split(" - ");
-      if (parts[0].trim() === activeCuisine) {
-        subs.add(parts[1]?.trim() || "Others");
-      }
+    products.forEach(product => {
+      if (activeCuisine && getProductCuisine(product) !== activeCuisine) return;
+      subs.add(getGlobalCategory(product));
     });
-    return ["All", ...Array.from(subs)];
+    return ["All", ...Array.from(subs).sort((a, b) => a.localeCompare(b))];
   }
 
   function renderProducts() {
@@ -1200,149 +1238,72 @@ export async function render({ mount, route }) {
 
     renderActionBar();
 
-    if (!activeCuisine && !searchTerm) {
-      area.innerHTML = `
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: calc(100vh - 180px); padding-bottom: 20px;">
-          ${isCustomerMode ? '' : `
-            <section class="pos-toolbar-row" style="display: flex; justify-content: center; width: 100%; gap: 8px; margin-bottom: 24px; flex-wrap: nowrap; overflow-x: auto;">
-              <button class="pos-toolbar-pill ${state.getState().orderType === 'dine_in' ? 'active' : ''}" data-order-type="dine_in" style="height: 44px; padding: 0 14px; font-size: 14px; font-weight: 800; gap: 7px; border-radius: 12px; border: 1px solid ${state.getState().orderType === 'dine_in' ? 'transparent' : 'var(--line)'}; white-space: nowrap; flex-shrink: 0; ${isCashierPanel ? 'display:none;' : ''}">
-                <i class="ph-bold ph-fork-knife" style="font-size: 18px; line-height: 1;"></i>
-                <span style="white-space: nowrap;">Dine-in</span>
-              </button>
-              ${(isCaptainPanel || isCashierPanel) ? "" : `
-                <button class="pos-toolbar-pill ${state.getState().orderType === 'takeaway' ? 'active' : ''}" data-order-type="takeaway" style="height: 44px; padding: 0 14px; font-size: 14px; font-weight: 800; gap: 7px; border-radius: 12px; border: 1px solid ${state.getState().orderType === 'takeaway' ? 'transparent' : 'var(--line)'}; color: var(--forest-800); white-space: nowrap; flex-shrink: 0;">
-                  <i class="ph-bold ph-shopping-bag" style="font-size: 18px; color: var(--forest-800); line-height: 1;"></i>
-                  <span style="white-space: nowrap;">Takeaway</span>
-                </button>
-              `}
-              <div class="pos-toolbar-pill ${!state.getState().tableId && state.getState().orderType === 'dine_in' ? '' : 'has-table'}" id="pos-table-wrap" style="height: 44px; padding: 0 14px; font-size: 14px; font-weight: 800; gap: 7px; border-radius: 12px; border: 1px solid var(--line); color: var(--forest-800); white-space: nowrap; flex-shrink: 0; cursor: pointer; transition: all 0.2s ease; ${state.getState().orderType === 'takeaway' ? 'opacity: 0.4; pointer-events: none; background: rgba(0,0,0,0.04); border-color: transparent;' : ''}${isCashierPanel ? 'display:none;' : ''}">
-                <span class="selected-text" id="pos-table-display" style="display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 800; color: var(--forest-800); white-space: nowrap;">
-                  <i class="ph-bold ph-armchair" style="font-size: 18px; color: var(--forest-800); line-height: 1;"></i>
-                  <span style="white-space: nowrap;">${state.getState().tableId && state.getState().orderType === 'dine_in' ? `Table ${tables.find(t => t.id === state.getState().tableId)?.table_no || ''}` : 'Table'}</span>
-                  <i class="ph-bold ph-caret-down" style="font-size: 16px; color: var(--forest-800); line-height: 1;"></i>
-                </span>
-              </div>
-            </section>
-          `}
-          <div class="drill-down-header" style="display: flex; justify-content: center; align-items: center; margin-bottom: 24px; width: 100%;">
-            <h2 style="font-size: 22px; margin: 0; text-align: center;">Choose a Cuisine</h2>
-          </div>
-          <div class="cuisine-hero-grid" id="pos-cuisine-grid" style="width: 100%; margin: 0 auto; justify-content: center; max-width: 800px;">
-            ${cuisines.map(c => `
-              <div class="cuisine-hero-card" data-cuisine="${escapeHtml(c.name)}">
-                <div class="cuisine-hero-bg">
-                  ${c.image_url ? `<img src="${versionedAsset(c.image_url)}" alt="">` : `<div class="product-placeholder"><i class="ph ph-image"></i></div>`}
-                </div>
-                <div class="cuisine-hero-overlay">
-                  <h3>${escapeHtml(c.name)}</h3>
-                </div>
-              </div>
-            `).join("")}
-          </div>
-        </div>
-      `;
-
-      area.querySelectorAll("[data-cuisine]").forEach(card => {
-        card.addEventListener("click", () => {
-          card.classList.add("pressed");
-          setTimeout(() => {
-            activeCuisine = card.dataset.cuisine;
-            activeSubCategory = "All";
-            searchTerm = "";
-            const searchInput = mount.querySelector("#pos-search");
-            if (searchInput) searchInput.value = "";
-            window.history.pushState({ view: "cuisine", cuisine: activeCuisine }, "", "#" + encodeURIComponent(activeCuisine));
-            renderProducts();
-          }, 150);
-        });
-      });
-
-      if (!isCustomerMode) {
-        // Amazon-style seamless context switch (dims the workspace, disables clicks)
-        const triggerContextSwitch = (callback) => {
-            const workspace = mount.querySelector("#pos-dynamic-area") || mount;
-            
-            // Deactivate the page visually
-            workspace.style.transition = "opacity 0.15s ease";
-            workspace.style.opacity = "0.4";
-            workspace.style.pointerEvents = "none";
-            document.body.style.cursor = "wait";
-
-            // Brief delay to make the state-change feel tactile
-            setTimeout(() => {
-              callback();
-              
-              // Reactivate the page
-              workspace.style.opacity = "1";
-              workspace.style.pointerEvents = "auto";
-              document.body.style.cursor = "default";
-              
-              setTimeout(() => { workspace.style.transition = ""; }, 150);
-            }, 250); 
-        };
-
-        const tableWrapBtn = area.querySelector("#pos-table-wrap");
-        tableWrapBtn?.addEventListener("click", () => {
-          if (state.getState().orderType === "takeaway") return;
-          promptTableSelection((selectedTable) => {
-            // Trigger animation only if a free table was selected (Occupied tables jump to the Live Tab directly)
-            if (selectedTable) triggerContextSwitch(() => renderProducts());
-          });
-        });
-
-        area.querySelectorAll("[data-order-type]").forEach(button => {
-          button.addEventListener("click", () => {
-            const oType = button.dataset.orderType;
-
-            if (isCaptainPanel && oType !== "dine_in") {
-              showToast(
-                "Dine-in only",
-                "Takeaway orders must be created from the Cashier workspace.",
-                "error"
-              );
-              return;
-            }
-
-            if (isCashierPanel && oType !== "takeaway") {
-              showToast(
-                "Takeaway only",
-                "Cashier can create takeaway orders only.",
-                "error"
-              );
-              return;
-            }
-
-            if (state.getState().orderType === oType) return;
-            
-            triggerContextSwitch(() => {
-              state.setOrderType(oType);
-              if (oType === "takeaway") state.setTable(null);
-              renderProducts(); 
-            });
-          });
-        });
-      }
-
-      return;
-    }
-
     const subCategories = getAvailableSubCategories();
+    // Build the All cuisines thumbnail from the actual cuisine images so the
+    // control previews the combined menu rather than showing a generic icon.
+    const allCuisineImages = cuisines
+      .filter(c => c.image_url && String(c.image_url).trim())
+      .slice(0, 4);
+    const allCuisineCollage = Array.from({ length: 4 }, (_, index) => {
+      const cuisine = allCuisineImages[index];
+      return cuisine
+        ? `<span class="all-cuisine-tile"><img src="${escapeHtml(versionedAsset(cuisine.image_url))}" alt=""></span>`
+        : `<span class="all-cuisine-tile all-cuisine-tile-empty"><i class="ph-bold ph-fork-knife"></i></span>`;
+    }).join("");
     
     let html = ``;
     if (!searchTerm) {
-      const activeTable = state.getState().orderType === 'dine_in' ? tables.find(t => t.id === state.getState().tableId) : null;
-      html += `
+      const activeTable = isCustomerMode ? currentTableObj : (state.getState().orderType === 'dine_in' ? tables.find(t => t.id === state.getState().tableId) : null);
+      if (isCustomerMode) {
+        const customerCategories = getAvailableSubCategories();
+        html += `
+          <section class="customer-menu-filters" aria-label="Filter menu">
+            <div class="customer-filter-heading"><span>Browse menu</span><button type="button" class="customer-reset-filters" id="customer-reset-filters">Reset filters</button></div>
+            <div class="customer-filter-label">Cuisine</div>
+            <div class="customer-filter-row" role="group" aria-label="Filter by cuisine">
+              <button type="button" class="customer-filter-chip ${!activeCuisine ? 'active' : ''}" data-customer-cuisine="All">All cuisines</button>
+              ${cuisines.map(c => `<button type="button" class="customer-filter-chip ${c.name === activeCuisine ? 'active' : ''}" data-customer-cuisine="${escapeHtml(c.name)}">${escapeHtml(c.name)}</button>`).join("")}
+            </div>
+            <div class="customer-filter-label customer-category-label">Category</div>
+            <div class="customer-filter-row customer-category-row" role="group" aria-label="Filter by category">
+              ${customerCategories.map(cat => `<button type="button" class="customer-filter-chip ${activeSubCategory === cat ? 'active' : ''}" data-customer-category="${escapeHtml(cat)}">${escapeHtml(cat === 'All' ? 'All categories' : cat)}</button>`).join("")}
+            </div>
+            <div class="customer-results-context"><span>${activeCuisine ? escapeHtml(activeCuisine) : 'All cuisines'}</span><i class="ph-bold ph-circle-small"></i><span>${activeSubCategory === 'All' ? 'All categories' : escapeHtml(activeSubCategory)}</span></div>
+          </section>
+        `;
+      } else html += `
+        ${isCashierPanel ? "" : `
+          <section class="pos-toolbar-row pos-inline-workflow" aria-label="Order type and table" style="display:flex;justify-content:center;align-items:center;gap:8px;margin:0 0 10px;overflow-x:auto;">
+            <button type="button" class="pos-toolbar-pill ${state.getState().orderType === 'dine_in' ? 'active' : ''}" data-pos-order-type="dine_in" aria-pressed="${state.getState().orderType === 'dine_in'}" style="flex:0 0 auto;min-width:100px;padding:0 14px;${isCaptainPanel ? 'cursor:default;' : ''}">
+              <i class="ph-bold ph-fork-knife"></i><span>Dine-in</span>
+            </button>
+            <button type="button" id="pos-table-selector" class="pos-toolbar-pill ${state.getState().tableId && state.getState().orderType === 'dine_in' ? 'has-table' : ''}" ${state.getState().orderType === 'takeaway' ? 'disabled' : ''} aria-label="Choose table" style="flex:0 0 auto;min-width:116px;padding:0 14px;${state.getState().orderType === 'takeaway' ? 'opacity:.4;pointer-events:none;' : ''}">
+              <i class="ph-bold ph-armchair"></i><span>${state.getState().tableId && state.getState().orderType === 'dine_in' ? `Table ${escapeHtml(tables.find(t => t.id === state.getState().tableId)?.table_no || '')}` : 'Choose table'}</span><i class="ph-bold ph-caret-down"></i>
+            </button>
+            ${isCaptainPanel ? "" : `
+              <button type="button" class="pos-toolbar-pill ${state.getState().orderType === 'takeaway' ? 'active' : ''}" data-pos-order-type="takeaway" aria-pressed="${state.getState().orderType === 'takeaway'}" style="flex:0 0 auto;min-width:100px;padding:0 14px;">
+                <i class="ph-bold ph-shopping-bag"></i><span>Takeaway</span>
+              </button>
+            `}
+          </section>
+        `}
         <div id="parity-unified-header">
           <div id="mega-dropdown-wrap" class="dropdown-anchor-wrap" style="flex: 1; display: flex; justify-content: flex-start; position: relative;">
-            <button id="cuisine-main-toggle" class="cuisine-center-toggle">
-              <span>${escapeHtml(activeCuisine)}</span>
+            <button id="cuisine-main-toggle" class="cuisine-center-toggle" aria-haspopup="true" aria-expanded="false">
+              <span>${escapeHtml(activeCuisine || "Cuisines")}</span>
               <i class="ph-bold ph-caret-down" style="font-size: 1.1rem; transition: transform 0.3s ease;"></i>
             </button>
 
             <div class="cuisine-mega-dropdown" id="cuisine-mega-dropdown">
               <div class="cuisine-mega-grid">
+                <div class="mini-cuisine-card ${!activeCuisine ? 'active' : ''}" data-mega-cuisine="All" role="button" tabindex="0" aria-label="All cuisines">
+                  <div class="mini-cuisine-bg all-cuisines-collage" aria-hidden="true">
+                    ${allCuisineCollage}
+                  </div>
+                  <div class="mini-cuisine-overlay"><span>All cuisines</span></div>
+                </div>
                 ${cuisines.map(c => `
-                  <div class="mini-cuisine-card ${c.name === activeCuisine ? 'active' : ''}" data-mega-cuisine="${escapeHtml(c.name)}">
+                  <div class="mini-cuisine-card ${c.name === activeCuisine ? 'active' : ''}" data-mega-cuisine="${escapeHtml(c.name)}" role="button" tabindex="0" aria-label="${escapeHtml(c.name)} cuisine">
                     <div class="mini-cuisine-bg">
                       ${c.image_url ? `<img src="${versionedAsset(c.image_url)}" alt="">` : `<i class="ph-fill ph-image" style="font-size: 24px; color: var(--muted); display: grid; place-items: center; height: 100%;"></i>`}
                     </div>
@@ -1353,43 +1314,20 @@ export async function render({ mount, route }) {
             </div>
           </div>
 
-          <div style="flex: 1; display: flex; justify-content: center; align-items: center; pointer-events: none;">
-             ${activeTable ? `
-               <div style="display: inline-flex; align-items: center; gap: 6px; background: #ffffff; padding: 5px 14px; border-radius: 99px; border: 1px solid rgba(0,0,0,0.06); box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
-                 <i class="ph-bold ph-armchair" style="color: var(--forest-600); font-size: 14px;"></i>
-                 <span style="font-size: 11px; font-weight: 900; color: var(--forest-950); text-transform: uppercase; letter-spacing: 0.08em; padding-top: 1px;">Table ${escapeHtml(activeTable.table_no)}</span>
-               </div>
-             ` : ''}
-          </div>
-
           <div id="subcat-dropdown-wrap" class="dropdown-anchor-wrap" style="flex: 1; display: flex; justify-content: flex-end; position: relative;">
-            <button id="pos-cat-toggle" class="subcat-right-toggle">
-              <span style="max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(activeSubCategory)}</span>
+            <button id="pos-cat-toggle" class="subcat-right-toggle" aria-haspopup="true" aria-expanded="false">
+              <span style="max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(activeSubCategory === "All" ? "Categories" : activeSubCategory)}</span>
               <i class="ph-bold ph-caret-down" style="color: var(--forest-900); font-size: 1.1rem; transition: transform 0.3s ease;"></i>
             </button>
             <div class="sub-category-dropdown" id="pos-subcat-dropdown">
               ${subCategories.map(sub => `
                 <button class="sub-category-tile ${activeSubCategory === sub ? "active" : ""}" data-sub="${escapeHtml(sub)}">
                   <i class="ph-bold ${getSubCategoryIcon(sub)}"></i>
-                  <span>${escapeHtml(sub)}</span>
+                  <span>${escapeHtml(sub === "All" ? "All categories" : sub)}</span>
                 </button>
               `).join("")}
             </div>
           </div>
-        </div>
-      `;
-    } else {
-      html += `
-        <div id="parity-unified-header">
-          <div style="flex: 1; display: flex; justify-content: flex-start;">
-             <button id="pos-btn-back" title="Back" style="margin: 0; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; background: #ffffff; border-radius: 50%; border: 1px solid rgba(0,0,0,0.06); box-shadow: 0 2px 8px rgba(0,0,0,0.04); cursor: pointer;">
-              <i class="ph-bold ph-arrow-left" style="font-size: 1.1rem; color: var(--forest-900);"></i>
-            </button>
-          </div>
-          <div style="flex: 4; display: flex; justify-content: center;">
-             <h2 style="margin: 0; font-size: 1.1rem; font-weight: 800; color: var(--forest-950); text-align: center;">Search: "${escapeHtml(searchTerm)}"</h2>
-          </div>
-          <div style="flex: 1;"></div>
         </div>
       `;
     }
@@ -1404,6 +1342,51 @@ export async function render({ mount, route }) {
     `;
 
     area.innerHTML = html;
+
+    area.querySelector("#pos-table-selector")?.addEventListener("click", () => {
+      if (state.getState().orderType === "takeaway" || isCustomerMode) return;
+      promptTableSelection(selectedTable => {
+        if (selectedTable) renderProducts();
+      });
+    });
+
+    area.querySelectorAll("[data-pos-order-type]").forEach(button => {
+      button.addEventListener("click", () => {
+        const nextType = button.dataset.posOrderType;
+        if (isCaptainPanel && nextType !== "dine_in") {
+          showToast("Dine-in only", "Takeaway orders must be created from the Cashier workspace.", "error");
+          return;
+        }
+        if (isCashierPanel && nextType !== "takeaway") {
+          showToast("Takeaway only", "Cashier can create takeaway orders only.", "error");
+          return;
+        }
+        if (!['dine_in', 'takeaway'].includes(nextType) || state.getState().orderType === nextType) return;
+        state.setOrderType(nextType);
+        if (nextType === "takeaway") state.setTable(null);
+        renderProducts();
+      });
+    });
+
+    if (isCustomerMode) {
+      area.querySelector("#customer-reset-filters")?.addEventListener("click", () => {
+        activeCuisine = null;
+        activeSubCategory = "All";
+        renderProducts();
+      });
+      area.querySelectorAll("[data-customer-cuisine]").forEach(button => button.addEventListener("click", () => {
+        const nextCuisine = button.dataset.customerCuisine;
+        activeCuisine = nextCuisine === "All" ? null : nextCuisine;
+        const available = getAvailableSubCategories();
+        if (!available.includes(activeSubCategory)) activeSubCategory = "All";
+        renderProducts();
+      }));
+      area.querySelectorAll("[data-customer-category]").forEach(button => button.addEventListener("click", () => {
+        activeSubCategory = button.dataset.customerCategory;
+        renderProducts();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }));
+    }
 
     area.querySelector("#pos-btn-back")?.addEventListener("click", () => {
       if (window.history.state?.view === "cuisine") {
@@ -1483,26 +1466,38 @@ export async function render({ mount, route }) {
       });
     });
 
-    area.querySelectorAll("[data-mega-cuisine]").forEach(card => {
-      card.addEventListener("click", () => {
-        activeCuisine = card.dataset.megaCuisine;
-        activeSubCategory = "All"; 
-        megaDropdown?.classList.remove("active");
-        megaToggleBtn?.classList.remove("open");
-        
+    const selectCuisine = card => {
+      const selected = card.dataset.megaCuisine;
+      activeCuisine = selected === "All" ? null : selected;
+      activeSubCategory = "All";
+      megaDropdown?.classList.remove("active");
+      megaToggleBtn?.classList.remove("open");
+      megaToggleBtn?.setAttribute("aria-expanded", "false");
+      if (activeCuisine) {
         window.history.pushState({ view: "cuisine", cuisine: activeCuisine }, "", "#" + encodeURIComponent(activeCuisine));
-        renderProducts();
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } else {
+        window.history.pushState({ view: "menu" }, "", `${window.location.pathname}${window.location.search}`);
+      }
+      renderProducts();
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    area.querySelectorAll("[data-mega-cuisine]").forEach(card => {
+      card.addEventListener("click", () => selectCuisine(card));
+      card.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectCuisine(card);
+        }
       });
     });
 
     const grid = area.querySelector("#pos-product-grid");
     const visible = products.filter(p => {
-      const parts = String(p.category || "").split(" - ");
-      const pCuisine = parts[0].trim();
-      const pSub = parts[1]?.trim() || "Others";
+      const pCuisine = getProductCuisine(p);
+      const pSub = getGlobalCategory(p);
       
-      const text = `${p.name} ${p.description ?? ""} ${p.category ?? ""}`.toLowerCase();
+      const text = `${p.name} ${p.description ?? ""} ${p.category ?? ""} ${pCuisine} ${pSub}`.toLowerCase();
       if (searchTerm) return text.includes(searchTerm);
 
       if (activeCuisine && pCuisine !== activeCuisine) return false;
@@ -1523,7 +1518,7 @@ export async function render({ mount, route }) {
         </div>
         <div class="pos-product-copy">
           <strong>${escapeHtml(product.name)}</strong>
-          <span>${escapeHtml(product.category ?? "")}</span>
+          <span>${escapeHtml(getGlobalCategory(product))} · ${escapeHtml(getProductCuisine(product))}</span>
           ${product.description ? `<p class="pos-product-desc">${escapeHtml(product.description)}</p>` : ""}
           <div class="pos-product-bottom">
             <b>${money(product.price, settings.currency_symbol)}</b>

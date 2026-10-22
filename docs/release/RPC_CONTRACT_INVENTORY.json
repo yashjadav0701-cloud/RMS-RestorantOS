@@ -1,6 +1,6 @@
 {
   "generated_from": "current frontend source and supplied live database metadata export",
-  "frontend_distinct_rpc_names": 41,
+  "frontend_distinct_rpc_names": 42,
   "database_routines": 41,
   "rpc_calls": {
     "admin_mutate_resource": {
@@ -267,6 +267,13 @@
         "src/components/panelPinScreen.js:365"
       ],
       "present_in_live_catalog": false
+    },
+    "apply_admin_bill_discount": {
+      "locations": [
+        "src/admin/index.js:Admin receipt discount action"
+      ],
+      "present_in_live_catalog": false,
+      "notes": "Added by ADMIN_BILL_DISCOUNT_PATCH.sql; must be migrated before use."
     }
   }
 }
