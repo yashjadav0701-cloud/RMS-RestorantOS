@@ -29,7 +29,7 @@ const MAX_FINAL_IMAGE_BYTES = 2 * 1024 * 1024;
 const TARGET_IMAGE_BYTES = 350 * 1024;
 const IMAGE_CACHE_SECONDS = 31536000;
 
-// Temporary frontend inventory drafts, isolated by active restaurant.
+// In-memory view model of the active restaurant inventory loaded from Supabase.
 // These are NOT persistent database records.
 let inventoryDraftTenantId = null;
 let ingredientDrafts = [];
@@ -628,6 +628,8 @@ async function renderAdminWorkspace(
       baseUnit: item.baseUnit,
       reorderLevel: Number(item.reorderLevel || 0),
       costPerUnit: item.costPerUnit == null ? null : Number(item.costPerUnit),
+      costIsEstimate: Boolean(item.costIsEstimate),
+      costSourceNote: String(item.costSourceNote || ""),
       currentStock: Number(item.currentStock || 0)
     }));
     inventoryMovementDrafts = (result?.movements || []).map(item => ({
@@ -645,7 +647,9 @@ async function renderAdminWorkspace(
       const rows = productRecipeDrafts.get(recipe.product_id) || [];
       rows.push({
         ingredient_id: recipe.ingredient_id,
-        quantity_per_serving: String(recipe.quantity_per_serving)
+        quantity_per_serving: String(recipe.quantity_per_serving),
+        is_estimate: Boolean(recipe.is_estimate),
+        source_note: String(recipe.source_note || "")
       });
       productRecipeDrafts.set(recipe.product_id, rows);
     }
@@ -1308,7 +1312,7 @@ async function renderAdminWorkspace(
           <article class="inventory-summary-card">
             <i class="ph-bold ph-cooking-pot"></i>
             <strong data-inventory-metric="recipes">—</strong>
-            <span>Recipes configured</span>
+            <span>Recipes mapped</span>
           </article>
 
           <article class="inventory-summary-card">
@@ -1360,7 +1364,12 @@ async function renderAdminWorkspace(
       const activeProducts = products.filter(item => item.is_active);
       const recipeCount = activeProducts.filter(item => (productRecipeDrafts.get(item.id) || []).length > 0).length;
       const balances = new Map(activeIngredients.map(item => [item.id, Number(item.currentStock || 0)]));
-      const lowStockCount = activeIngredients.filter(item => Number(item.currentStock || 0) <= Number(item.reorderLevel || 0)).length;
+      const lowStockCount = activeIngredients.filter(item => {
+        const hasOpeningStock = inventoryMovementDrafts.some(movement =>
+          movement.ingredientId === item.id && movement.movementType === "opening_stock"
+        );
+        return hasOpeningStock && Number(item.currentStock || 0) <= Number(item.reorderLevel || 0);
+      }).length;
       const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
       const estimatedDays = activeIngredients.map(ingredient => {
         const movements = inventoryMovementDrafts.filter(item => item.ingredientId === ingredient.id);
@@ -1389,8 +1398,11 @@ async function renderAdminWorkspace(
 
         const totalIngredients = ingredientDrafts.length;
         const lowStockCount = ingredientDrafts.filter(ingredient => {
+          const hasOpeningStock = movements.some(item =>
+            item.ingredientId === ingredient.id && item.movementType === "opening_stock"
+          );
           const balance = getBalance(ingredient.id);
-          return balance <= Number(ingredient.reorderLevel);
+          return hasOpeningStock && balance <= Number(ingredient.reorderLevel);
         }).length;
 
         panel.innerHTML = `
@@ -1420,9 +1432,7 @@ async function renderAdminWorkspace(
             class="inventory-data-status"
             style="margin-top:18px;"
           >
-            Draft mode — these figures use only movements recorded during
-            this page session. They are not verified stock balances and
-            are not saved to the database.
+            Stock balances are calculated from saved inventory movements. An ingredient without an opening-stock movement has no verified opening balance; forecasts need saved usage history before they can be meaningful.
           </div>
 
           <div
@@ -1430,12 +1440,12 @@ async function renderAdminWorkspace(
           >
             <div class="inventory-summary-card">
               <strong>${totalIngredients}</strong>
-              <span>Ingredient drafts</span>
+              <span>Ingredients</span>
             </div>
 
             <div class="inventory-summary-card">
               <strong>${lowStockCount}</strong>
-              <span>At or below draft reorder level</span>
+              <span>At or below reorder level (verified opening stock)</span>
             </div>
           </div>
 
@@ -1523,7 +1533,7 @@ async function renderAdminWorkspace(
               </button>
 
               <button type="submit" class="btn btn-primary">
-                Record draft
+                Record movement
               </button>
             </div>
           </form>
@@ -1542,7 +1552,7 @@ async function renderAdminWorkspace(
                       <th>Movement</th>
                       <th>Quantity change</th>
                       <th>Reason</th>
-                      <th>Draft balance</th>
+                      <th>Saved balance</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1691,7 +1701,7 @@ async function renderAdminWorkspace(
 
           if (nextBalance < 0) {
             errorNode.textContent =
-              "This movement would create negative draft stock. Review the quantity before continuing.";
+              "This movement would create negative saved stock. Review the quantity before continuing.";
             return;
           }
 
@@ -1802,7 +1812,7 @@ async function renderAdminWorkspace(
             <h2>Stock forecast</h2>
 
             <p>
-              Review draft stock balances and estimate how long ingredients
+              Review saved stock balances and estimate how long ingredients
               may last using recipe-consumption history.
             </p>
           </div>
@@ -1816,7 +1826,7 @@ These estimates use saved stock movements and recipe-consumption records for the
           >
             <div class="inventory-summary-card">
               <strong>${forecastRows.length}</strong>
-              <span>Ingredient drafts</span>
+              <span>Ingredients</span>
             </div>
 
             <div class="inventory-summary-card">
@@ -1835,7 +1845,7 @@ These estimates use saved stock movements and recipe-consumption records for the
               <thead>
                 <tr>
                   <th>Ingredient</th>
-                  <th>Draft balance</th>
+                  <th>Saved balance</th>
                   <th>Average usage / day</th>
                   <th>Estimated days remaining</th>
                   <th>Status</th>
@@ -1891,7 +1901,7 @@ These estimates use saved stock movements and recipe-consumption records for the
                       <tr>
                         <td colspan="5">
                           <div style="padding:24px;text-align:center;color:var(--muted);">
-                            Add ingredient drafts and record opening-stock drafts
+                            Add ingredients and record verified opening stock
                             to begin evaluating inventory.
                           </div>
                         </td>
@@ -1922,7 +1932,8 @@ These estimates use saved stock movements and recipe-consumption records for the
               <tbody>
                 ${activeProducts.length ? activeProducts.map(item => {
                   const recipe = productRecipeDrafts.get(item.id) || [];
-                  return `<tr><td><strong>${escapeHtml(item.name)}</strong><div style="color:var(--muted);font-size:11px;margin-top:3px;">${escapeHtml(item.category || "Uncategorized")}</div></td><td>${recipe.length ? recipe.map(row => `${escapeHtml(ingredientDrafts.find(ingredient => ingredient.id === row.ingredient_id)?.name || "Unknown ingredient")} · ${escapeHtml(row.quantity_per_serving)} per serving`).join("<br>") : "No recipe saved"}</td><td><span style="font-size:11px;font-weight:850;color:${recipe.length ? "var(--forest-800)" : "var(--danger)"};">${recipe.length ? "Configured" : "Missing recipe"}</span></td></tr>`;
+                  const hasEstimate = recipe.some(row => row.is_estimate);
+                  return `<tr><td><strong>${escapeHtml(item.name)}</strong><div style="color:var(--muted);font-size:11px;margin-top:3px;">${escapeHtml(item.category || "Uncategorized")}</div></td><td>${recipe.length ? recipe.map(row => `${escapeHtml(ingredientDrafts.find(ingredient => ingredient.id === row.ingredient_id)?.name || "Unknown ingredient")} · ${escapeHtml(row.quantity_per_serving)} per serving`).join("<br>") : "No recipe saved"}</td><td><span style="font-size:11px;font-weight:850;color:${!recipe.length ? "var(--danger)" : hasEstimate ? "#8a5a00" : "var(--forest-800)"};">${!recipe.length ? "Missing recipe" : hasEstimate ? "Estimated · review" : "Reviewed"}</span></td></tr>`;
                 }).join("") : `<tr><td colspan="3"><div style="padding:20px;text-align:center;color:var(--muted);">No active menu dishes are available for recipe coverage.</div></td></tr>`}
               </tbody>
             </table>
@@ -1966,9 +1977,8 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 </td>
 
                 <td>
-                  ${item.costPerUnit === null
-                    ? "Not entered"
-                    : Number(item.costPerUnit).toFixed(4)}
+                  ${item.costPerUnit === null ? "Not entered" : Number(item.costPerUnit).toFixed(4)}
+                  ${item.costPerUnit === null ? "" : `<span style="display:inline-block;margin-left:5px;padding:2px 6px;border-radius:6px;background:${item.costIsEstimate ? "#fff3d6" : "#eaf5e9"};color:${item.costIsEstimate ? "#8a5a00" : "#276438"};font-size:10px;font-weight:850;">${item.costIsEstimate ? "EST." : "SET"}</span><div style="margin-top:3px;color:var(--muted);font-size:10px;">₹ per ${escapeHtml(item.baseUnit)}${item.costSourceNote ? " · " + escapeHtml(item.costSourceNote) : ""}</div>`}
                 </td>
 
                 <td>
@@ -1994,7 +2004,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                     ></i>
 
                     <h3 style="margin:10px 0 5px;font-size:15px;">
-                      No ingredient drafts
+                      No ingredients yet
                     </h3>
 
                     <p style="margin:0;color:var(--muted);font-size:12px;">
@@ -2036,7 +2046,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               style="margin-top:22px;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--cream-100);"
             >
               <h3 style="margin:0 0 16px;font-size:16px;">
-                ${currentIngredient ? "Edit ingredient draft" : "New ingredient"}
+                ${currentIngredient ? "Edit ingredient" : "New ingredient"}
               </h3>
 
               <div class="form-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;">
@@ -2113,9 +2123,13 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                     placeholder="Cost per gram, ml or piece"
                   />
                   <small style="color:var(--muted);font-size:11px;">
-                    Use the same currency as the restaurant's purchase records.
-                    This is a draft field, not a verified stock valuation.
+                    Cost is stored in INR per base unit. Seeded amber EST. costs are planning estimates; replace them with actual supplier invoice costs before using food-cost reports.
                   </small>
+                  <label class="switch-field" style="margin-top:10px;padding:9px 10px;border:1px solid #ecd9a2;border-radius:10px;background:#fffaf0;">
+                    <input type="checkbox" name="confirmCost" />
+                    <span class="switch-ui"></span>
+                    <span><strong>Confirm this supplier cost</strong><small>Check only after you verified it against a current supplier invoice.</small></span>
+                  </label>
                 </label>
               </div>
 
@@ -2129,7 +2143,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 </button>
 
                 <button type="submit" class="btn btn-primary">
-                  ${currentIngredient ? "Update draft" : "Add draft"}
+                  ${currentIngredient ? "Save changes" : "Save ingredient"}
                 </button>
               </div>
 
@@ -2142,9 +2156,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           ` : ""}
 
           <div class="inventory-data-status" style="margin-top:18px;">
-            Draft mode: these entries are held in the current page only.
-            They are not saved to the database and will be lost when this
-            view is reloaded or closed.
+            Ingredient records, recipes and stock movements are saved in the restaurant database. Amber EST. costs are initial planning estimates only; replace them with actual supplier invoice costs before relying on food-cost or profitability reports.
           </div>
 
           <div style="overflow-x:auto;margin-top:18px;">
@@ -2244,7 +2256,10 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               const { error: saveError } = await supabase.rpc("admin_save_ingredient", {
                 p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null,
                 p_ingredient_id: editingIngredientId && !String(editingIngredientId).startsWith("draft-") ? editingIngredientId : null,
-                p_payload: { name, category, baseUnit, reorderLevel, costPerUnit }
+                p_payload: {
+                  name, category, baseUnit, reorderLevel, costPerUnit,
+                  confirmCost: form.elements.confirmCost?.checked === true
+                }
               });
               if (saveError) throw saveError;
               await reloadInventoryDrafts();
@@ -3251,7 +3266,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
     function openMenuPDFPreview() {
       const activeProducts = products.filter(p => p.is_active).sort((a,b) => a.sort_order - b.sort_order);
       
-      const targetCuisines = ["Indian", "Chinese", "Continental", "Mexican"];
+      const targetCuisines = ["Indian", "Chinese", "Continental", "Mexican", "Global"];
       const menuTree = {};
       const cuisineItemCounts = {};
       
@@ -3260,11 +3275,12 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           cuisineItemCounts[c] = 0; 
       });
 
-      // Group active dishes and accurately count the total items in each cuisine
+      // Cuisine and menu section are stored separately after taxonomy normalization.
+      // The prefix fallback keeps legacy rows correctly grouped until migration.
       activeProducts.forEach(p => {
          const parts = String(p.category || "").split(" - ");
-         const cName = parts[0]?.trim();
-         const subName = parts[1]?.trim() || "Others";
+         const cName = String(p.cuisine || (parts.length > 1 ? parts[0] : "")).trim();
+         const subName = (parts.length > 1 ? parts.slice(1).join(" - ") : parts[0]).trim() || "Other";
          const targetCuisine = targetCuisines.includes(cName) ? cName : "Continental";
          
          if (!menuTree[targetCuisine][subName]) menuTree[targetCuisine][subName] = [];
@@ -3940,21 +3956,33 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 return; 
             }
 
-            const cuisinesList = ["All", ...new Set(activeProducts.map(p => (p.category || "Uncategorized").split(" - ")[0].trim()))];
+            const cuisinesList = ["All", ...new Set(activeProducts
+              .map(p => String(p.cuisine || String(p.category || "").split(" - ")[0]).trim())
+              .filter(c => c && c !== "Global" && c !== "Other"))];
             
             let localCart = new Map();
             let searchQuery = "";
             let selectedCuisine = "All";
             let selectedSub = "All";
 
+            function getCatalogCuisine(product) {
+                const legacyParts = String(product.category || "").split(" - ");
+                return String(product.cuisine || (legacyParts.length > 1 ? legacyParts[0] : "Other")).trim();
+            }
+
+            function getCatalogSection(product) {
+                const legacyParts = String(product.category || "").split(" - ");
+                return String(legacyParts.length > 1 ? legacyParts.slice(1).join(" - ") : legacyParts[0] || "Other").trim();
+            }
+
             function getAvailableSubs() {
-                if (selectedCuisine === "All") return ["All"];
                 const subs = new Set();
                 activeProducts.forEach(p => {
-                    const parts = (p.category || "Uncategorized").split(" - ");
-                    if (parts[0].trim() === selectedCuisine) subs.add(parts[1]?.trim() || "Others");
+                    const cuisine = getCatalogCuisine(p);
+                    if (selectedCuisine !== "All" && cuisine !== selectedCuisine && cuisine !== "Global") return;
+                    subs.add(getCatalogSection(p));
                 });
-                return ["All", ...Array.from(subs)];
+                return ["All", ...Array.from(subs).filter(Boolean).sort((a, b) => a.localeCompare(b))];
             }
 
             // The DOM Updater: Animates quantities & updates cart without destroying HTML nodes
@@ -4024,11 +4052,10 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
 
             function renderCatalog() {
                 const visible = activeProducts.filter(p => {
-                    const parts = (p.category || "Uncategorized").split(" - ");
-                    const pCuisine = parts[0].trim();
-                    const pSub = parts[1]?.trim() || "Others";
+                    const pCuisine = getCatalogCuisine(p);
+                    const pSub = getCatalogSection(p);
                     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || (p.category || "").toLowerCase().includes(searchQuery.toLowerCase());
-                    const matchesCuisine = selectedCuisine === "All" || pCuisine === selectedCuisine;
+                    const matchesCuisine = selectedCuisine === "All" || pCuisine === selectedCuisine || pCuisine === "Global";
                     const matchesSub = selectedSub === "All" || pSub === selectedSub;
                     return matchesSearch && matchesCuisine && matchesSub;
                 });
@@ -4328,7 +4355,11 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
         <section class="admin-panel settings-panel">
           <form id="settings-form" class="settings-form-grid">
             <label class="field"><span>Restaurant name</span><input class="field-input" name="restaurant_name" value="${escapeHtml(settings.restaurant_name)}" required></label>
-            <label class="field"><span>GSTIN (GST Number)</span><input class="field-input" name="gst_number" value="${escapeHtml(settings.gst_number || "")}" placeholder="22AAAAA0000A1Z5"></label>
+            <label class="field settings-gstin-field">
+              <span>GSTIN (GST Number)</span>
+              <input class="field-input" name="gst_number" value="${escapeHtml(settings.gst_number || "")}" placeholder="22AAAAA0000A1Z5" maxlength="15" pattern="[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][1-9A-Za-z]Z[0-9A-Za-z]" ${String(settings.gst_number || "").trim() ? 'disabled aria-disabled="true" title="GSTIN is locked after the first save"' : ""}>
+              <small style="display:block;margin-top:6px;color:${String(settings.gst_number || "").trim() ? "var(--forest-700)" : "var(--muted)"};font-size:11px;line-height:1.5;">${String(settings.gst_number || "").trim() ? "Locked after initial save. Contact the developer to change or clear the GSTIN." : "Enter the verified GSTIN carefully. It becomes locked after the first save."}</small>
+            </label>
             <label class="field settings-wide"><span>Restaurant Address (Prints on Bill)</span><textarea class="field-input textarea-input" name="restaurant_address" placeholder="123 Food Street, City, State" rows="2">${escapeHtml(settings.restaurant_address || "")}</textarea></label>
             <label class="field"><span>CGST %</span><input class="field-input" name="cgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.cgst_rate)}" required></label>
             <label class="field"><span>SGST %</span><input class="field-input" name="sgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.sgst_rate)}" required></label>
@@ -4614,7 +4645,8 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
         const payload = {
           restaurant_id: window.__ACTIVE_TENANT__.id,
           restaurant_name: String(fd.get("restaurant_name") || "").trim(),
-          gst_number: String(fd.get("gst_number") || "").trim(),
+          // Disabled GSTIN inputs are omitted by FormData; preserve the saved value.
+          gst_number: String(settings.gst_number || fd.get("gst_number") || "").trim(),
           restaurant_address: String(fd.get("restaurant_address") || "").trim(),
           cgst_rate: Number(fd.get("cgst_rate")),
           sgst_rate: Number(fd.get("sgst_rate")),
@@ -5011,26 +5043,28 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           
           <!-- Native HTML Combobox Datalists (Tenant Isolated) -->
           <datalist id="subcat-datalist">
-            ${[...new Set(products.map(p => { const parts = String(p.category || "").split(" - "); return parts.length > 1 ? parts.slice(1).join(" - ").trim() : null; }).filter(Boolean))].map(sub => `<option value="${escapeHtml(sub)}">`).join("")}
+            ${[...new Set(products.map(p => { const parts = String(p.category || "").split(" - "); return (parts.length > 1 ? parts.slice(1).join(" - ") : parts[0]).trim(); }).filter(Boolean))].map(sub => `<option value="${escapeHtml(sub)}">`).join("")}
           </datalist>
 
           <div style="display: grid; grid-template-columns: 1.2fr 1.2fr 100px; gap: 10px;">
             <label class="field">
-              <span>Category</span>
+              <span>Cuisine</span>
               <div style="position: relative; width: 100%;">
                 <select class="field-input" name="main_category" required style="appearance: none; padding-right: 32px; cursor: pointer; width: 100%; background-color: var(--paper); color: var(--ink);">
                   <option value="" disabled ${!product ? "selected" : ""}>Select Cuisine...</option>
-                  ${cuisines.map(c => {
-                      const isSelected = product && String(product?.category ?? "").split(" - ")[0]?.trim() === c.name;
-                      return `<option value="${escapeHtml(c.name)}" ${isSelected ? "selected" : ""}>${escapeHtml(c.name)}</option>`;
+                  ${[...cuisines.filter(c => c.name !== "Global"), { name: "Global" }].map(c => {
+                      const legacyParts = String(product?.category ?? "").split(" - ");
+                      const currentCuisine = String(product?.cuisine || (legacyParts.length > 1 ? legacyParts[0] : "")).trim();
+                      const isSelected = product && currentCuisine === c.name;
+                      return `<option value="${escapeHtml(c.name)}" ${isSelected ? "selected" : ""}>${escapeHtml(c.name === "Global" ? "Global · available with every cuisine" : c.name)}</option>`;
                   }).join("")}
                 </select>
                 <i class="ph-bold ph-caret-down" style="position: absolute; right: 12px; top: 50%; transform: translateY(-50%); font-size: 14px; color: var(--forest-900); pointer-events: none;"></i>
               </div>
             </label>
             <label class="field">
-              <span>Sub Category</span>
-              <input class="field-input" list="subcat-datalist" name="sub_category" value="${escapeHtml(String(product?.category ?? "").split(" - ").slice(1).join(" - ")?.trim() ?? "")}" placeholder="e.g. Starter" required autocomplete="off" />
+              <span>Menu Section</span>
+              <input class="field-input" list="subcat-datalist" name="sub_category" value="${escapeHtml((() => { const parts = String(product?.category ?? "").split(" - "); return (parts.length > 1 ? parts.slice(1).join(" - ") : parts[0]).trim(); })())}" placeholder="e.g. Starters & Tandoor" required autocomplete="off" />
             </label>
             <label class="field">
               <span>Price (₹)</span>
@@ -5062,8 +5096,13 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
             <div>
               <h3 style="margin:0 0 7px;font-size:17px;">Recipe ingredients</h3>
               <p style="margin:0;color:var(--muted);font-size:12px;line-height:1.6;">
-                Select each ingredient and enter the quantity needed for one serving.
+                Select each ingredient and enter the quantity needed for one serving. Any seeded recipe is an estimate until you explicitly confirm it against the kitchen's actual recipe.
               </p>
+              <label class="switch-field" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;">
+                <input type="checkbox" name="confirm_recipe_review" />
+                <span class="switch-ui"></span>
+                <span><strong>I've verified this recipe</strong><small>Confirm exact ingredients and per-serving quantities to clear the estimate flag.</small></span>
+              </label>
             </div>
 
             <div
@@ -5087,7 +5126,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               aria-live="polite"
               style="margin:13px 0 0;color:var(--muted);font-size:12px;line-height:1.6;"
             >
-              Recipe assignments are saved to the database and drive consumption tracking when dishes are marked Served.
+              Recipe assignments are saved to the database. In strict inventory mode, verified recipes are consumed once when preparation starts.
             </p>
           </section>
         </form>
@@ -5129,11 +5168,17 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
 
               seenIngredientIds.add(ingredient.id);
 
+              const recipeHasEstimates = productRecipeSelection.some(row => row.is_estimate);
+              const explicitlyReviewed = form.querySelector('[name="confirm_recipe_review"]')?.checked === true;
               recipeSelection.push({
                 ingredient_id: ingredient.id,
                 ingredient_name: ingredient.name,
                 quantity_per_serving: quantity,
-                unit: ingredient.baseUnit
+                unit: ingredient.baseUnit,
+                is_estimate: recipeHasEstimates && !explicitlyReviewed,
+                source_note: recipeHasEstimates && !explicitlyReviewed
+                  ? "Estimated starter recipe; review against actual kitchen quantities."
+                  : "Reviewed by Admin."
               });
             }
 
@@ -5166,13 +5211,14 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               const mainCat = String(fd.get("main_category") || "").trim();
               const subCat = String(fd.get("sub_category") || "").trim();
               
-              // THE FIX: Ensure there is a space BEFORE and AFTER the hyphen so parsing works perfectly!
-              const finalCategory = subCat ? `${mainCat} - ${subCat}` : mainCat;
+              // Store taxonomy in separate fields: cuisine is independent of the menu section.
+              const finalCategory = subCat;
 
               const payload = {
                 id: productId,
                 restaurant_id: window.__ACTIVE_TENANT__.id,
                 name: String(fd.get("name") || "").trim(),
+                cuisine: mainCat,
                 category: finalCategory,
                 price: Number(fd.get("price")),
                 description: String(fd.get("description") || "").trim(),
@@ -5218,7 +5264,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               showToast(
                 editing ? "Dish updated" : "Dish created",
                 recipeSelection.length
-                  ? `${payload.name} · ${recipeSelection.length} recipe ingredients drafted`
+                  ? `${payload.name} · ${recipeSelection.length} recipe ingredients saved${normalizedRecipeSave.estimated_ingredient_count ? " · estimate retained for review" : " · recipe reviewed"}`
                   : `${payload.name} · no recipe ingredients assigned`
               );
 

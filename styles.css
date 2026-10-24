@@ -3234,57 +3234,46 @@ h3 {
   80% { transform: translateX(6px) rotate(5deg); }
 }
 
-/* Premium 4-Box PIN Layout */
-.pin-box-container { display: flex; gap: 12px; justify-content: center; margin-bottom: 24px; position: relative; perspective: 500px; }
-.pin-box { 
-    width: 64px; height: 72px; 
-    text-align: center; font-size: 32px; font-weight: 900; color: var(--forest-950);
-    border-radius: 16px; border: 2px solid var(--line); background: var(--paper);
+/* Premium six-digit PIN layout with portrait 3:4 boxes */
+ .pin-box-container {
+    display: grid !important;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    width: min(100%, 360px);
+    gap: clamp(4px, 1.8vw, 8px);
+    justify-content: center;
+    margin: 0 auto 24px;
+    position: relative;
+    perspective: 500px;
+}
+.pin-box {
+    width: 100%; min-width: 0; height: auto; aspect-ratio: 3 / 4;
+    box-sizing: border-box; padding: 0;
+    text-align: center; font-size: clamp(19px, 5.5vw, 27px); font-weight: 900; color: var(--forest-950);
+    border-radius: 13px; border: 2px solid var(--line); background: var(--paper);
     outline: none; transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
     box-shadow: 0 4px 12px rgba(0,0,0,0.02);
-    caret-color: transparent; 
+    caret-color: transparent;
 }
 .pin-box:focus {
     border-color: var(--forest-900); background: #ffffff;
     box-shadow: 0 8px 24px rgba(18,34,22,0.1); transform: translateY(-2px);
 }
 
-/* Six-digit Admin PIN: square masked input boxes */
+/* Six-digit Admin PIN: portrait masked input boxes (3:4 ratio) */
 #admin-pin-container.pin-box-container {
-    gap: 8px;
+    width: min(100%, 360px);
+    gap: clamp(4px, 1.8vw, 8px);
     margin-bottom: 0;
 }
 
 #admin-pin-container .pin-box {
-    width: 54px;
-    height: 54px;
-    min-width: 54px;
-    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    aspect-ratio: 3 / 4;
     padding: 0;
-    border-radius: 14px;
-    font-size: 26px;
-}
-
-@media (max-width: 420px) {
-    #admin-pin-container.pin-box-container {
-        gap: 4px;
-    }
-
-    #admin-pin-container .pin-box {
-        width: 40px;
-        height: 40px;
-        min-width: 40px;
-        font-size: 23px;
-    }
-}
-
-@media (max-width: 360px) {
-    #admin-pin-container .pin-box {
-        width: 30px;
-        height: 30px;
-        min-width: 30px;
-        font-size: 19px;
-    }
+    border-radius: 13px;
+    font-size: clamp(19px, 5.5vw, 27px);
 }
 
 /* Animation Classes */

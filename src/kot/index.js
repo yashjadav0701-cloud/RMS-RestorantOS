@@ -1,7 +1,7 @@
 import { supabase } from "../core/supabase.js";
 import { installPanelSignOut, requestPanelSignOut } from "../core/panelSession.js";
 
-const ACTIVE_STATUSES = new Set(["pending", "preparing", "ready"]);
+const ACTIVE_STATUSES = new Set(["pending", "preparing", "ready", "served"]);
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -291,6 +291,15 @@ export async function render({ mount }) {
           font-size: 16px;
         }
 
+        .kot-ticket-header-actions {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 7px;
+          flex-wrap: wrap;
+          max-width: 58%;
+        }
+
         .kot-ticket-meta {
           margin-top: 5px;
           color: var(--muted);
@@ -418,6 +427,23 @@ export async function render({ mount }) {
           color: #075985;
         }
 
+        .kot-status.served,
+        .kot-table-all-served {
+          background: #e8f4e9;
+          color: #245b31;
+        }
+
+        .kot-table-all-served {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 9px;
+          border-radius: 9px;
+          font-size: 10px;
+          font-weight: 850;
+          text-align: right;
+        }
+
         .kot-item-actions {
           display: flex;
           align-items: center;
@@ -521,6 +547,11 @@ export async function render({ mount }) {
 
           .kot-ticket-header {
             padding: 14px;
+            gap: 10px;
+          }
+
+          .kot-ticket-header-actions {
+            max-width: 52%;
           }
         }
 
@@ -645,9 +676,25 @@ export async function render({ mount }) {
                 · ${escapeHtml(formatTime(group.createdAt))}
               </div>
             </div>
-            <span class="kot-round">
-              ${isTakeaway ? "Takeaway" : "Table open"}
-            </span>
+            <div class="kot-ticket-header-actions">
+              ${!isTakeaway && group.rounds.some(round => round.items.length)
+                ? (() => {
+                    const groupItems = group.rounds.flatMap(round => round.items);
+                    // A real Served item remains visible until billing, but is not part of
+                    // the reversible bulk action. Items Ready-marked by this UI are exposed
+                    // as status=ready by the database and can be undone safely.
+                    const actionableItems = groupItems.filter(item =>
+                      ["pending", "preparing", "ready"].includes(String(item.serving_status || "pending").toLowerCase())
+                    );
+                    const allReady = actionableItems.length > 0 && actionableItems.every(item => String(item.serving_status || "pending").toLowerCase() === "ready");
+                    if (!actionableItems.length) {
+                      return `<span class="kot-round kot-table-all-served"><i class="ph-bold ph-check-circle"></i> All served · awaiting bill</span>`;
+                    }
+                    const ids = actionableItems.map(item => item.item_id).filter(Boolean).join(",");
+                    return `<button class="kot-action ${allReady ? "" : "primary"}" type="button" data-kot-table-action="${allReady ? "undo_ready" : "ready"}" data-item-ids="${escapeHtml(ids)}" ${actionableItems.some(item => busyItems.has(item.item_id)) ? "disabled" : ""}>${allReady ? "Undo ready" : "Ready table"}</button>`;
+                  })()
+                : `<span class="kot-round">Takeaway</span>`}
+            </div>
           </header>
 
           ${group.rounds.map(round => `
@@ -684,24 +731,15 @@ export async function render({ mount }) {
                       <button
                         class="kot-action primary"
                         type="button"
-                        data-kot-action="preparing"
+                        data-kot-action="ready"
                         data-item-id="${escapeHtml(item.item_id)}"
                         ${busy ? "disabled" : ""}
                       >
-                        Start preparing
+                        Ready
                       </button>
                     `;
                   } else if (status === "preparing") {
                     action = `
-                      <button
-                        class="kot-action"
-                        type="button"
-                        data-kot-action="pending"
-                        data-item-id="${escapeHtml(item.item_id)}"
-                        ${busy ? "disabled" : ""}
-                      >
-                        Undo
-                      </button>
                       <button
                         class="kot-action primary"
                         type="button"
@@ -709,31 +747,20 @@ export async function render({ mount }) {
                         data-item-id="${escapeHtml(item.item_id)}"
                         ${busy ? "disabled" : ""}
                       >
-                        Mark ready
+                        Ready
                       </button>
                     `;
                   } else if (status === "ready") {
                     action = `
-                      <span class="kot-status ready">
-                        Ready for service
-                      </span>
+                      <span class="kot-status ready">Ready</span>
                       <button
                         class="kot-action"
                         type="button"
-                        data-kot-action="preparing"
+                        data-kot-action="undo_ready"
                         data-item-id="${escapeHtml(item.item_id)}"
                         ${busy ? "disabled" : ""}
                       >
                         Undo ready
-                      </button>
-                      <button
-                        class="kot-action primary"
-                        type="button"
-                        data-kot-action="served"
-                        data-item-id="${escapeHtml(item.item_id)}"
-                        ${busy ? "disabled" : ""}
-                      >
-                        Mark served
                       </button>
                     `;
                   }
@@ -868,14 +895,51 @@ export async function render({ mount }) {
       console.error("KOT status update failed:", error);
       feedbackNode.textContent = "";
       errorNode.textContent =
-        "The dish status could not be changed. Refresh and try again.";
+        error?.message || "The dish status could not be changed. Refresh and try again.";
     } finally {
       busyItems.delete(itemId);
       if (!disposed) renderQueue();
     }
   }
 
+  async function changeTableStatus(itemIds, action, button) {
+    const currentAccess = window.__RMS_PANEL_ACCESS__;
+    if (!itemIds.length || disposed || button.disabled) return;
+    if (!["kot", "manager"].includes(currentAccess?.panelId) || !currentAccess.token || currentAccess.expiresAt <= Date.now()) {
+      errorNode.textContent = "Kitchen access has expired. Please verify the PIN again.";
+      return;
+    }
+    button.disabled = true;
+    feedbackNode.textContent = action === "ready" ? "Marking the table ready…" : "Undoing table ready…";
+    errorNode.textContent = "";
+    try {
+      const { data, error } = await supabase.rpc("set_kot_table_ready", {
+        p_panel_token: currentAccess.token,
+        p_item_ids: itemIds,
+        p_action: action
+      });
+      if (error) throw error;
+      if (data?.ok !== true) throw new Error("The table status change was rejected.");
+      feedbackNode.textContent = action === "ready" ? "All dishes on this table are marked ready." : "Table ready was undone.";
+      await loadQueue({ quiet: true });
+    } catch (error) {
+      console.error("KOT table status update failed:", error);
+      feedbackNode.textContent = "";
+      errorNode.textContent = error?.message || "The table status could not be changed. Refresh and try again.";
+    } finally {
+      if (!disposed) renderQueue();
+    }
+  }
+
   function handleQueueClick(event) {
+    const tableButton = event.target.closest("[data-kot-table-action]");
+    if (tableButton) {
+      const itemIds = String(tableButton.dataset.itemIds || "").split(",").filter(Boolean);
+      const action = tableButton.dataset.kotTableAction;
+      if (["ready", "undo_ready"].includes(action)) void changeTableStatus(itemIds, action, tableButton);
+      return;
+    }
+
     const button = event.target.closest("[data-kot-action]");
     if (!button) return;
 

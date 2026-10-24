@@ -22,7 +22,8 @@ test('all frontend RPCs missing from the audited database have migration definit
     'sql/MASTER_MIGRATION_TABLEFORGE.sql',
     'sql/TABLEFORGE_WORKFLOW_FIX_PATCH.sql',
     'sql/IMMEDIATE_BILL_AND_ANALYTICS_FIX.sql',
-    'sql/ADMIN_BILL_DISCOUNT_PATCH.sql'
+    'sql/ADMIN_BILL_DISCOUNT_PATCH.sql',
+    'sql/ADMIN_KOT_GST_INVENTORY_ENHANCEMENTS.sql'
   ];
   const sql = (await Promise.all(migrationFiles.map(read))).join('\n');
   const missing = Object.entries(inventory.rpc_calls)

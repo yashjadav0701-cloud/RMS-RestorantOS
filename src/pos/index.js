@@ -1182,41 +1182,47 @@ export async function render({ mount, route }) {
     return "ph-fork-knife";
   }
 
-  // Categories are a customer-facing taxonomy, independent of the stored cuisine prefix.
-  // Existing database values such as "Indian - Salads" and "Continental - Salads"
-  // therefore converge on the same global filter without requiring a risky DB migration.
+  // The database stores cuisine and customer-facing section separately. The prefix fallback
+  // keeps old rows readable until their restaurant's menu migration has been applied.
   function getProductCuisine(product) {
-    const parts = String(product.category || "").split(" - ");
-    return parts.length > 1 ? parts[0].trim() : (product.cuisine || "Other");
+    const storedCuisine = String(product?.cuisine || "").trim();
+    if (storedCuisine) return storedCuisine;
+    const parts = String(product?.category || "").split(" - ");
+    return parts.length > 1 ? parts[0].trim() : "Other";
   }
 
   function getGlobalCategory(product) {
-    const parts = String(product.category || "").split(" - ");
+    const parts = String(product?.category || "").split(" - ");
     const raw = (parts.length > 1 ? parts.slice(1).join(" - ") : parts[0]).trim();
     const value = raw.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, " ").trim();
+    const canonical = {
+      "soups": "Soups",
+      "salads": "Salads",
+      "starters and tandoor": "Starters & Tandoor",
+      "platters and sizzlers": "Platters & Sizzlers",
+      "main course": "Main Course",
+      "breads and rice": "Breads & Rice",
+      "noodles and fried rice": "Noodles & Fried Rice",
+      "pasta pizza and bakes": "Pasta, Pizza & Bakes",
+      "papad": "Papad",
+      "desserts": "Desserts",
+      "beverages": "Beverages"
+    };
+    if (canonical[value]) return canonical[value];
+
+    // Legacy category mapping for tenants/data that have not been normalized yet.
     const rules = [
       [/\b(soup|soups)\b/, "Soups"],
       [/\b(salad|salads)\b/, "Salads"],
-      [/\b(starter|starters|appetizer|appetizers|veg starter|chinese starter)\b/, "Starters"],
-      [/\b(platter|platters|kebab platter)\b/, "Platters"],
+      [/\b(starter|starters|appetizer|appetizers|tandoor|grill|quick bite|quick bites|small plates|sandwich|sandwiches|burger|burgers|fries|garlic bread|bruschetta|nuggets|nachos)\b/, "Starters & Tandoor"],
+      [/\b(platter|platters|kebab platter|sizzler|sizzlers)\b/, "Platters & Sizzlers"],
       [/\b(papad|papadum|papadums)\b/, "Papad"],
-      [/\b(sizzler|sizzlers)\b/, "Sizzlers"],
-      [/\b(main course|mains|curries|curry)\b/, "Main Course"],
-      [/\b(dal|daal|lentils)\b/, "Dal & Lentils"],
-      [/\b(bread|breads|roti|naan|paratha)\b/, "Indian Breads"],
-      [/\b(rice|biryani|pulao)\b/, "Rice & Biryani"],
-      [/\b(noodle|noodles|chow mein)\b/, "Noodles"],
-      [/\b(pasta|spaghetti|macaroni|lasagna|lasagne)\b/, "Pasta"],
-      [/\b(pizza|pizzas)\b/, "Pizza"],
-      [/\b(taco|tacos|burrito|burritos|quesadilla|quesadillas|wrap|wraps)\b/, "Tacos & Wraps"],
-      [/\b(baked|bakes|bake|gratin|mac and cheese)\b/, "Baked Dishes"],
-      [/\b(quick bite|quick bites|sandwich|sandwiches|burger|burgers|fries|garlic bread|bruschetta|nuggets|nachos)\b/, "Quick Bites"],
+      [/\b(main course|mains|curries|curry|dal|daal|lentils|mexican mains)\b/, "Main Course"],
+      [/\b(bread|breads|roti|naan|paratha|rice|biryani|pulao)\b/, "Breads & Rice"],
+      [/\b(noodle|noodles|chow mein|fried rice)\b/, "Noodles & Fried Rice"],
+      [/\b(pasta|spaghetti|macaroni|lasagna|lasagne|pizza|pizzas|baked|bakes|bake|gratin|mac and cheese)\b/, "Pasta, Pizza & Bakes"],
       [/\b(dessert|desserts|ice cream|icecream|sundae|sweet|sweets|brownie|cake|cakes)\b/, "Desserts"],
-      [/\b(tea|coffee|tea and coffee|hot beverages)\b/, "Tea & Coffee"],
-      [/\b(traditional drink|traditional drinks|lassi|chaas)\b/, "Traditional Drinks"],
-      [/\b(signature cooler|signature coolers|cooler|coolers|mocktail|mocktails)\b/, "Signature Coolers"],
-      [/\b(shake|shakes|milkshake|milkshakes|frappe|frappes)\b/, "Shakes & Frappes"],
-      [/\b(beverage|beverages|drink|drinks|juice|juices|aerated)\b/, "Other Drinks"]
+      [/\b(tea|coffee|beverage|beverages|drink|drinks|juice|juices|aerated|mocktail|mocktails|cooler|coolers|shake|shakes|milkshake|milkshakes|frappe|frappes|lassi|chaas)\b/, "Beverages"]
     ];
     for (const [pattern, label] of rules) if (pattern.test(value)) return label;
     if (!raw || value === "other" || value === "others") return "Other";
@@ -1226,7 +1232,8 @@ export async function render({ mount, route }) {
   function getAvailableSubCategories() {
     const subs = new Set();
     products.forEach(product => {
-      if (activeCuisine && getProductCuisine(product) !== activeCuisine) return;
+      const productCuisine = getProductCuisine(product);
+      if (activeCuisine && productCuisine !== activeCuisine && productCuisine !== "Global") return;
       subs.add(getGlobalCategory(product));
     });
     return ["All", ...Array.from(subs).sort((a, b) => a.localeCompare(b))];
@@ -1500,7 +1507,7 @@ export async function render({ mount, route }) {
       const text = `${p.name} ${p.description ?? ""} ${p.category ?? ""} ${pCuisine} ${pSub}`.toLowerCase();
       if (searchTerm) return text.includes(searchTerm);
 
-      if (activeCuisine && pCuisine !== activeCuisine) return false;
+      if (activeCuisine && pCuisine !== activeCuisine && pCuisine !== "Global") return false;
       if (activeSubCategory !== "All" && pSub !== activeSubCategory) return false;
       return true;
     });
@@ -1518,7 +1525,7 @@ export async function render({ mount, route }) {
         </div>
         <div class="pos-product-copy">
           <strong>${escapeHtml(product.name)}</strong>
-          <span>${escapeHtml(getGlobalCategory(product))} · ${escapeHtml(getProductCuisine(product))}</span>
+          <span>${escapeHtml(getGlobalCategory(product))} · ${escapeHtml(getProductCuisine(product) === "Global" ? "Available with every cuisine" : getProductCuisine(product))}</span>
           ${product.description ? `<p class="pos-product-desc">${escapeHtml(product.description)}</p>` : ""}
           <div class="pos-product-bottom">
             <b>${money(product.price, settings.currency_symbol)}</b>

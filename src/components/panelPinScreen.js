@@ -32,19 +32,23 @@ export async function render({ mount, route }) {
       <style>
         /* Match the existing Admin six-digit PIN screen */
         .panel-pin-screen #panel-pin-container.pin-box-container {
-          gap: 8px;
-          margin-bottom: 0;
+          display: grid !important;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          width: min(100%, 360px);
+          gap: clamp(4px, 1.8vw, 8px);
+          margin: 0 auto;
         }
 
         .panel-pin-screen #panel-pin-container .pin-box {
-          width: 54px;
-          height: 54px;
-          min-width: 54px;
+          width: 100%;
+          min-width: 0;
+          height: auto;
+          aspect-ratio: 3 / 4;
           box-sizing: border-box;
           padding: 0;
-          border-radius: 14px;
+          border-radius: 13px;
           font-family: 'Courier New', Courier, monospace;
-          font-size: 26px;
+          font-size: clamp(19px, 5.5vw, 27px);
         }
 
         .panel-pin-screen #panel-pin-error {
@@ -85,23 +89,7 @@ export async function render({ mount, route }) {
 
         @media (max-width: 420px) {
           .panel-pin-screen #panel-pin-container.pin-box-container {
-            gap: 4px;
-          }
-
-          .panel-pin-screen #panel-pin-container .pin-box {
-            width: 40px;
-            height: 40px;
-            min-width: 40px;
-            font-size: 23px;
-          }
-        }
-
-        @media (max-width: 360px) {
-          .panel-pin-screen #panel-pin-container .pin-box {
-            width: 30px;
-            height: 30px;
-            min-width: 30px;
-            font-size: 19px;
+            gap: 5px;
           }
         }
       </style>

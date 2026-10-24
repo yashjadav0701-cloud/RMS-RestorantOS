@@ -113,33 +113,38 @@ export async function render({ mount }) {
 
         .workspace-grid {
           display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
-          gap: 12px;
+          grid-template-columns: repeat(5, minmax(0, 1fr));
+          gap: 14px;
+          align-items: stretch;
         }
 
         .workspace-card {
           display: flex;
+          flex-direction: column;
           align-items: center;
-          gap: 12px;
+          justify-content: center;
+          gap: 18px;
           width: 100%;
           min-width: 0;
-          min-height: 88px;
+          min-height: 0;
+          aspect-ratio: 3 / 4;
           box-sizing: border-box;
-          padding: 14px 15px;
+          padding: 18px 12px;
           border: 1px solid var(--line);
-          border-radius: 16px;
+          border-radius: 20px;
           background: var(--paper);
-          text-align: left;
+          text-align: center;
           color: inherit;
           font: inherit;
           cursor: pointer;
-          transition: border-color .18s ease,
-                      background .18s ease;
+          transition: border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease;
         }
 
         .workspace-card:hover {
           border-color: var(--forest-700);
           background: var(--sage-100);
+          transform: translateY(-2px);
+          box-shadow: 0 12px 26px rgba(18, 34, 22, .08);
         }
 
         .workspace-card:focus-visible,
@@ -149,9 +154,9 @@ export async function render({ mount }) {
         }
 
         .workspace-card-icon {
-          width: 42px;
-          height: 42px;
-          border-radius: 13px;
+          width: clamp(68px, 6vw, 88px);
+          height: clamp(68px, 6vw, 88px);
+          border-radius: 22px;
           display: grid;
           place-items: center;
           flex-shrink: 0;
@@ -160,36 +165,22 @@ export async function render({ mount }) {
         }
 
         .workspace-card-icon i {
-          font-size: 21px;
+          font-size: clamp(40px, 4vw, 54px);
+          line-height: 1;
         }
 
         .workspace-card-copy {
-          flex: 1;
+          display: block;
+          width: 100%;
           min-width: 0;
         }
 
         .workspace-card-copy h3 {
           margin: 0;
-          font-size: 15px;
-          line-height: 1.3;
-          font-weight: 800;
-        }
-
-        .workspace-card-subtitle {
-          display: block;
-          margin-top: 4px;
-          color: var(--muted);
-          font-size: 12px;
-          line-height: 1.35;
-          font-weight: 600;
-        }
-
-        .workspace-card-arrow {
-          display: grid;
-          place-items: center;
-          flex-shrink: 0;
-          color: var(--forest-800);
-          font-size: 17px;
+          font-size: clamp(14px, 1.2vw, 18px);
+          line-height: 1.25;
+          font-weight: 900;
+          overflow-wrap: anywhere;
         }
 
         .workspace-status {
@@ -221,13 +212,20 @@ export async function render({ mount }) {
           }
 
           .workspace-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 11px;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 12px;
           }
 
           .workspace-card {
-            min-height: 82px;
-            padding: 13px;
+            border-radius: 18px;
+            padding: 14px 10px;
+            gap: 14px;
+          }
+
+          .workspace-card-icon {
+            width: 68px;
+            height: 68px;
+            border-radius: 18px;
           }
         }
 
@@ -256,18 +254,28 @@ export async function render({ mount }) {
           }
 
           .workspace-grid {
-            grid-template-columns: minmax(0, 1fr);
+            grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 10px;
           }
 
           .workspace-card {
-            min-height: 74px;
-            padding: 12px 14px;
+            padding: 12px 8px;
+            gap: 13px;
+            border-radius: 16px;
           }
 
           .workspace-card-icon {
-            width: 40px;
-            height: 40px;
+            width: clamp(58px, 17vw, 70px);
+            height: clamp(58px, 17vw, 70px);
+            border-radius: 17px;
+          }
+
+          .workspace-card-icon i {
+            font-size: clamp(36px, 10vw, 44px);
+          }
+
+          .workspace-card-copy h3 {
+            font-size: clamp(13px, 3.8vw, 16px);
           }
         }
 
@@ -317,13 +325,6 @@ export async function render({ mount }) {
 
               <span class="workspace-card-copy">
                 <h3>${panel.title}</h3>
-                <span class="workspace-card-subtitle">
-                  ${panel.subtitle}
-                </span>
-              </span>
-
-              <span class="workspace-card-arrow">
-                <i class="ph-bold ph-arrow-up-right"></i>
               </span>
             </button>
           `).join("")}
