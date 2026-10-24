@@ -1,3 +1,4 @@
+
 import { PANEL_REGISTRY } from "../core/panelRegistry.js";
 import { versionedAsset } from "../core/config.js";
 import { supabase } from "../core/supabase.js";
@@ -9,6 +10,34 @@ function escapePanelText(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function getRoleIcon(panel) {
+  const role = `${panel.id ?? ""} ${panel.title ?? ""}`
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+
+  if (/\b(captain|pos|service|waiter)\b/.test(role)) {
+    return "ph-fork-knife";
+  }
+
+  if (/\b(kot|kitchen|chef)\b/.test(role)) {
+    return "ph-chef-hat";
+  }
+
+  if (/\b(cashier|cash|billing|bill)\b/.test(role)) {
+    return "ph-receipt";
+  }
+
+  if (/\b(manager|management)\b/.test(role)) {
+    return "ph-chart-line-up";
+  }
+
+  if (/\b(admin|administrator|owner)\b/.test(role)) {
+    return "ph-shield-check";
+  }
+
+  return panel.icon || "ph-squares-four";
 }
 
 export async function render({ mount }) {
@@ -29,7 +58,7 @@ export async function render({ mount }) {
       <style>
         .workspace-home {
           min-height: 100vh;
-          padding: 32px;
+          padding: 30px;
           box-sizing: border-box;
           color: var(--forest-950);
           background: var(--cream-100);
@@ -45,147 +74,174 @@ export async function render({ mount }) {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 20px;
-          margin-bottom: 38px;
+          gap: 16px;
+          margin-bottom: 36px;
         }
 
         .workspace-brand {
           display: flex;
           align-items: center;
-          gap: 14px;
+          gap: 13px;
           min-width: 0;
         }
 
         .workspace-brand img {
-          width: 58px;
-          height: 58px;
-          border-radius: 16px;
-          object-fit: contain;
-          background: #fff;
+          width: 54px;
+          height: 54px;
           flex-shrink: 0;
+          object-fit: contain;
+          border-radius: 15px;
+          background: #fff;
         }
 
         .workspace-brand .workspace-kicker {
-          margin: 0 0 5px;
+          margin: 0 0 4px;
+          color: var(--forest-700);
           font-size: 11px;
           font-weight: 800;
-          letter-spacing: .13em;
+          letter-spacing: .14em;
           text-transform: uppercase;
-          color: var(--forest-700);
         }
 
         .workspace-brand h1 {
           margin: 0;
-          font-size: clamp(20px, 3vw, 28px);
-          line-height: 1.2;
+          font-size: clamp(19px, 3vw, 27px);
+          line-height: 1.25;
           overflow-wrap: anywhere;
         }
 
         .workspace-signout {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
           flex-shrink: 0;
+          padding: 11px 15px;
           border: 1px solid var(--line);
           border-radius: 12px;
-          padding: 11px 15px;
           background: var(--paper);
           color: var(--forest-900);
           font: inherit;
           font-size: 13px;
           font-weight: 800;
           cursor: pointer;
+          transition: background .18s ease, border-color .18s ease;
         }
 
-        .workspace-intro {
-          margin-bottom: 18px;
-        }
-
-        .workspace-intro h2 {
-          margin: 0 0 5px;
-          font-size: clamp(23px, 3vw, 29px);
-          letter-spacing: -.03em;
-        }
-
-        .workspace-intro p {
-          margin: 0;
-          color: var(--muted);
-          line-height: 1.5;
-          font-size: 13px;
+        .workspace-signout:hover {
+          border-color: var(--forest-700);
+          background: var(--sage-100);
         }
 
         .workspace-grid {
           display: grid;
           grid-template-columns: repeat(5, minmax(0, 1fr));
-          gap: 14px;
           align-items: stretch;
+          gap: 16px;
         }
 
         .workspace-card {
+          position: relative;
           display: flex;
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 18px;
+          gap: 20px;
           width: 100%;
           min-width: 0;
-          min-height: 0;
-          aspect-ratio: 3 / 4;
+          max-width: 220px;
+          justify-self: center;
+          aspect-ratio: 4 / 5;
           box-sizing: border-box;
-          padding: 18px 12px;
+          padding: 16px 10px;
+          overflow: hidden;
           border: 1px solid var(--line);
-          border-radius: 20px;
+          border-radius: 22px;
           background: var(--paper);
-          text-align: center;
-          color: inherit;
+          color: var(--forest-950);
           font: inherit;
+          text-align: center;
           cursor: pointer;
-          transition: border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease;
+          transition:
+            transform .2s ease,
+            border-color .2s ease,
+            box-shadow .2s ease,
+            background .2s ease;
+        }
+
+        .workspace-card::before {
+          position: absolute;
+          inset: 0 0 auto;
+          height: 4px;
+          background: var(--forest-700);
+          content: "";
+          opacity: 0;
+          transition: opacity .2s ease;
         }
 
         .workspace-card:hover {
+          transform: translateY(-4px);
           border-color: var(--forest-700);
           background: var(--sage-100);
-          transform: translateY(-2px);
-          box-shadow: 0 12px 26px rgba(18, 34, 22, .08);
+          box-shadow: 0 12px 28px rgb(29 67 47 / 11%);
+        }
+
+        .workspace-card:hover::before {
+          opacity: 1;
+        }
+
+        .workspace-card:active {
+          transform: translateY(-1px) scale(.985);
         }
 
         .workspace-card:focus-visible,
         .workspace-signout:focus-visible {
           outline: 3px solid var(--forest-700);
-          outline-offset: 3px;
+          outline-offset: 4px;
         }
 
         .workspace-card-icon {
-          width: clamp(68px, 6vw, 88px);
-          height: clamp(68px, 6vw, 88px);
-          border-radius: 22px;
           display: grid;
           place-items: center;
+          width: 104px;
+          height: 104px;
           flex-shrink: 0;
+          border: 1px solid rgb(29 67 47 / 8%);
+          border-radius: 28px;
           background: var(--sage-100);
           color: var(--forest-900);
+          box-shadow: 0 5px 15px rgb(29 67 47 / 5%);
+          transition:
+            transform .2s ease,
+            background .2s ease,
+            color .2s ease;
         }
 
         .workspace-card-icon i {
-          font-size: clamp(40px, 4vw, 54px);
+          display: block;
+          font-size: 62px;
           line-height: 1;
         }
 
-        .workspace-card-copy {
-          display: block;
-          width: 100%;
-          min-width: 0;
+        .workspace-card:hover .workspace-card-icon {
+          transform: scale(1.06);
+          background: var(--forest-900);
+          color: #fff;
         }
 
-        .workspace-card-copy h3 {
-          margin: 0;
-          font-size: clamp(14px, 1.2vw, 18px);
-          line-height: 1.25;
-          font-weight: 900;
+        .workspace-card-name {
+          display: block;
+          width: 100%;
+          color: var(--forest-950);
+          font-size: 15px;
+          font-weight: 800;
+          line-height: 1.3;
+          letter-spacing: .015em;
           overflow-wrap: anywhere;
         }
 
         .workspace-status {
-          min-height: 18px;
-          margin-top: 8px;
+          margin-top: 14px;
           color: var(--danger);
           font-size: 12px;
           font-weight: 600;
@@ -197,18 +253,7 @@ export async function render({ mount }) {
           }
 
           .workspace-header {
-            margin-bottom: 26px;
-          }
-
-          .workspace-brand img {
-            width: 48px;
-            height: 48px;
-            border-radius: 13px;
-          }
-
-          .workspace-signout {
-            padding: 9px 11px;
-            font-size: 12px;
+            margin-bottom: 28px;
           }
 
           .workspace-grid {
@@ -217,71 +262,135 @@ export async function render({ mount }) {
           }
 
           .workspace-card {
-            border-radius: 18px;
-            padding: 14px 10px;
-            gap: 14px;
+            max-width: 240px;
+            gap: 15px;
+            border-radius: 19px;
           }
 
           .workspace-card-icon {
-            width: 68px;
-            height: 68px;
-            border-radius: 18px;
+            width: clamp(58px, 9vw, 82px);
+            height: clamp(58px, 9vw, 82px);
+            border-radius: 22px;
+          }
+
+          .workspace-card-icon i {
+            font-size: clamp(37px, 6.5vw, 49px);
+          }
+
+          .workspace-card-name {
+            font-size: 14px;
           }
         }
 
         @media (max-width: 560px) {
           .workspace-home {
-            padding: 20px 14px;
+            padding: 18px 12px 24px;
           }
 
           .workspace-header {
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 25px;
+            gap: 10px;
+            margin-bottom: 24px;
           }
 
           .workspace-brand {
-            gap: 10px;
+            gap: 9px;
           }
 
           .workspace-brand img {
             width: 42px;
             height: 42px;
+            border-radius: 12px;
+          }
+
+          .workspace-brand .workspace-kicker {
+            margin-bottom: 3px;
+            font-size: 9px;
           }
 
           .workspace-brand h1 {
-            font-size: 18px;
+            font-size: 17px;
+          }
+
+          .workspace-signout {
+            gap: 5px;
+            padding: 9px 10px;
+            border-radius: 10px;
+            font-size: 11px;
           }
 
           .workspace-grid {
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 10px;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 9px;
           }
 
           .workspace-card {
-            padding: 12px 8px;
+            width: 100%;
+            max-width: none;
+            aspect-ratio: 4 / 5;
             gap: 13px;
-            border-radius: 16px;
+            padding: 9px 4px;
+            border-radius: 15px;
           }
 
           .workspace-card-icon {
-            width: clamp(58px, 17vw, 70px);
-            height: clamp(58px, 17vw, 70px);
-            border-radius: 17px;
+            width: clamp(40px, 12vw, 58px);
+            height: clamp(40px, 12vw, 58px);
+            border-radius: 15px;
           }
 
           .workspace-card-icon i {
-            font-size: clamp(36px, 10vw, 44px);
+            font-size: clamp(27px, 8vw, 38px);
           }
 
-          .workspace-card-copy h3 {
-            font-size: clamp(13px, 3.8vw, 16px);
+          .workspace-card-name {
+            font-size: clamp(10px, 3.2vw, 13px);
+            line-height: 1.25;
+          }
+        }
+
+        @media (max-width: 360px) {
+          .workspace-home {
+            padding-right: 9px;
+            padding-left: 9px;
+          }
+
+          .workspace-grid {
+            gap: 7px;
+          }
+
+          .workspace-card {
+            gap: 10px;
+            padding: 7px 3px;
+            border-radius: 13px;
+          }
+
+          .workspace-card-icon {
+            width: 38px;
+            height: 38px;
+            border-radius: 12px;
+          }
+
+          .workspace-card-icon i {
+            font-size: 25px;
+          }
+
+          .workspace-card-name {
+            font-size: 10px;
           }
         }
 
         @media (prefers-reduced-motion: reduce) {
-          .workspace-card {
+          .workspace-card,
+          .workspace-card::before,
+          .workspace-card-icon,
+          .workspace-signout {
             transition: none;
+          }
+
+          .workspace-card:hover,
+          .workspace-card:active,
+          .workspace-card:hover .workspace-card-icon {
+            transform: none;
           }
         }
       </style>
@@ -301,30 +410,26 @@ export async function render({ mount }) {
             class="workspace-signout"
             data-workspace-signout
           >
-            <i class="ph-bold ph-sign-out"></i>
+            <i class="ph-bold ph-sign-out" aria-hidden="true"></i>
             Sign out
           </button>
         </header>
-
-        <div class="workspace-intro">
-          <h2>Choose a workspace</h2>
-          <p>Select where you want to work.</p>
-        </div>
 
         <div class="workspace-grid">
           ${PANEL_REGISTRY.map(panel => `
             <button
               type="button"
               class="workspace-card"
-              data-panel-id="${panel.id}"
-              aria-label="Open ${panel.title} workspace"
+              data-panel-id="${escapePanelText(panel.id)}"
+              aria-label="Open ${escapePanelText(panel.title)}"
+              title="${escapePanelText(panel.title)}"
             >
-              <span class="workspace-card-icon">
-                <i class="ph-bold ${panel.icon}"></i>
+              <span class="workspace-card-icon" aria-hidden="true">
+                <i class="ph-bold ${escapePanelText(getRoleIcon(panel))}"></i>
               </span>
 
-              <span class="workspace-card-copy">
-                <h3>${panel.title}</h3>
+              <span class="workspace-card-name">
+                ${escapePanelText(panel.title)}
               </span>
             </button>
           `).join("")}
@@ -340,18 +445,24 @@ export async function render({ mount }) {
   `;
 
   const handleClick = async event => {
-    const signOutButton = event.target.closest("[data-workspace-signout]");
+    const signOutButton = event.target.closest(
+      "[data-workspace-signout]"
+    );
 
     if (signOutButton) {
       if (!supabase) return;
 
       signOutButton.disabled = true;
 
-      const status = mount.querySelector("[data-workspace-status]");
+      const status = mount.querySelector(
+        "[data-workspace-status]"
+      );
+
       status.textContent = "";
 
       try {
         const { error } = await supabase.auth.signOut();
+
         if (error) throw error;
 
         history.replaceState({}, "", location.pathname);
@@ -359,6 +470,7 @@ export async function render({ mount }) {
       } catch (error) {
         status.textContent =
           error?.message || "Sign-out failed. Please try again.";
+
         signOutButton.disabled = false;
       }
 
@@ -366,6 +478,7 @@ export async function render({ mount }) {
     }
 
     const card = event.target.closest("[data-panel-id]");
+
     if (!card) return;
 
     const panel = PANEL_REGISTRY.find(

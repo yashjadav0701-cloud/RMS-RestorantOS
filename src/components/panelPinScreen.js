@@ -20,7 +20,10 @@ export async function render({ mount, route }) {
   }
 
   const tenant = window.__ACTIVE_TENANT__ || {};
-  const tenantName = escapePinText(tenant.name || "TableForge Workspace");
+  const tenantName = escapePinText(
+    tenant.name || "TableForge Workspace"
+  );
+
   const tenantIcon = escapePinText(
     tenant.icon_url
       ? versionedAsset(tenant.icon_url)
@@ -30,30 +33,44 @@ export async function render({ mount, route }) {
   mount.innerHTML = `
     <section class="access-screen panel-pin-screen">
       <style>
-        /* Match the existing Admin six-digit PIN screen */
+        /* Six masked PIN boxes using the requested 6:7 width-to-height ratio. */
         .panel-pin-screen #panel-pin-container.pin-box-container {
-          display: grid !important;
-          grid-template-columns: repeat(6, minmax(0, 1fr));
-          width: min(100%, 360px);
-          gap: clamp(4px, 1.8vw, 8px);
-          margin: 0 auto;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 0;
+          width: 100%;
+          min-width: 0;
         }
 
         .panel-pin-screen #panel-pin-container .pin-box {
-          width: 100%;
+          flex: 0 1 42px;
+          width: 42px;
+          height: 49px;
           min-width: 0;
-          height: auto;
-          aspect-ratio: 3 / 4;
+          aspect-ratio: 6 / 7;
           box-sizing: border-box;
           padding: 0;
-          border-radius: 13px;
-          font-family: 'Courier New', Courier, monospace;
-          font-size: clamp(19px, 5.5vw, 27px);
+          border-radius: 11px;
+          font-family: "Courier New", Courier, monospace;
+          font-size: 24px;
+          text-align: center;
+        }
+
+        .panel-pin-screen #panel-pin-container .pin-box:focus {
+          outline: 2px solid var(--forest-700);
+          outline-offset: 2px;
+        }
+
+        .panel-pin-screen #panel-pin-container .pin-box:disabled {
+          opacity: 1;
+          cursor: default;
         }
 
         .panel-pin-screen #panel-pin-error {
           color: var(--danger);
-          font-size: 0.85rem;
+          font-size: .85rem;
           display: none;
           text-align: center;
           margin-bottom: 12px;
@@ -82,14 +99,29 @@ export async function render({ mount, route }) {
           font-size: 12px;
         }
 
-        .panel-pin-screen #panel-pin-container .pin-box:disabled {
-          opacity: 1;
-          cursor: default;
-        }
-
         @media (max-width: 420px) {
           .panel-pin-screen #panel-pin-container.pin-box-container {
-            gap: 5px;
+            gap: 6px;
+          }
+
+          .panel-pin-screen #panel-pin-container .pin-box {
+            flex: 0 1 36px;
+            width: 36px;
+            height: 42px;
+            font-size: 21px;
+          }
+        }
+
+        @media (max-width: 360px) {
+          .panel-pin-screen #panel-pin-container.pin-box-container {
+            gap: 4px;
+          }
+
+          .panel-pin-screen #panel-pin-container .pin-box {
+            flex: 0 1 32px;
+            width: 32px;
+            height: 37.333px;
+            font-size: 19px;
           }
         }
       </style>
@@ -112,7 +144,9 @@ export async function render({ mount, route }) {
 
         <p class="access-copy">
           Enter your 6-digit ${escapePinText(panel.title)} PIN to continue.
-          ${panel.id === "admin" ? "For a newly provisioned restaurant, the first Admin PIN entered is securely set as the initial PIN." : ""}
+          ${panel.id === "admin"
+            ? "For a newly provisioned restaurant, the first Admin PIN entered is securely set as the initial PIN."
+            : ""}
         </p>
 
         <p id="panel-pin-error" role="alert" aria-live="assertive"></p>
@@ -124,7 +158,7 @@ export async function render({ mount, route }) {
         >
           <label class="field">
             <span
-              style="font-size: 0.8rem; font-weight: 800; color: var(--forest-800);"
+              style="font-size: .8rem; font-weight: 800; color: var(--forest-800);"
             >
               6-digit PIN
             </span>
@@ -316,7 +350,7 @@ export async function render({ mount, route }) {
     hideError();
     isProcessing = true;
 
-    // Clear the displayed PIN immediately. Never persist the PIN.
+    // Clear visible inputs immediately. Never persist the PIN.
     inputs.forEach(input => {
       input.value = "";
       input.disabled = true;
@@ -329,26 +363,6 @@ export async function render({ mount, route }) {
       if (!supabase) {
         throw new Error("Secure verification service is unavailable.");
       }
-
-      /*
-       * Database contract installed by the TableForge master migration:
-       *
-       * verify_panel_pin(
-       *   p_panel_id text,
-       *   p_pin text
-       * ) RETURNS jsonb
-       *
-       * Successful response:
-       * {
-       *   "ok": true,
-       *   "panel_token": "<opaque short-lived token>",
-       *   "expires_at": "<ISO-8601 expiry timestamp>"
-       * }
-       *
-       * The server must validate the authenticated restaurant account,
-       * panel PIN hash, rate limits and restaurant ownership. It must
-       * issue a short-lived token only after successful verification.
-       */
 
       const { data, error } = await supabase.rpc("verify_panel_pin", {
         p_panel_id: panel.id,
@@ -381,18 +395,27 @@ export async function render({ mount, route }) {
 
       if (disposed) return;
 
-      // Keep access in memory only. Never store the token in localStorage.
+      // Keep access in memory only, never in localStorage.
       window.__RMS_PANEL_ACCESS__ = {
         panelId: panel.id,
         token: result.panel_token,
         expiresAt,
         issuedAt: Date.now()
       };
+
       const issuedToken = result.panel_token;
+
       window.setTimeout(() => {
         if (window.__RMS_PANEL_ACCESS__?.token !== issuedToken) return;
+
         window.__RMS_PANEL_ACCESS__ = null;
-        history.replaceState({}, "", `${location.pathname}${location.search}#/panel/${panel.id}`);
+
+        history.replaceState(
+          {},
+          "",
+          `${location.pathname}${location.search}#/panel/${panel.id}`
+        );
+
         window.dispatchEvent(new Event("rms:navigate"));
       }, Math.max(0, expiresAt - Date.now()));
 
@@ -409,11 +432,9 @@ export async function render({ mount, route }) {
       );
 
       window.dispatchEvent(new Event("rms:navigate"));
-
-    } catch (error) {
+    } catch {
       if (disposed) return;
 
-      // Do not log the PIN or the returned panel token.
       loader.style.display = "none";
 
       rejectPin(
@@ -442,7 +463,7 @@ export async function render({ mount, route }) {
         if (index < inputs.length - 1) {
           inputs[index + 1].focus();
         } else {
-          // Automatically submit as soon as the sixth digit is entered.
+          // Automatically submit after the sixth digit.
           submitPin();
         }
       });

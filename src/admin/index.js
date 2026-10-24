@@ -1,14 +1,6 @@
 import { supabase } from "../core/supabase.js";
 import { requestPanelSignOut } from "../core/panelSession.js";
-import {
-  createPresetRange,
-  renderDateRangePicker,
-  bindDateRangePicker,
-  DATE_RANGE_STYLES,
-  dateRangeLabel,
-  indiaDateStartISOString,
-  indiaDateAfterISOString
-} from "../components/dateRangePicker.js";
+import { createPresetRange, renderDateRangePicker, bindDateRangePicker, DATE_RANGE_STYLES, indiaDateStartISOString, indiaDateAfterISOString, dateRangeLabel } from "../components/dateRangePicker.js";
 import {
   DEFAULT_SETTINGS,
   versionedAsset,
@@ -29,7 +21,7 @@ const MAX_FINAL_IMAGE_BYTES = 2 * 1024 * 1024;
 const TARGET_IMAGE_BYTES = 350 * 1024;
 const IMAGE_CACHE_SECONDS = 31536000;
 
-// In-memory view model of the active restaurant inventory loaded from Supabase.
+// Temporary frontend inventory drafts, isolated by active restaurant.
 // These are NOT persistent database records.
 let inventoryDraftTenantId = null;
 let ingredientDrafts = [];
@@ -628,8 +620,6 @@ async function renderAdminWorkspace(
       baseUnit: item.baseUnit,
       reorderLevel: Number(item.reorderLevel || 0),
       costPerUnit: item.costPerUnit == null ? null : Number(item.costPerUnit),
-      costIsEstimate: Boolean(item.costIsEstimate),
-      costSourceNote: String(item.costSourceNote || ""),
       currentStock: Number(item.currentStock || 0)
     }));
     inventoryMovementDrafts = (result?.movements || []).map(item => ({
@@ -647,9 +637,7 @@ async function renderAdminWorkspace(
       const rows = productRecipeDrafts.get(recipe.product_id) || [];
       rows.push({
         ingredient_id: recipe.ingredient_id,
-        quantity_per_serving: String(recipe.quantity_per_serving),
-        is_estimate: Boolean(recipe.is_estimate),
-        source_note: String(recipe.source_note || "")
+        quantity_per_serving: String(recipe.quantity_per_serving)
       });
       productRecipeDrafts.set(recipe.product_id, rows);
     }
@@ -1312,7 +1300,7 @@ async function renderAdminWorkspace(
           <article class="inventory-summary-card">
             <i class="ph-bold ph-cooking-pot"></i>
             <strong data-inventory-metric="recipes">—</strong>
-            <span>Recipes mapped</span>
+            <span>Recipes configured</span>
           </article>
 
           <article class="inventory-summary-card">
@@ -1364,12 +1352,7 @@ async function renderAdminWorkspace(
       const activeProducts = products.filter(item => item.is_active);
       const recipeCount = activeProducts.filter(item => (productRecipeDrafts.get(item.id) || []).length > 0).length;
       const balances = new Map(activeIngredients.map(item => [item.id, Number(item.currentStock || 0)]));
-      const lowStockCount = activeIngredients.filter(item => {
-        const hasOpeningStock = inventoryMovementDrafts.some(movement =>
-          movement.ingredientId === item.id && movement.movementType === "opening_stock"
-        );
-        return hasOpeningStock && Number(item.currentStock || 0) <= Number(item.reorderLevel || 0);
-      }).length;
+      const lowStockCount = activeIngredients.filter(item => Number(item.currentStock || 0) <= Number(item.reorderLevel || 0)).length;
       const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
       const estimatedDays = activeIngredients.map(ingredient => {
         const movements = inventoryMovementDrafts.filter(item => item.ingredientId === ingredient.id);
@@ -1398,11 +1381,8 @@ async function renderAdminWorkspace(
 
         const totalIngredients = ingredientDrafts.length;
         const lowStockCount = ingredientDrafts.filter(ingredient => {
-          const hasOpeningStock = movements.some(item =>
-            item.ingredientId === ingredient.id && item.movementType === "opening_stock"
-          );
           const balance = getBalance(ingredient.id);
-          return hasOpeningStock && balance <= Number(ingredient.reorderLevel);
+          return balance <= Number(ingredient.reorderLevel);
         }).length;
 
         panel.innerHTML = `
@@ -1432,7 +1412,9 @@ async function renderAdminWorkspace(
             class="inventory-data-status"
             style="margin-top:18px;"
           >
-            Stock balances are calculated from saved inventory movements. An ingredient without an opening-stock movement has no verified opening balance; forecasts need saved usage history before they can be meaningful.
+            Draft mode — these figures use only movements recorded during
+            this page session. They are not verified stock balances and
+            are not saved to the database.
           </div>
 
           <div
@@ -1440,12 +1422,12 @@ async function renderAdminWorkspace(
           >
             <div class="inventory-summary-card">
               <strong>${totalIngredients}</strong>
-              <span>Ingredients</span>
+              <span>Ingredient drafts</span>
             </div>
 
             <div class="inventory-summary-card">
               <strong>${lowStockCount}</strong>
-              <span>At or below reorder level (verified opening stock)</span>
+              <span>At or below draft reorder level</span>
             </div>
           </div>
 
@@ -1533,7 +1515,7 @@ async function renderAdminWorkspace(
               </button>
 
               <button type="submit" class="btn btn-primary">
-                Record movement
+                Record draft
               </button>
             </div>
           </form>
@@ -1552,7 +1534,7 @@ async function renderAdminWorkspace(
                       <th>Movement</th>
                       <th>Quantity change</th>
                       <th>Reason</th>
-                      <th>Saved balance</th>
+                      <th>Draft balance</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1701,7 +1683,7 @@ async function renderAdminWorkspace(
 
           if (nextBalance < 0) {
             errorNode.textContent =
-              "This movement would create negative saved stock. Review the quantity before continuing.";
+              "This movement would create negative draft stock. Review the quantity before continuing.";
             return;
           }
 
@@ -1812,7 +1794,7 @@ async function renderAdminWorkspace(
             <h2>Stock forecast</h2>
 
             <p>
-              Review saved stock balances and estimate how long ingredients
+              Review draft stock balances and estimate how long ingredients
               may last using recipe-consumption history.
             </p>
           </div>
@@ -1826,7 +1808,7 @@ These estimates use saved stock movements and recipe-consumption records for the
           >
             <div class="inventory-summary-card">
               <strong>${forecastRows.length}</strong>
-              <span>Ingredients</span>
+              <span>Ingredient drafts</span>
             </div>
 
             <div class="inventory-summary-card">
@@ -1845,7 +1827,7 @@ These estimates use saved stock movements and recipe-consumption records for the
               <thead>
                 <tr>
                   <th>Ingredient</th>
-                  <th>Saved balance</th>
+                  <th>Draft balance</th>
                   <th>Average usage / day</th>
                   <th>Estimated days remaining</th>
                   <th>Status</th>
@@ -1901,7 +1883,7 @@ These estimates use saved stock movements and recipe-consumption records for the
                       <tr>
                         <td colspan="5">
                           <div style="padding:24px;text-align:center;color:var(--muted);">
-                            Add ingredients and record verified opening stock
+                            Add ingredient drafts and record opening-stock drafts
                             to begin evaluating inventory.
                           </div>
                         </td>
@@ -1932,8 +1914,7 @@ These estimates use saved stock movements and recipe-consumption records for the
               <tbody>
                 ${activeProducts.length ? activeProducts.map(item => {
                   const recipe = productRecipeDrafts.get(item.id) || [];
-                  const hasEstimate = recipe.some(row => row.is_estimate);
-                  return `<tr><td><strong>${escapeHtml(item.name)}</strong><div style="color:var(--muted);font-size:11px;margin-top:3px;">${escapeHtml(item.category || "Uncategorized")}</div></td><td>${recipe.length ? recipe.map(row => `${escapeHtml(ingredientDrafts.find(ingredient => ingredient.id === row.ingredient_id)?.name || "Unknown ingredient")} · ${escapeHtml(row.quantity_per_serving)} per serving`).join("<br>") : "No recipe saved"}</td><td><span style="font-size:11px;font-weight:850;color:${!recipe.length ? "var(--danger)" : hasEstimate ? "#8a5a00" : "var(--forest-800)"};">${!recipe.length ? "Missing recipe" : hasEstimate ? "Estimated · review" : "Reviewed"}</span></td></tr>`;
+                  return `<tr><td><strong>${escapeHtml(item.name)}</strong><div style="color:var(--muted);font-size:11px;margin-top:3px;">${escapeHtml(item.category || "Uncategorized")}</div></td><td>${recipe.length ? recipe.map(row => `${escapeHtml(ingredientDrafts.find(ingredient => ingredient.id === row.ingredient_id)?.name || "Unknown ingredient")} · ${escapeHtml(row.quantity_per_serving)} per serving`).join("<br>") : "No recipe saved"}</td><td><span style="font-size:11px;font-weight:850;color:${recipe.length ? "var(--forest-800)" : "var(--danger)"};">${recipe.length ? "Configured" : "Missing recipe"}</span></td></tr>`;
                 }).join("") : `<tr><td colspan="3"><div style="padding:20px;text-align:center;color:var(--muted);">No active menu dishes are available for recipe coverage.</div></td></tr>`}
               </tbody>
             </table>
@@ -1977,8 +1958,9 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 </td>
 
                 <td>
-                  ${item.costPerUnit === null ? "Not entered" : Number(item.costPerUnit).toFixed(4)}
-                  ${item.costPerUnit === null ? "" : `<span style="display:inline-block;margin-left:5px;padding:2px 6px;border-radius:6px;background:${item.costIsEstimate ? "#fff3d6" : "#eaf5e9"};color:${item.costIsEstimate ? "#8a5a00" : "#276438"};font-size:10px;font-weight:850;">${item.costIsEstimate ? "EST." : "SET"}</span><div style="margin-top:3px;color:var(--muted);font-size:10px;">₹ per ${escapeHtml(item.baseUnit)}${item.costSourceNote ? " · " + escapeHtml(item.costSourceNote) : ""}</div>`}
+                  ${item.costPerUnit === null
+                    ? "Not entered"
+                    : Number(item.costPerUnit).toFixed(4)}
                 </td>
 
                 <td>
@@ -1991,6 +1973,19 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                   >
                     <i class="ph-bold ph-pencil-simple"></i>
                   </button>
+                  
+                  <button
+                    type="button"
+                    class="icon-btn icon-btn-light"
+                    data-delete-ingredient="${escapeHtml(item.id)}"
+                    data-ingredient-name="${escapeHtml(item.name)}"
+                    aria-label="Delete ${escapeHtml(item.name)}"
+                    title="Delete ingredient"
+                    style="color:var(--danger);margin-left:6px;"
+                  >
+                    <i class="ph-bold ph-trash"></i>
+                  </button>
+
                 </td>
               </tr>
             `).join("")
@@ -2004,7 +1999,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                     ></i>
 
                     <h3 style="margin:10px 0 5px;font-size:15px;">
-                      No ingredients yet
+                      No ingredient drafts
                     </h3>
 
                     <p style="margin:0;color:var(--muted);font-size:12px;">
@@ -2046,7 +2041,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               style="margin-top:22px;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--cream-100);"
             >
               <h3 style="margin:0 0 16px;font-size:16px;">
-                ${currentIngredient ? "Edit ingredient" : "New ingredient"}
+                ${currentIngredient ? "Edit ingredient draft" : "New ingredient"}
               </h3>
 
               <div class="form-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;">
@@ -2123,13 +2118,9 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                     placeholder="Cost per gram, ml or piece"
                   />
                   <small style="color:var(--muted);font-size:11px;">
-                    Cost is stored in INR per base unit. Seeded amber EST. costs are planning estimates; replace them with actual supplier invoice costs before using food-cost reports.
+                    Use the same currency as the restaurant's purchase records.
+                    This is a draft field, not a verified stock valuation.
                   </small>
-                  <label class="switch-field" style="margin-top:10px;padding:9px 10px;border:1px solid #ecd9a2;border-radius:10px;background:#fffaf0;">
-                    <input type="checkbox" name="confirmCost" />
-                    <span class="switch-ui"></span>
-                    <span><strong>Confirm this supplier cost</strong><small>Check only after you verified it against a current supplier invoice.</small></span>
-                  </label>
                 </label>
               </div>
 
@@ -2143,7 +2134,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 </button>
 
                 <button type="submit" class="btn btn-primary">
-                  ${currentIngredient ? "Save changes" : "Save ingredient"}
+                  ${currentIngredient ? "Update draft" : "Add draft"}
                 </button>
               </div>
 
@@ -2156,7 +2147,9 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           ` : ""}
 
           <div class="inventory-data-status" style="margin-top:18px;">
-            Ingredient records, recipes and stock movements are saved in the restaurant database. Amber EST. costs are initial planning estimates only; replace them with actual supplier invoice costs before relying on food-cost or profitability reports.
+            Draft mode: these entries are held in the current page only.
+            They are not saved to the database and will be lost when this
+            view is reloaded or closed.
           </div>
 
           <div style="overflow-x:auto;margin-top:18px;">
@@ -2198,6 +2191,96 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               editingIngredientId = button.dataset.editIngredient;
               showIngredientForm = true;
               renderInventoryView();
+            });
+          });
+
+        
+        panel.querySelectorAll("[data-delete-ingredient]")
+          .forEach(button => {
+            button.addEventListener("click", async () => {
+              const ingredientId = button.dataset.deleteIngredient;
+              const ingredientName = button.dataset.ingredientName || "this ingredient";
+
+              
+              openAppModal({
+                title: "Delete ingredient?",
+                subtitle: `You are about to delete ${ingredientName}.`,
+                body: `
+                  <div class="danger-confirm">
+                    <div class="danger-confirm-icon">
+                      <i class="ph ph-trash"></i>
+                    </div>
+                    <h3>Delete ${escapeHtml(ingredientName)}?</h3>
+                    <p>
+                      This action cannot be undone. Ingredients used in recipes
+                      or stock history cannot be permanently deleted.
+                    </p>
+                  </div>
+                `,
+                actions: [
+                  {
+                    label: "Cancel",
+                    icon: "ph-x",
+                    className: "btn-quiet",
+                    onClick: ({ close }) => close()
+                  },
+                  {
+                    label: "Delete ingredient",
+                    icon: "ph-trash",
+                    className: "btn-danger",
+                    onClick: async ({ close, button: modalButton }) => {
+                      modalButton.disabled = true;
+                      modalButton.innerHTML =
+                        '<i class="ph ph-spinner-gap ph-spin"></i> Deleting...';
+
+                      try {
+                        const { data, error } = await supabase.rpc(
+                          "admin_delete_ingredient",
+                          {
+                            p_panel_token:
+                              window.__RMS_PANEL_ACCESS__?.token || null,
+                            p_ingredient_id: ingredientId
+                          }
+                        );
+
+                        if (error) throw error;
+
+                        if (data?.ok !== true) {
+                          throw new Error("The ingredient could not be deleted.");
+                        }
+
+                        await reloadInventoryDrafts();
+
+                        if (editingIngredientId === ingredientId) {
+                          editingIngredientId = null;
+                          showIngredientForm = false;
+                        }
+
+                        close();
+
+                        showToast(
+                          "Ingredient deleted",
+                          `${ingredientName} was removed from inventory.`,
+                          "success"
+                        );
+
+                        renderInventoryView();
+                      } catch (deleteError) {
+                        modalButton.disabled = false;
+                        modalButton.innerHTML =
+                          '<i class="ph ph-trash"></i> Delete ingredient';
+
+                        showToast(
+                          "Cannot delete ingredient",
+                          deleteError.message || "Please try again.",
+                          "error"
+                        );
+                      }
+                    }
+                  }
+                ]
+              });
+
             });
           });
 
@@ -2256,10 +2339,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               const { error: saveError } = await supabase.rpc("admin_save_ingredient", {
                 p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null,
                 p_ingredient_id: editingIngredientId && !String(editingIngredientId).startsWith("draft-") ? editingIngredientId : null,
-                p_payload: {
-                  name, category, baseUnit, reorderLevel, costPerUnit,
-                  confirmCost: form.elements.confirmCost?.checked === true
-                }
+                p_payload: { name, category, baseUnit, reorderLevel, costPerUnit }
               });
               if (saveError) throw saveError;
               await reloadInventoryDrafts();
@@ -3761,35 +3841,41 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           cgst += Number(o.cgst || 0); sgst += Number(o.sgst || 0); rounding += Number(o.rounding || 0);
           
           let roundItems = [];
-          (o.order_items || []).sort((a, b) => {
+          (o.order_items || [])
+            .filter(oi => String(oi.serving_status || 'pending').toLowerCase() !== 'cancelled')
+            .slice()
+            .sort((a, b) => {
               const dateDiff = new Date(a.created_at) - new Date(b.created_at);
               return dateDiff !== 0 ? dateDiff : (a.id > b.id ? 1 : -1);
-          }).forEach(oi => {
-              roundItems.push({ id: oi.id, name: oi.name_snapshot, price: oi.unit_price, quantity: oi.quantity, status: oi.serving_status || 'pending' });
-          });
+            })
+            .forEach(oi => {
+              roundItems.push({
+                id: oi.id,
+                name: oi.name_snapshot,
+                price: oi.unit_price,
+                quantity: oi.quantity,
+                status: String(oi.serving_status || 'pending').toLowerCase(),
+                kotReadyPreviousStatus: oi.kot_ready_previous_status || null,
+                kotReadyAt: oi.kot_ready_at || null
+              });
+            });
           displayRounds.push({ id: o.id, round_number: o.round_number || (index+1), items: roundItems, total: o.grand_total });
         });
 
         const isBillReq = session.status === "bill_requested";
 
-        function cycleStatus(current) {
-            const sequence = ["pending", "preparing", "ready", "served"];
-            const index = sequence.indexOf(current);
-
-            // Never cycle a completed item back to pending.
-            if (index < 0 || index >= sequence.length - 1) return current;
-            return sequence[index + 1];
+        // Admin table operations use the same Ready/Undo Ready workflow as KOT.
+        // A KOT-ready item is stored as served plus a reversible marker; it is not
+        // advanced through a separate Admin-only status cycle.
+        function isKotReady(item) {
+            return item.status === "served" && Boolean(item.kotReadyPreviousStatus);
         }
 
-        function getNextStatusLabel(status) {
-            const labels = {
-                pending: "START PREPARING",
-                preparing: "MARK READY",
-                ready: "MARK SERVED",
-                served: "SERVED"
-            };
-
-            return labels[status] || "PENDING";
+        function getNextStatusLabel(item) {
+            if (isKotReady(item)) return "UNDO READY";
+            if (["pending", "preparing", "ready"].includes(item.status)) return "MARK READY";
+            if (item.status === "served") return "SERVED";
+            return "UNAVAILABLE";
         }
 
         function getStatusColor(status) {
@@ -3806,8 +3892,20 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
             return "color: var(--forest-900); background: #ffffff; border-color: var(--forest-900); box-shadow: 0 2px 6px rgba(25,50,28,0.08);";
         }
 
+        // Once the bill is prepared, Admin may inspect/reprint it but must not
+        // mutate KOT state behind a generated bill. Keep UI and RPC eligibility aligned.
+        const canChangeKOTStatus = ["open", "bill_requested"].includes(String(session.status || "").toLowerCase());
+        const tableReadyItems = canChangeKOTStatus
+          ? displayRounds.flatMap(round => round.items).filter(item =>
+              ["pending", "preparing", "ready"].includes(item.status) || isKotReady(item)
+            )
+          : [];
+        const tableAlreadyReady = tableReadyItems.length > 0 && tableReadyItems.every(isKotReady);
+        const canReadyTable = canChangeKOTStatus && tableReadyItems.some(item =>
+          !isKotReady(item) && ["pending", "preparing", "ready"].includes(item.status)
+        );
         const hasUnservedItems = displayRounds.some(round =>
-            round.items.some(item => item.status !== "served")
+            round.items.some(item => !["served", "cancelled"].includes(item.status))
         );
 
         // 🧠 SCROLL LOCK FIX: Capture the exact scroll position before destroying the old HTML list
@@ -3816,12 +3914,18 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
 
         host.innerHTML = `
           <div class="active-dining-dashboard" style="text-align: left; display: flex; flex-direction: column; flex: 1; min-height: 0;">
-            <div class="dining-status-banner" style="flex-shrink: 0; ${isBillReq ? 'background: var(--gold-100); color: var(--gold-600); border: 1px solid var(--gold-400);' : ''}">
+            <div class="dining-status-banner" style="flex-shrink: 0; display:flex; align-items:center; gap:10px; ${isBillReq ? 'background: var(--gold-100); color: var(--gold-600); border: 1px solid var(--gold-400);' : ''}">
               <i class="ph-bold ph-${isBillReq ? 'bell-ringing qty-pulse' : 'receipt'}"></i>
-              <div>
+              <div style="flex:1; min-width:0;">
                 <strong style="${isBillReq ? 'color: var(--gold-600);' : ''}">${isBillReq ? 'Customer Requested Bill' : 'Table Tab is open'}</strong>
                 <span>Grand Total: ${money(grandTotal, settings.currency_symbol)}</span>
               </div>
+              ${canReadyTable || tableAlreadyReady ? `
+                <button class="btn ${tableAlreadyReady ? 'btn-quiet' : 'btn-primary'}" id="admin-table-ready" type="button" style="flex:0 0 auto; min-height:36px; padding:0 10px; font-size:11px; white-space:nowrap;">
+                  <i class="ph-bold ph-${tableAlreadyReady ? 'arrow-counter-clockwise' : 'check-circle'}"></i>
+                  ${tableAlreadyReady ? 'Undo Ready' : 'Ready table'}
+                </button>
+              ` : ""}
             </div>
 
             <div class="dining-items-list" style="flex: 1; overflow-y: auto; min-height: 0; margin-top: 12px; padding-bottom: 24px; padding-right: 6px;">
@@ -3857,11 +3961,12 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
 
                           <button class="status-cycle-btn"
                             data-item-id="${item.id}"
-                            data-current-status="${item.status}"
-                            title="${getNextStatusLabel(item.status)}"
-                            style="padding: 6px 12px; font-size: 11px; font-weight: 900; text-transform: uppercase; border-radius: 20px; border: 1px solid transparent; transition: all 0.15s ease; display: inline-flex; align-items: center; gap: 4px; ${getStatusColor(item.status)}${item.status === "served" ? "cursor: default; opacity: 0.95;" : "cursor: pointer;"}"
-                            ${item.status === "served" ? "disabled" : ""}>
-                            ${item.status === "served" ? '<i class="ph-bold ph-check" style="font-size: 14px;"></i> SERVED' : `${getNextStatusLabel(item.status)} <i class="ph-bold ph-caret-right" style="font-size: 12px;"></i>`}
+                            data-ready-action="${canChangeKOTStatus ? (isKotReady(item) ? 'undo_ready' : (["pending", "preparing", "ready"].includes(item.status) ? 'ready' : '')) : ''}"
+                            title="${canChangeKOTStatus ? getNextStatusLabel(item) : 'Bill already prepared'}"
+                            aria-label="${canChangeKOTStatus ? getNextStatusLabel(item) : 'Bill already prepared'} for ${escapeHtml(item.name)}"
+                            style="padding: 6px 12px; font-size: 11px; font-weight: 900; text-transform: uppercase; border-radius: 20px; border: 1px solid transparent; transition: all 0.15s ease; display: inline-flex; align-items: center; gap: 4px; ${getStatusColor(isKotReady(item) ? 'ready' : item.status)}${!canChangeKOTStatus || (item.status === "served" && !isKotReady(item)) ? "cursor: default; opacity: 0.75;" : "cursor: pointer;"}"
+                            ${!canChangeKOTStatus || (item.status === "served" && !isKotReady(item)) ? "disabled" : ""}>
+                            ${!canChangeKOTStatus ? 'BILL PREPARED' : isKotReady(item) ? '<i class="ph-bold ph-arrow-counter-clockwise" style="font-size: 14px;"></i> UNDO READY' : item.status === "served" ? '<i class="ph-bold ph-check" style="font-size: 14px;"></i> SERVED' : 'READY <i class="ph-bold ph-check-circle" style="font-size: 12px;"></i>'}
                           </button>
                         </div>
                       </div>
@@ -3915,34 +4020,57 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
             });
         });
 
-        // The database validates both tenant ownership and the legal status transition.
-        host.querySelectorAll(".status-cycle-btn").forEach(button => {
+        // Use the exact same Ready/Undo Ready server transition as the KOT screen.
+        host.querySelectorAll(".status-cycle-btn[data-ready-action]").forEach(button => {
             button.addEventListener("click", async () => {
                 const itemId = button.dataset.itemId;
-                const nextStatus = cycleStatus(button.dataset.currentStatus);
-
-                if (nextStatus === button.dataset.currentStatus) return;
+                const action = button.dataset.readyAction;
+                if (!itemId || !["ready", "undo_ready"].includes(action)) return;
 
                 const originalHTML = button.innerHTML;
                 button.disabled = true;
                 button.innerHTML = '<i class="ph-bold ph-spinner-gap ph-spin"></i>';
 
                 try {
-                    const { error } = await supabase.rpc("set_order_item_status", {
+                    const { error } = await supabase.rpc("set_kot_item_status", {
                         p_item_id: itemId,
-                        p_status: nextStatus,
+                        p_new_status: action,
                         p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null
                     });
                     if (error) throw error;
-
                     renderManager();
                 } catch (error) {
                     button.disabled = false;
                     button.innerHTML = originalHTML;
-                    showToast("Could not update item status", error.message, "error");
+                    showToast("Could not update item status", error.message || "Please refresh and try again.", "error");
                 }
             });
         });
+
+        const adminTableReadyButton = host.querySelector("#admin-table-ready");
+        if (adminTableReadyButton) {
+          adminTableReadyButton.addEventListener("click", async () => {
+            const action = tableAlreadyReady ? "undo_ready" : "ready";
+            const itemIds = tableReadyItems.map(item => item.id);
+            if (!itemIds.length) return;
+            const originalHTML = adminTableReadyButton.innerHTML;
+            adminTableReadyButton.disabled = true;
+            adminTableReadyButton.innerHTML = '<i class="ph-bold ph-spinner-gap ph-spin"></i> Updating';
+            try {
+              const { error } = await supabase.rpc("set_kot_table_ready", {
+                p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null,
+                p_item_ids: itemIds,
+                p_action: action
+              });
+              if (error) throw error;
+              renderManager();
+            } catch (error) {
+              adminTableReadyButton.disabled = false;
+              adminTableReadyButton.innerHTML = originalHTML;
+              showToast("Could not update table readiness", error.message || "Please refresh and try again.", "error");
+            }
+          });
+        }
 
         // Connects straight to the existing POS Cart mechanism without forcing a route change
         host.querySelector("#admin-add-items").addEventListener("click", async () => {
@@ -4355,11 +4483,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
         <section class="admin-panel settings-panel">
           <form id="settings-form" class="settings-form-grid">
             <label class="field"><span>Restaurant name</span><input class="field-input" name="restaurant_name" value="${escapeHtml(settings.restaurant_name)}" required></label>
-            <label class="field settings-gstin-field">
-              <span>GSTIN (GST Number)</span>
-              <input class="field-input" name="gst_number" value="${escapeHtml(settings.gst_number || "")}" placeholder="22AAAAA0000A1Z5" maxlength="15" pattern="[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][1-9A-Za-z]Z[0-9A-Za-z]" ${String(settings.gst_number || "").trim() ? 'disabled aria-disabled="true" title="GSTIN is locked after the first save"' : ""}>
-              <small style="display:block;margin-top:6px;color:${String(settings.gst_number || "").trim() ? "var(--forest-700)" : "var(--muted)"};font-size:11px;line-height:1.5;">${String(settings.gst_number || "").trim() ? "Locked after initial save. Contact the developer to change or clear the GSTIN." : "Enter the verified GSTIN carefully. It becomes locked after the first save."}</small>
-            </label>
+            <label class="field"><span>GSTIN (GST Number)</span><input class="field-input" name="gst_number" value="${escapeHtml(settings.gst_number || "")}" placeholder="22AAAAA0000A1Z5"></label>
             <label class="field settings-wide"><span>Restaurant Address (Prints on Bill)</span><textarea class="field-input textarea-input" name="restaurant_address" placeholder="123 Food Street, City, State" rows="2">${escapeHtml(settings.restaurant_address || "")}</textarea></label>
             <label class="field"><span>CGST %</span><input class="field-input" name="cgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.cgst_rate)}" required></label>
             <label class="field"><span>SGST %</span><input class="field-input" name="sgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.sgst_rate)}" required></label>
@@ -4645,8 +4769,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
         const payload = {
           restaurant_id: window.__ACTIVE_TENANT__.id,
           restaurant_name: String(fd.get("restaurant_name") || "").trim(),
-          // Disabled GSTIN inputs are omitted by FormData; preserve the saved value.
-          gst_number: String(settings.gst_number || fd.get("gst_number") || "").trim(),
+          gst_number: String(fd.get("gst_number") || "").trim(),
           restaurant_address: String(fd.get("restaurant_address") || "").trim(),
           cgst_rate: Number(fd.get("cgst_rate")),
           sgst_rate: Number(fd.get("sgst_rate")),
@@ -5096,13 +5219,8 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
             <div>
               <h3 style="margin:0 0 7px;font-size:17px;">Recipe ingredients</h3>
               <p style="margin:0;color:var(--muted);font-size:12px;line-height:1.6;">
-                Select each ingredient and enter the quantity needed for one serving. Any seeded recipe is an estimate until you explicitly confirm it against the kitchen's actual recipe.
+                Select each ingredient and enter the quantity needed for one serving.
               </p>
-              <label class="switch-field" style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;">
-                <input type="checkbox" name="confirm_recipe_review" />
-                <span class="switch-ui"></span>
-                <span><strong>I've verified this recipe</strong><small>Confirm exact ingredients and per-serving quantities to clear the estimate flag.</small></span>
-              </label>
             </div>
 
             <div
@@ -5126,7 +5244,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               aria-live="polite"
               style="margin:13px 0 0;color:var(--muted);font-size:12px;line-height:1.6;"
             >
-              Recipe assignments are saved to the database. In strict inventory mode, verified recipes are consumed once when preparation starts.
+              Recipe assignments are saved to the database and drive consumption tracking when dishes are marked Served.
             </p>
           </section>
         </form>
@@ -5168,17 +5286,11 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
 
               seenIngredientIds.add(ingredient.id);
 
-              const recipeHasEstimates = productRecipeSelection.some(row => row.is_estimate);
-              const explicitlyReviewed = form.querySelector('[name="confirm_recipe_review"]')?.checked === true;
               recipeSelection.push({
                 ingredient_id: ingredient.id,
                 ingredient_name: ingredient.name,
                 quantity_per_serving: quantity,
-                unit: ingredient.baseUnit,
-                is_estimate: recipeHasEstimates && !explicitlyReviewed,
-                source_note: recipeHasEstimates && !explicitlyReviewed
-                  ? "Estimated starter recipe; review against actual kitchen quantities."
-                  : "Reviewed by Admin."
+                unit: ingredient.baseUnit
               });
             }
 
@@ -5264,7 +5376,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               showToast(
                 editing ? "Dish updated" : "Dish created",
                 recipeSelection.length
-                  ? `${payload.name} · ${recipeSelection.length} recipe ingredients saved${normalizedRecipeSave.estimated_ingredient_count ? " · estimate retained for review" : " · recipe reviewed"}`
+                  ? `${payload.name} · ${recipeSelection.length} recipe ingredients drafted`
                   : `${payload.name} · no recipe ingredients assigned`
               );
 

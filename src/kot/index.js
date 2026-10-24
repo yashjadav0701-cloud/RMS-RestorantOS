@@ -1,7 +1,12 @@
 import { supabase } from "../core/supabase.js";
 import { installPanelSignOut, requestPanelSignOut } from "../core/panelSession.js";
 
-const ACTIVE_STATUSES = new Set(["pending", "preparing", "ready", "served"]);
+const ACTIVE_STATUSES = new Set(["pending", "preparing", "ready"]);
+
+function isReadyMarked(row) {
+  return String(row?.serving_status || "").toLowerCase() === "served" &&
+    Boolean(row?.kot_ready_previous_status);
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -41,15 +46,19 @@ function groupByTable(rows) {
 
   for (const row of rows) {
     const isTakeaway = row.order_type === "takeaway";
+    // Group by the actual dining-session identity, not the visible table label.
+    // A reused table name must never merge two separate service sessions.
     const tableKey = isTakeaway
       ? `takeaway:${row.order_id}`
-      : `table:${row.table_label ?? "unknown"}`;
+      : `session:${row.session_id || row.table_id || row.table_label || "unknown"}`;
 
     if (!groups.has(tableKey)) {
       groups.set(tableKey, {
         key: tableKey,
         orderType: row.order_type,
         tableLabel: row.table_label,
+        tableId: row.table_id || null,
+        sessionId: row.session_id || null,
         rounds: new Map(),
         createdAt: row.order_created_at
       });
@@ -286,18 +295,39 @@ export async function render({ mount }) {
           border-bottom: 1px solid var(--line);
         }
 
+        .kot-ticket-header-actions {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 7px;
+          flex-shrink: 0;
+        }
+
+        .kot-table-ready-action {
+          min-height: 34px;
+          padding: 7px 10px;
+          border: 1px solid var(--forest-900);
+          border-radius: 9px;
+          background: var(--forest-900);
+          color: #fff;
+          font: inherit;
+          font-size: 11px;
+          font-weight: 850;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+
+        .kot-table-ready-action.undo {
+          background: var(--paper);
+          color: var(--forest-900);
+          border-color: var(--line);
+        }
+
+        .kot-table-ready-action:disabled { opacity: .55; cursor: wait; }
+
         .kot-ticket-header h3 {
           margin: 0;
           font-size: 16px;
-        }
-
-        .kot-ticket-header-actions {
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-          gap: 7px;
-          flex-wrap: wrap;
-          max-width: 58%;
         }
 
         .kot-ticket-meta {
@@ -427,23 +457,6 @@ export async function render({ mount }) {
           color: #075985;
         }
 
-        .kot-status.served,
-        .kot-table-all-served {
-          background: #e8f4e9;
-          color: #245b31;
-        }
-
-        .kot-table-all-served {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 6px 9px;
-          border-radius: 9px;
-          font-size: 10px;
-          font-weight: 850;
-          text-align: right;
-        }
-
         .kot-item-actions {
           display: flex;
           align-items: center;
@@ -547,11 +560,6 @@ export async function render({ mount }) {
 
           .kot-ticket-header {
             padding: 14px;
-            gap: 10px;
-          }
-
-          .kot-ticket-header-actions {
-            max-width: 52%;
           }
         }
 
@@ -612,9 +620,10 @@ export async function render({ mount }) {
   const refreshButton = mount.querySelector("[data-kot-refresh]");
 
   function renderQueue() {
-    const activeRows = rows.filter(row =>
-      ACTIVE_STATUSES.has(String(row.serving_status || "pending").toLowerCase())
-    );
+    const activeRows = rows.filter(row => {
+      const status = String(row.serving_status || "pending").toLowerCase();
+      return ACTIVE_STATUSES.has(status) || isReadyMarked(row);
+    });
 
     const cancelledRows = rows.filter(
       row => String(row.serving_status || "").toLowerCase() === "cancelled"
@@ -663,9 +672,27 @@ export async function render({ mount }) {
       const label = isTakeaway
         ? group.rounds.map(round => `Takeaway #${round.orderNumber}`).join("")
         : `Table ${group.tableLabel || "—"}`;
+      const allGroupItems = group.rounds.flatMap(round => round.items);
+      const tableReadyItems = allGroupItems.filter(item => {
+        const status = String(item.serving_status || "pending").toLowerCase();
+        return status !== "cancelled" &&
+          (ACTIVE_STATUSES.has(status) || isReadyMarked(item));
+      });
+      const isTableAlreadyReady = tableReadyItems.length > 0 && tableReadyItems.every(isReadyMarked);
+      const canReadyTable = tableReadyItems.some(item => !isReadyMarked(item) &&
+        ACTIVE_STATUSES.has(String(item.serving_status || "pending").toLowerCase()));
+      const tableReadyButton = !isTakeaway && tableReadyItems.length && (canReadyTable || isTableAlreadyReady)
+        ? `<button class="kot-table-ready-action ${isTableAlreadyReady ? "undo" : ""}"
+              type="button" data-kot-table-action="${isTableAlreadyReady ? "undo_ready" : "ready"}"
+              data-item-ids="${escapeHtml(JSON.stringify(tableReadyItems.map(item => item.item_id)))}"
+              ${tableReadyItems.some(item => busyItems.has(item.item_id)) ? "disabled" : ""}>
+              <i class="ph-bold ph-${isTableAlreadyReady ? "arrow-counter-clockwise" : "check-circle"}"></i>
+              ${isTableAlreadyReady ? "Undo Ready" : "Ready table"}
+           </button>`
+        : "";
 
       return `
-        <article class="kot-ticket">
+        <article class="kot-ticket" data-kot-group="${escapeHtml(group.key)}">
           <header class="kot-ticket-header">
             <div>
               <h3>${escapeHtml(label)}</h3>
@@ -677,23 +704,10 @@ export async function render({ mount }) {
               </div>
             </div>
             <div class="kot-ticket-header-actions">
-              ${!isTakeaway && group.rounds.some(round => round.items.length)
-                ? (() => {
-                    const groupItems = group.rounds.flatMap(round => round.items);
-                    // A real Served item remains visible until billing, but is not part of
-                    // the reversible bulk action. Items Ready-marked by this UI are exposed
-                    // as status=ready by the database and can be undone safely.
-                    const actionableItems = groupItems.filter(item =>
-                      ["pending", "preparing", "ready"].includes(String(item.serving_status || "pending").toLowerCase())
-                    );
-                    const allReady = actionableItems.length > 0 && actionableItems.every(item => String(item.serving_status || "pending").toLowerCase() === "ready");
-                    if (!actionableItems.length) {
-                      return `<span class="kot-round kot-table-all-served"><i class="ph-bold ph-check-circle"></i> All served · awaiting bill</span>`;
-                    }
-                    const ids = actionableItems.map(item => item.item_id).filter(Boolean).join(",");
-                    return `<button class="kot-action ${allReady ? "" : "primary"}" type="button" data-kot-table-action="${allReady ? "undo_ready" : "ready"}" data-item-ids="${escapeHtml(ids)}" ${actionableItems.some(item => busyItems.has(item.item_id)) ? "disabled" : ""}>${allReady ? "Undo ready" : "Ready table"}</button>`;
-                  })()
-                : `<span class="kot-round">Takeaway</span>`}
+              <span class="kot-round">
+                ${isTakeaway ? "Takeaway" : "Table open"}
+              </span>
+              ${tableReadyButton}
             </div>
           </header>
 
@@ -722,37 +736,13 @@ export async function render({ mount }) {
                   const status = String(
                     item.serving_status || "pending"
                   ).toLowerCase();
-
+                  const readyMarked = isReadyMarked(item);
+                  const visibleStatus = readyMarked ? "ready" : status;
                   const busy = busyItems.has(item.item_id);
                   let action = "";
 
-                  if (status === "pending") {
+                  if (readyMarked) {
                     action = `
-                      <button
-                        class="kot-action primary"
-                        type="button"
-                        data-kot-action="ready"
-                        data-item-id="${escapeHtml(item.item_id)}"
-                        ${busy ? "disabled" : ""}
-                      >
-                        Ready
-                      </button>
-                    `;
-                  } else if (status === "preparing") {
-                    action = `
-                      <button
-                        class="kot-action primary"
-                        type="button"
-                        data-kot-action="ready"
-                        data-item-id="${escapeHtml(item.item_id)}"
-                        ${busy ? "disabled" : ""}
-                      >
-                        Ready
-                      </button>
-                    `;
-                  } else if (status === "ready") {
-                    action = `
-                      <span class="kot-status ready">Ready</span>
                       <button
                         class="kot-action"
                         type="button"
@@ -760,7 +750,19 @@ export async function render({ mount }) {
                         data-item-id="${escapeHtml(item.item_id)}"
                         ${busy ? "disabled" : ""}
                       >
-                        Undo ready
+                        Undo Ready
+                      </button>
+                    `;
+                  } else if (["pending", "preparing", "ready"].includes(status)) {
+                    action = `
+                      <button
+                        class="kot-action primary"
+                        type="button"
+                        data-kot-action="ready"
+                        data-item-id="${escapeHtml(item.item_id)}"
+                        ${busy ? "disabled" : ""}
+                      >
+                        Ready
                       </button>
                     `;
                   }
@@ -777,8 +779,8 @@ export async function render({ mount }) {
                       </div>
 
                       <div class="kot-item-bottom">
-                        <span class="kot-status ${escapeHtml(status)}">
-                          ${escapeHtml(statusLabel(status))}
+                        <span class="kot-status ${escapeHtml(visibleStatus)}">
+                          ${escapeHtml(statusLabel(visibleStatus))}
                         </span>
                         <div class="kot-item-actions">${action}</div>
                       </div>
@@ -895,7 +897,7 @@ export async function render({ mount }) {
       console.error("KOT status update failed:", error);
       feedbackNode.textContent = "";
       errorNode.textContent =
-        error?.message || "The dish status could not be changed. Refresh and try again.";
+        "The dish status could not be changed. Refresh and try again.";
     } finally {
       busyItems.delete(itemId);
       if (!disposed) renderQueue();
@@ -903,14 +905,16 @@ export async function render({ mount }) {
   }
 
   async function changeTableStatus(itemIds, action, button) {
+    if (!Array.isArray(itemIds) || !itemIds.length || !["ready", "undo_ready"].includes(action) || disposed) return;
     const currentAccess = window.__RMS_PANEL_ACCESS__;
-    if (!itemIds.length || disposed || button.disabled) return;
     if (!["kot", "manager"].includes(currentAccess?.panelId) || !currentAccess.token || currentAccess.expiresAt <= Date.now()) {
       errorNode.textContent = "Kitchen access has expired. Please verify the PIN again.";
       return;
     }
+    const previousHTML = button.innerHTML;
+    itemIds.forEach(id => busyItems.add(id));
     button.disabled = true;
-    feedbackNode.textContent = action === "ready" ? "Marking the table ready…" : "Undoing table ready…";
+    button.innerHTML = '<i class="ph-bold ph-spinner-gap ph-spin"></i> Updating';
     errorNode.textContent = "";
     try {
       const { data, error } = await supabase.rpc("set_kot_table_ready", {
@@ -919,14 +923,16 @@ export async function render({ mount }) {
         p_action: action
       });
       if (error) throw error;
-      if (data?.ok !== true) throw new Error("The table status change was rejected.");
-      feedbackNode.textContent = action === "ready" ? "All dishes on this table are marked ready." : "Table ready was undone.";
+      if (data === false || data?.ok === false) throw new Error("The table status change was rejected.");
+      feedbackNode.textContent = action === "ready" ? "All eligible dishes on the table are marked ready." : "Table readiness has been undone.";
       await loadQueue({ quiet: true });
     } catch (error) {
       console.error("KOT table status update failed:", error);
-      feedbackNode.textContent = "";
-      errorNode.textContent = error?.message || "The table status could not be changed. Refresh and try again.";
+      errorNode.textContent = error?.message || "Could not update the table. Refresh and try again.";
+      button.disabled = false;
+      button.innerHTML = previousHTML;
     } finally {
+      itemIds.forEach(id => busyItems.delete(id));
       if (!disposed) renderQueue();
     }
   }
@@ -934,9 +940,9 @@ export async function render({ mount }) {
   function handleQueueClick(event) {
     const tableButton = event.target.closest("[data-kot-table-action]");
     if (tableButton) {
-      const itemIds = String(tableButton.dataset.itemIds || "").split(",").filter(Boolean);
-      const action = tableButton.dataset.kotTableAction;
-      if (["ready", "undo_ready"].includes(action)) void changeTableStatus(itemIds, action, tableButton);
+      let itemIds = [];
+      try { itemIds = JSON.parse(tableButton.dataset.itemIds || "[]"); } catch { itemIds = []; }
+      void changeTableStatus(itemIds, tableButton.dataset.kotTableAction, tableButton);
       return;
     }
 
@@ -945,7 +951,6 @@ export async function render({ mount }) {
 
     const itemId = button.dataset.itemId;
     const newStatus = button.dataset.kotAction;
-
     if (!itemId || !newStatus) return;
 
     changeItemStatus(itemId, newStatus, button);

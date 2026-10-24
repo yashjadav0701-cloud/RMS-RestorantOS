@@ -20,6 +20,7 @@ WITH checks AS (
     ('admin_set_panel_pin','public.admin_set_panel_pin(text,text,text)'),
     ('get_kot_queue','public.get_kot_queue(text)'),
     ('set_kot_item_status','public.set_kot_item_status(text,uuid,text)'),
+    ('set_kot_table_ready','public.set_kot_table_ready(text,uuid[],text)'),
     ('request_captain','public.request_captain(uuid,text)'),
     ('generate_cashier_bill','public.generate_cashier_bill(text,uuid,uuid)'),
     ('generate_takeaway_bill','public.generate_takeaway_bill(uuid,text)'),
@@ -31,6 +32,20 @@ WITH checks AS (
     ('get_public_pos_data','public.get_public_pos_data(uuid)'),
     ('admin_mutate_resource','public.admin_mutate_resource(text,text,text,uuid,jsonb)')
   ) AS x(object_name,signature)
+  UNION ALL
+  SELECT 'REQUIRED_COLUMN', x.object_name,
+         CASE WHEN EXISTS (
+           SELECT 1 FROM information_schema.columns c
+           WHERE c.table_schema='public' AND c.table_name=x.table_name AND c.column_name=x.column_name
+         ) THEN 'PASS' ELSE 'FAIL' END,
+         x.table_name || '.' || x.column_name
+  FROM (VALUES
+    ('order_items','inventory_recipe_snapshot','inventory_recipe_snapshot'),
+    ('order_items','inventory_consumed_at','inventory_consumed_at'),
+    ('order_items','inventory_reconciled_at','inventory_reconciled_at'),
+    ('order_items','kot_ready_previous_status','kot_ready_previous_status'),
+    ('order_items','kot_ready_at','kot_ready_at')
+  ) AS x(table_name,column_name,object_name)
   UNION ALL
   SELECT 'RLS', c.relname,
          CASE WHEN c.relrowsecurity THEN 'PASS' ELSE 'FAIL' END,

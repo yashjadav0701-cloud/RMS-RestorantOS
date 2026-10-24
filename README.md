@@ -284,3 +284,12 @@ executed against the production database from this workspace.
 For an existing TableForge database, apply `sql/ADMIN_BILL_DISCOUNT_PATCH.sql` **after** `MASTER_MIGRATION_TABLEFORGE.sql`, `TABLEFORGE_WORKFLOW_FIX_PATCH.sql`, and `IMMEDIATE_BILL_AND_ANALYTICS_FIX.sql`. Do not rerun the master migration merely to add discounts. The patch stores discounts at the dining-session level for consolidated dine-in bills and at the order level for takeaway, restricts changes to Admin-token-authorized unpaid/open bills, logs the action and reason in the audit trail, recalculates tax/rounding, and preserves the discount through Cashier reprints.
 
 Before production use, test: no discount, percent discount, fixed rupee discount, editing a discount, removing a discount with value `0`, invalid values, cross-tenant IDs, Manager/Cashier token rejection, paid bill rejection, closed bill rejection, same Admin and Cashier reprint totals, and correct printed/PDF discount lines. Automated source tests are not a substitute for running the SQL against the actual database.
+
+## KOT and Admin Ready workflow alignment
+
+After the master migration and workflow patch, run `sql/ADMIN_KOT_READY_ALIGNMENT_PATCH.sql` in Supabase. It adds the inventory-consumption marker columns used by the deployed trigger, installs the unified Ready/Undo Ready item and table RPCs, and updates the KOT queue response so marked-ready dishes remain visible until the bill reaches `bill_ready`. Then run `sql/ADMIN_KOT_READY_ALIGNMENT_AUDIT.sql` and `sql/POST_MIGRATION_VALIDATION.sql`. Do not enable strict inventory until affected recipes and opening stock are verified.
+
+
+## Admin Table Open + KOT Ready alignment
+
+See `docs/release/ADMIN_KOT_READY_ALIGNMENT_RELEASE.md`. The related migration is `sql/ADMIN_KOT_READY_ALIGNMENT_PATCH.sql`; its read-only audit is `sql/ADMIN_KOT_READY_ALIGNMENT_AUDIT.sql`. The patch fills missing inventory marker columns used by the existing trigger, uses one Ready/Undo Ready RPC path for Admin and KOT, keeps KOT-ready dishes in place until the bill is prepared, and disables Admin Ready controls after bill-ready. Apply the migration only after backing up and confirming the correct Supabase project. Strict inventory should remain disabled until recipe data and opening stock have been verified.
