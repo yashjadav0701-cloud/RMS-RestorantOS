@@ -45,7 +45,9 @@ BEGIN
     RAISE EXCEPTION 'GSTIN is locked after its first save. Contact the developer for an authorized change or removal.';
   END IF;
 
-  IF v_new IS NOT NULL AND v_new !~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$' THEN
+  IF v_new IS NOT NULL
+     AND v_new !~ '^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$'
+     AND (TG_OP <> 'UPDATE' OR v_new IS DISTINCT FROM v_old) THEN
     RAISE EXCEPTION 'Enter a valid 15-character GSTIN before saving.';
   END IF;
 

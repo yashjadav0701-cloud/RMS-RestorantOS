@@ -52,6 +52,8 @@ export async function render({ mount, route }) {
           aspect-ratio: 6 / 7;
           box-sizing: border-box;
           padding: 0;
+          border: 1px solid var(--line);
+          outline: none;
           border-radius: 11px;
           font-family: "Courier New", Courier, monospace;
           font-size: 24px;
@@ -59,8 +61,11 @@ export async function render({ mount, route }) {
         }
 
         .panel-pin-screen #panel-pin-container .pin-box:focus {
-          outline: 2px solid var(--forest-700);
-          outline-offset: 2px;
+          outline: none;
+          outline-offset: 0;
+          border-color: var(--forest-700);
+          box-shadow: 0 0 0 3px rgba(54, 91, 56, .12);
+          transform: none;
         }
 
         .panel-pin-screen #panel-pin-container .pin-box:disabled {

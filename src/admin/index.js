@@ -28,6 +28,141 @@ let ingredientDrafts = [];
 let productRecipeDrafts = new Map();
 let inventoryMovementDrafts = [];
 
+// Ingredient categories are tenant-scoped values loaded from the database by
+// get_inventory_dashboard(). There is intentionally no hard-coded category list:
+// every category already assigned to an ingredient becomes a suggestion.
+function normalizeIngredientCategory(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("en-IN")
+    .replace(/(^|[\s-])([a-z])/g, (_, separator, letter) =>
+      separator + letter.toLocaleUpperCase("en-IN")
+    );
+}
+
+function getDatabaseIngredientCategories(currentValue = "") {
+  const categories = new Map();
+  for (const ingredient of ingredientDrafts) {
+    const rawCategory = String(ingredient?.category ?? "").trim();
+    if (!rawCategory) continue;
+    const category = normalizeIngredientCategory(rawCategory);
+    if (category) categories.set(category.toLocaleLowerCase("en-IN"), category);
+  }
+
+  // Keep a legacy/current category available even if it was renamed elsewhere
+  // while this modal was open; saving still normalizes it to Title Case.
+  const current = normalizeIngredientCategory(currentValue);
+  if (current) categories.set(current.toLocaleLowerCase("en-IN"), current);
+
+  return [...categories.values()].sort((a, b) =>
+    a.localeCompare(b, "en-IN", { sensitivity: "base" })
+  );
+}
+
+function renderDatabaseIngredientCategoryOptions(listId, currentValue = "") {
+  return getDatabaseIngredientCategories(currentValue)
+    .map(category => `<button type="button" class="inventory-category-option" role="option" data-category-option="${escapeHtml(category)}">${escapeHtml(category)}</button>`)
+    .join("");
+}
+
+function bindInventoryCategoryCombobox(root) {
+  root?.querySelectorAll("[data-category-combobox]").forEach(combobox => {
+    const input = combobox.querySelector("[data-category-input]");
+    const toggle = combobox.querySelector("[data-category-toggle]");
+    const menu = combobox.querySelector("[data-category-options]");
+    if (!input || !toggle || !menu || combobox.dataset.categoryBound === "true") return;
+    combobox.dataset.categoryBound = "true";
+
+    let activeIndex = -1;
+    const close = () => {
+      menu.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
+      activeIndex = -1;
+    };
+
+    const choose = value => {
+      input.value = normalizeIngredientCategory(value);
+      close();
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+
+    const render = (showAll = false) => {
+      const query = input.value.trim().toLocaleLowerCase("en-IN");
+      const categories = getDatabaseIngredientCategories(input.value)
+        .filter(category => showAll || !query ||
+          category.toLocaleLowerCase("en-IN").includes(query));
+      menu.innerHTML = categories.length
+        ? categories.map((category, index) =>
+            `<button type="button" role="option" aria-selected="false" id="${combobox.id || "ingredient-category"}-option-${index}" class="inventory-category-option" data-category-option="${escapeHtml(category)}">${escapeHtml(category)}</button>`
+          ).join("")
+        : `<div class="inventory-category-empty">No matching category. Press Enter to use “${escapeHtml(normalizeIngredientCategory(input.value))}”.</div>`;
+      menu.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+      activeIndex = -1;
+    };
+
+    input.addEventListener("focus", () => render(true));
+    input.addEventListener("input", () => render(false));
+    toggle.addEventListener("click", () => {
+      if (menu.hidden) {
+        input.focus();
+        render(true);
+      } else close();
+    });
+
+    menu.addEventListener("mousedown", event => {
+      const option = event.target.closest("[data-category-option]");
+      if (option) {
+        event.preventDefault();
+        choose(option.dataset.categoryOption);
+      }
+    });
+
+    input.addEventListener("keydown", event => {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        if (menu.hidden) render(true);
+        const options = [...menu.querySelectorAll("[data-category-option]")];
+        if (options.length) {
+          activeIndex = (activeIndex + 1) % options.length;
+          options.forEach((option, index) => {
+            option.setAttribute("aria-selected", String(index === activeIndex));
+          });
+          options[activeIndex]?.scrollIntoView({ block: "nearest" });
+        }
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const options = [...menu.querySelectorAll("[data-category-option]")];
+        if (options.length) {
+          activeIndex = (activeIndex - 1 + options.length) % options.length;
+          options.forEach((option, index) => {
+            option.setAttribute("aria-selected", String(index === activeIndex));
+          });
+          options[activeIndex]?.scrollIntoView({ block: "nearest" });
+        }
+      } else if (event.key === "Enter" && !menu.hidden) {
+        const active = menu.querySelector('[aria-selected="true"][data-category-option]');
+        if (active) {
+          event.preventDefault();
+          choose(active.dataset.categoryOption);
+        } else {
+          close();
+          input.value = normalizeIngredientCategory(input.value);
+        }
+      } else if (event.key === "Escape") {
+        close();
+      }
+    });
+
+    input.addEventListener("blur", () => {
+      input.value = normalizeIngredientCategory(input.value);
+      window.setTimeout(close, 120);
+    });
+  });
+}
+
 async function decodeDishImage(file) {
   if ("createImageBitmap" in window) {
     try {
@@ -1184,6 +1319,11 @@ async function renderAdminWorkspace(
         description: "Manage ingredient records, measurement units, purchase costs and reorder levels.",
         icon: "ph-package"
       },
+      history: {
+        title: "History",
+        description: "Read-only timeline of stock received, opening balances, consumption, wastage and corrections.",
+        icon: "ph-clock-counter-clockwise"
+      },
       recipes: {
         title: "Recipes",
         description: "Connect each menu dish to its ingredients and quantities required per serving.",
@@ -1202,8 +1342,66 @@ async function renderAdminWorkspace(
     };
 
     let activeView = "ingredients";
-    let editingIngredientId = null;
-    let showIngredientForm = false;
+
+    // Stock is always stored in canonical base units (g, ml or pcs).
+    // Display and receiving inputs may use larger units without changing recipe math.
+    function formatInventoryQuantity(value, baseUnit) {
+      const amount = Number(value);
+      if (!Number.isFinite(amount)) return "—";
+      const abs = Math.abs(amount);
+      const number = n => n.toLocaleString("en-IN", { maximumFractionDigits: 3 });
+      if (baseUnit === "g") {
+        return `${number(amount / 1000)} kg`;
+      }
+      if (baseUnit === "ml") {
+        return `${number(amount / 1000)} L`;
+      }
+      if (baseUnit === "pcs" && abs >= 12 && Math.abs(abs / 12 - Math.round(abs / 12)) < 0.000001) {
+        return `${number(amount / 12)} dozen`;
+      }
+      return `${number(amount)} ${baseUnit === "pcs" ? "pcs" : baseUnit}`;
+    }
+
+    function getInventoryDisplayUnit(baseUnit) {
+      if (baseUnit === "g" || baseUnit === "kg") return "kg";
+      if (baseUnit === "ml" || baseUnit === "L" || baseUnit === "l") return "L";
+      return "pcs";
+    }
+
+    function formatInventoryDate(timestamp) {
+      const date = new Date(Number(timestamp));
+      if (!Number.isFinite(date.getTime())) return "—";
+      return date.toLocaleString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+        hour: "2-digit", minute: "2-digit"
+      });
+    }
+
+    function getLastIngredientAddition(ingredientId) {
+      return inventoryMovementDrafts
+        .filter(item => item.ingredientId === ingredientId &&
+          ["opening_stock", "received", "adjustment_in"].includes(item.movementType) &&
+          Number(item.quantityDelta) > 0)
+        .sort((a, b) => b.createdAt - a.createdAt)[0] || null;
+    }
+
+    function getInventoryEntryUnits(baseUnit) {
+      const units = {
+        g: [
+          { value: "g", label: "Grams (g)", factor: 1 },
+          { value: "kg", label: "Kilograms (kg)", factor: 1000 }
+        ],
+        ml: [
+          { value: "ml", label: "Millilitres (ml)", factor: 1 },
+          { value: "l", label: "Litres (L)", factor: 1000 }
+        ],
+        pcs: [
+          { value: "pcs", label: "Pieces (pcs)", factor: 1 },
+          { value: "dozen", label: "Dozen (12 pcs)", factor: 12 }
+        ]
+      };
+      return units[baseUnit] || [];
+    }
 
     area.innerHTML = `
       <style>
@@ -1281,7 +1479,96 @@ async function renderAdminWorkspace(
           background: var(--forest-900);
           border-color: var(--forest-900);
           color: #fff;
+          box-shadow: 0 5px 14px rgba(20, 42, 28, .12);
         }
+
+        .inventory-ingredient-form {
+          margin-top: 22px;
+          padding: 22px;
+          border: 1px solid var(--line);
+          border-radius: 18px;
+          background: linear-gradient(145deg, var(--paper) 0%, var(--cream-100) 100%);
+          box-shadow: 0 10px 28px rgba(30, 48, 34, .06);
+        }
+
+        .inventory-ingredient-form .field { min-width: 0; gap: 8px; }
+        .inventory-ingredient-form .field > span {
+          color: var(--forest-900);
+          font-size: 12px;
+          font-weight: 850;
+          letter-spacing: .01em;
+        }
+        .inventory-ingredient-form .field-input {
+          width: 100%;
+          min-width: 0;
+          min-height: 44px;
+          padding: 10px 13px;
+          border: 1px solid #d8ded1;
+          border-radius: 12px;
+          outline: none;
+          background: #fff;
+          color: var(--forest-950);
+          font: inherit;
+          font-size: 14px;
+          box-shadow: 0 1px 2px rgba(24, 39, 27, .04);
+          transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+        }
+        .inventory-ingredient-form .field-input:hover { border-color: #aebca9; }
+        .inventory-ingredient-form .field-input:focus {
+          border-color: var(--forest-700);
+          box-shadow: 0 0 0 3px rgba(54, 91, 56, .12);
+        }
+        .inventory-ingredient-form .field-input::placeholder { color: #929b8e; }
+        .inventory-ingredient-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 14px;
+        }
+        .inventory-last-added {
+          max-width: 300px;
+          margin-top: 5px;
+          color: var(--muted);
+          font-size: 11px;
+          line-height: 1.45;
+          overflow-wrap: anywhere;
+        }
+        .inventory-history-note {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          margin: 16px 0 18px;
+          padding: 13px 15px;
+          border: 1px solid #dfe7da;
+          border-radius: 13px;
+          background: #f5f8f1;
+          color: var(--forest-800);
+          font-size: 12px;
+          line-height: 1.55;
+        }
+        .inventory-add-choice-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+        .inventory-add-choice-card {
+          padding: 17px;
+          border: 1px solid var(--line);
+          border-radius: 15px;
+          background: linear-gradient(145deg, #fff, var(--cream-100));
+        }
+        .inventory-add-choice-card > i {
+          display: grid;
+          place-items: center;
+          width: 42px;
+          height: 42px;
+          margin-bottom: 12px;
+          border-radius: 13px;
+          background: var(--sage-100);
+          color: var(--forest-900);
+          font-size: 21px;
+        }
+        .inventory-add-choice-card strong { display: block; color: var(--forest-950); font-size: 14px; }
+        .inventory-add-choice-card p { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 
         .inventory-view-panel {
           min-height: 220px;
@@ -1343,6 +1630,10 @@ async function renderAdminWorkspace(
           .inventory-view-panel {
             padding: 18px;
           }
+
+          .inventory-ingredient-form { padding: 17px; }
+          .inventory-ingredient-grid,
+          .inventory-add-choice-grid { grid-template-columns: minmax(0, 1fr); }
         }
       </style>
 
@@ -1477,9 +1768,8 @@ async function renderAdminWorkspace(
             class="inventory-data-status"
             style="margin-top:18px;"
           >
-            Draft mode — these figures use only movements recorded during
-            this page session. They are not verified stock balances and
-            are not saved to the database.
+            Stock movements are saved to the restaurant database as separate records.
+            Existing history is read-only; corrections are recorded as new movements.
           </div>
 
           <div
@@ -1487,7 +1777,7 @@ async function renderAdminWorkspace(
           >
             <div class="inventory-summary-card">
               <strong>${totalIngredients}</strong>
-              <span>Ingredient drafts</span>
+              <span>Ingredients</span>
             </div>
 
             <div class="inventory-summary-card">
@@ -1580,7 +1870,7 @@ async function renderAdminWorkspace(
               </button>
 
               <button type="submit" class="btn btn-primary">
-                Record draft
+                Record movement
               </button>
             </div>
           </form>
@@ -1599,7 +1889,7 @@ async function renderAdminWorkspace(
                       <th>Movement</th>
                       <th>Quantity change</th>
                       <th>Reason</th>
-                      <th>Draft balance</th>
+                      <th>Recorded balance</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1617,15 +1907,13 @@ async function renderAdminWorkspace(
                           <td>${escapeHtml(movement.label)}</td>
 
                           <td style="font-weight:800;color:${movement.quantityDelta < 0 ? "var(--danger)" : "var(--forest-800)"};">
-                            ${movement.quantityDelta > 0 ? "+" : ""}${movement.quantityDelta.toLocaleString()}
-                            ${escapeHtml(movement.unit)}
+                            ${movement.quantityDelta > 0 ? "+" : ""}${formatInventoryQuantity(movement.quantityDelta, movement.unit)}
                           </td>
 
                           <td>${escapeHtml(movement.reason)}</td>
 
                           <td>
-                            ${getBalance(movement.ingredientId).toLocaleString()}
-                            ${escapeHtml(movement.unit)}
+                            ${formatInventoryQuantity(getBalance(movement.ingredientId), movement.unit)}
                           </td>
                         </tr>
                       `;
@@ -1859,7 +2147,7 @@ async function renderAdminWorkspace(
             <h2>Stock forecast</h2>
 
             <p>
-              Review draft stock balances and estimate how long ingredients
+              Review saved stock balances and estimate how long ingredients
               may last using recipe-consumption history.
             </p>
           </div>
@@ -1873,7 +2161,7 @@ These estimates use saved stock movements and recipe-consumption records for the
           >
             <div class="inventory-summary-card">
               <strong>${forecastRows.length}</strong>
-              <span>Ingredient drafts</span>
+              <span>Ingredients</span>
             </div>
 
             <div class="inventory-summary-card">
@@ -1892,7 +2180,7 @@ These estimates use saved stock movements and recipe-consumption records for the
               <thead>
                 <tr>
                   <th>Ingredient</th>
-                  <th>Draft balance</th>
+                  <th>Recorded balance</th>
                   <th>Average usage / day</th>
                   <th>Estimated days remaining</th>
                   <th>Status</th>
@@ -1911,14 +2199,14 @@ These estimates use saved stock movements and recipe-consumption records for the
 
                         <td>
                           ${row.hasOpeningStock
-                            ? `${row.currentBalance.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${escapeHtml(row.ingredient.baseUnit)}`
+                            ? escapeHtml(formatInventoryQuantity(row.currentBalance, row.ingredient.baseUnit))
                             : "Not established"}
                         </td>
 
                         <td>
                           ${row.hasOpeningStock &&
                             row.averageDailyUsage > 0
-                            ? `${row.averageDailyUsage.toLocaleString(undefined, { maximumFractionDigits: 3 })} ${escapeHtml(row.ingredient.baseUnit)}`
+                            ? escapeHtml(formatInventoryQuantity(row.averageDailyUsage, row.ingredient.baseUnit))
                             : "Unavailable"}
                         </td>
 
@@ -1948,8 +2236,7 @@ These estimates use saved stock movements and recipe-consumption records for the
                       <tr>
                         <td colspan="5">
                           <div style="padding:24px;text-align:center;color:var(--muted);">
-                            Add ingredient drafts and record opening-stock drafts
-                            to begin evaluating inventory.
+                            Record opening stock to establish saved balances, then track recipe consumption over time.
                           </div>
                         </td>
                       </tr>
@@ -1987,6 +2274,37 @@ These estimates use saved stock movements and recipe-consumption records for the
           ${missingRecipeProducts.length ? `<p style="margin-top:14px;color:var(--muted);font-size:12px;">${missingRecipeProducts.length} dishes do not yet have a recipe. They are not included in ingredient-consumption reporting until recipes are saved.</p>` : ""}
         `;
         panel.querySelector("[data-open-menu-to-edit-recipes]")?.addEventListener("click", () => transitionToSection("menu"));
+      } else if (activeView === "history") {
+        const historyRows = inventoryMovementDrafts
+          .slice()
+          .sort((a, b) => b.createdAt - a.createdAt);
+
+        panel.innerHTML = `
+          <div class="inventory-view-panel-icon"><i class="ph-bold ph-clock-counter-clockwise"></i></div>
+          <h2>Inventory history</h2>
+          <p>A permanent, read-only record of every stock addition, consumption, wastage and correction.</p>
+          <div class="inventory-history-note">
+            <i class="ph-bold ph-lock-key" style="font-size:18px;flex:0 0 auto;"></i>
+            <div><strong>History is read-only.</strong> Entries cannot be edited from this screen. To correct a balance, record a new adjustment so the audit trail remains complete.</div>
+          </div>
+          <div style="overflow-x:auto;margin-top:10px;">
+            <table class="data-table" style="width:100%;min-width:760px;">
+              <thead><tr><th>Date & time</th><th>Ingredient</th><th>Activity</th><th>Quantity change</th><th>Reason / reference</th></tr></thead>
+              <tbody>
+                ${historyRows.length ? historyRows.map(movement => {
+                  const ingredient = ingredientDrafts.find(item => item.id === movement.ingredientId);
+                  return `<tr>
+                    <td style="white-space:nowrap;">${escapeHtml(formatInventoryDate(movement.createdAt))}</td>
+                    <td><strong>${escapeHtml(ingredient?.name || "Unknown ingredient")}</strong></td>
+                    <td>${escapeHtml(movement.label || movement.movementType)}</td>
+                    <td style="font-weight:850;color:${movement.quantityDelta < 0 ? "var(--danger)" : "var(--forest-800)"};white-space:nowrap;">${movement.quantityDelta > 0 ? "+" : ""}${escapeHtml(formatInventoryQuantity(movement.quantityDelta, movement.unit))}</td>
+                    <td>${escapeHtml(movement.reason || "—")}</td>
+                  </tr>`;
+                }).join("") : `<tr><td colspan="5"><div style="padding:28px 8px;text-align:center;color:var(--muted);">No stock history has been recorded yet. Add an opening balance or receive stock to start the history.</div></td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        `;
       } else if (activeView !== "ingredients") {
         panel.innerHTML = `
           <div class="inventory-view-panel-icon">
@@ -2001,32 +2319,26 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           </div>
         `;
       } else {
-        const currentIngredient = ingredientDrafts.find(
-          item => item.id === editingIngredientId
-        );
-
         const ingredientRows = ingredientDrafts.length
-          ? ingredientDrafts.map(item => `
+          ? ingredientDrafts.map(item => {
+              const lastAdded = getLastIngredientAddition(item.id);
+              return `
               <tr>
                 <td>
                   <strong>${escapeHtml(item.name)}</strong>
                   <div style="margin-top:3px;color:var(--muted);font-size:11px;">
                     ${escapeHtml(item.category || "Uncategorized")}
                   </div>
+                  <div class="inventory-last-added">
+                    ${lastAdded
+                      ? `Last added ${escapeHtml(formatInventoryQuantity(lastAdded.quantityDelta, item.baseUnit))} · ${escapeHtml(formatInventoryDate(lastAdded.createdAt))}`
+                      : "No stock additions recorded yet"}
+                  </div>
                 </td>
 
-                <td>${escapeHtml(item.baseUnit)}</td>
-
-                <td>
-                  ${Number(item.reorderLevel).toLocaleString()}
-                  ${escapeHtml(item.baseUnit)}
-                </td>
-
-                <td>
-                  ${item.costPerUnit === null
-                    ? "Not entered"
-                    : Number(item.costPerUnit).toFixed(4)}
-                </td>
+                <td>${item.baseUnit === "g" ? "kg" : item.baseUnit === "ml" ? "L" : "pcs"}</td>
+                <td><strong>${escapeHtml(formatInventoryQuantity(item.currentStock || 0, item.baseUnit))}</strong></td>
+                <td>${item.costPerUnit === null ? "Not entered" : `₹${(Number(item.costPerUnit) * (item.baseUnit === "g" || item.baseUnit === "ml" ? 1000 : 1)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / ${item.baseUnit === "g" ? "kg" : item.baseUnit === "ml" ? "L" : "pcs"}`}</td>
 
                 <td>
                   <button
@@ -2038,7 +2350,6 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                   >
                     <i class="ph-bold ph-pencil-simple"></i>
                   </button>
-                  
                   <button
                     type="button"
                     class="icon-btn icon-btn-light"
@@ -2050,13 +2361,13 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                   >
                     <i class="ph-bold ph-trash"></i>
                   </button>
-
                 </td>
               </tr>
-            `).join("")
+            `;
+            }).join("")
           : `
               <tr>
-                <td colspan="5">
+                <td colspan="6">
                   <div style="padding:28px 8px;text-align:center;">
                     <i
                       class="ph-bold ph-package"
@@ -2064,7 +2375,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                     ></i>
 
                     <h3 style="margin:10px 0 5px;font-size:15px;">
-                      No ingredient drafts
+                      No ingredients yet
                     </h3>
 
                     <p style="margin:0;color:var(--muted);font-size:12px;">
@@ -2085,8 +2396,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               <h2>Ingredients</h2>
 
               <p>
-                Define the ingredients used in your dishes, their measurement
-                units, reorder levels and costs.
+                Define ingredients, purchasing units and costs. Edit ingredient details in the themed dialog; stock is tracked separately.
               </p>
             </div>
 
@@ -2100,130 +2410,17 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
             </button>
           </div>
 
-          ${showIngredientForm ? `
-            <form
-              data-ingredient-form
-              style="margin-top:22px;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--cream-100);"
-            >
-              <h3 style="margin:0 0 16px;font-size:16px;">
-                ${currentIngredient ? "Edit ingredient draft" : "New ingredient"}
-              </h3>
-
-              <div class="form-grid" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;">
-                <label class="field">
-                  <span>Ingredient name *</span>
-                  <input
-                    name="name"
-                    type="text"
-                    maxlength="100"
-                    required
-                    value="${escapeHtml(currentIngredient?.name || "")}"
-                    placeholder="e.g. Paneer"
-                  />
-                </label>
-
-                <label class="field">
-                  <span>Category</span>
-                  <select name="category">
-                    ${[
-                      ["", "Select category"],
-                      ["Vegetables", "Vegetables"],
-                      ["Dairy", "Dairy"],
-                      ["Grains", "Grains and flour"],
-                      ["Spices", "Spices and seasoning"],
-                      ["Oils", "Oils and fats"],
-                      ["Meat", "Meat and protein"],
-                      ["Other", "Other"]
-                    ].map(([value, label]) => `
-                      <option
-                        value="${value}"
-                        ${currentIngredient?.category === value ? "selected" : ""}
-                      >${label}</option>
-                    `).join("")}
-                  </select>
-                </label>
-
-                <label class="field">
-                  <span>Base measurement unit *</span>
-                  <select name="baseUnit" required>
-                    ${[
-                      ["g", "Grams (g)"],
-                      ["ml", "Millilitres (ml)"],
-                      ["pcs", "Pieces (pcs)"]
-                    ].map(([value, label]) => `
-                      <option
-                        value="${value}"
-                        ${currentIngredient?.baseUnit === value ? "selected" : ""}
-                      >${label}</option>
-                    `).join("")}
-                  </select>
-                </label>
-
-                <label class="field">
-                  <span>Reorder level *</span>
-                  <input
-                    name="reorderLevel"
-                    type="number"
-                    min="0"
-                    step="any"
-                    required
-                    value="${currentIngredient?.reorderLevel ?? "0"}"
-                    placeholder="Minimum stock quantity"
-                  />
-                </label>
-
-                <label class="field" style="grid-column:1/-1;">
-                  <span>Cost per base unit (optional)</span>
-                  <input
-                    name="costPerUnit"
-                    type="number"
-                    min="0"
-                    step="any"
-                    value="${currentIngredient?.costPerUnit ?? ""}"
-                    placeholder="Cost per gram, ml or piece"
-                  />
-                  <small style="color:var(--muted);font-size:11px;">
-                    Use the same currency as the restaurant's purchase records.
-                    This is a draft field, not a verified stock valuation.
-                  </small>
-                </label>
-              </div>
-
-              <div style="display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;margin-top:18px;">
-                <button
-                  type="button"
-                  class="btn btn-quiet"
-                  data-cancel-ingredient
-                >
-                  Cancel
-                </button>
-
-                <button type="submit" class="btn btn-primary">
-                  ${currentIngredient ? "Update draft" : "Add draft"}
-                </button>
-              </div>
-
-              <p
-                data-ingredient-form-error
-                role="alert"
-                style="margin:12px 0 0;color:var(--danger);font-size:12px;"
-              ></p>
-            </form>
-          ` : ""}
-
           <div class="inventory-data-status" style="margin-top:18px;">
-            Draft mode: these entries are held in the current page only.
-            They are not saved to the database and will be lost when this
-            view is reloaded or closed.
+            Ingredient details are saved to this restaurant's inventory. Stock quantities are tracked separately in the read-only movement history.
           </div>
 
           <div style="overflow-x:auto;margin-top:18px;">
-            <table class="data-table" style="width:100%;min-width:570px;">
+            <table class="data-table" style="width:100%;min-width:780px;">
               <thead>
                 <tr>
                   <th>Ingredient</th>
                   <th>Base unit</th>
-                  <th>Reorder level</th>
+                  <th>Current stock</th>
                   <th>Cost / unit</th>
                   <th>Actions</th>
                 </tr>
@@ -2238,28 +2435,477 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
 
         panel.querySelector("[data-add-ingredient]")
           ?.addEventListener("click", () => {
-            editingIngredientId = null;
-            showIngredientForm = true;
-            renderInventoryView();
-          });
+            openAppModal({
+              title: "Add ingredient",
+              subtitle: "Choose whether to create a new ingredient or record stock for one already in your catalogue.",
+              body: `
+                <div class="inventory-add-choice-grid">
+                  <article class="inventory-add-choice-card">
+                    <i class="ph-bold ph-package"></i>
+                    <strong>Add new ingredient</strong>
+                    <p>Create the ingredient, choose kg, litres or pieces, set its purchase price, and record opening stock.</p>
+                  </article>
+                  <article class="inventory-add-choice-card">
+                    <i class="ph-bold ph-tray-arrow-down"></i>
+                    <strong>Add to existing ingredient</strong>
+                    <p>Choose an existing ingredient and record the amount received. The quantity, date and reason are added to read-only history.</p>
+                  </article>
+                </div>
+              `,
+              actions: [
+                {
+                  label: "Cancel",
+                  icon: "ph-x",
+                  className: "btn-quiet",
+                  onClick: ({ close }) => close()
+                },
+                {
+                  label: "Add to existing",
+                  icon: "ph-tray-arrow-down",
+                  className: "btn-primary",
+                  onClick: ({ close }) => {
+                    close();
+                    if (!ingredientDrafts.length) {
+                      showToast("No ingredients yet", "Create a new ingredient first.", "error");
+                      return;
+                    }
 
-        panel.querySelector("[data-cancel-ingredient]")
-          ?.addEventListener("click", () => {
-            editingIngredientId = null;
-            showIngredientForm = false;
-            renderInventoryView();
+                    const unitOptions = baseUnit => getInventoryEntryUnits(baseUnit)
+                      .map(unit => `<option value="${unit.value}" data-factor="${unit.factor}">${unit.label}</option>`)
+                      .join("");
+                    const firstIngredient = ingredientDrafts[0];
+                    const modal = openAppModal({
+                      title: "Add stock to ingredient",
+                      subtitle: "Record the receipt as a new permanent inventory event. Previous history cannot be edited.",
+                      body: `
+                        <form class="inventory-ingredient-form" data-stock-add-form style="margin:0;">
+                          <div class="inventory-ingredient-grid">
+                            <label class="field" style="grid-column:1/-1;">
+                              <span>Ingredient *</span>
+                              <select class="field-input" name="ingredientId" required>
+                                ${ingredientDrafts.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)} · ${escapeHtml(getInventoryDisplayUnit(item.baseUnit))}</option>`).join("")}
+                              </select>
+                            </label>
+                            <label class="field" style="grid-column:1/-1;">
+                              <span>Quantity to add *</span>
+                              <input class="field-input" name="quantity" type="number" min="0.001" step="any" inputmode="decimal" required placeholder="e.g. 2.5" />
+                              <small data-stock-unit-help style="color:var(--muted);font-size:11px;line-height:1.5;">Enter quantity in kg.</small>
+                            </label>
+                          </div>
+                          <p data-stock-add-error role="alert" style="margin:12px 0 0;color:var(--danger);font-size:12px;"></p>
+                          <p style="margin:10px 0 0;color:var(--muted);font-size:11px;line-height:1.5;">Enter only kg, litres or pieces. Stock history is recorded permanently and cannot be edited.</p>
+                        </form>
+                      `,
+                      actions: [
+                        { label: "Cancel", icon: "ph-x", className: "btn-quiet", onClick: ({ close }) => close() },
+                        {
+                          label: "Record stock",
+                          icon: "ph-check-circle",
+                          className: "btn-primary",
+                          onClick: async ({ root, close, button }) => {
+                            const form = root.querySelector("[data-stock-add-form]");
+                            const errorNode = root.querySelector("[data-stock-add-error]");
+                            if (!form?.reportValidity()) return;
+
+                            const ingredient = ingredientDrafts.find(item => item.id === form.elements.ingredientId.value);
+                            const quantity = Number(form.elements.quantity.value);
+                            if (!ingredient || !Number.isFinite(quantity) || quantity <= 0) {
+                              errorNode.textContent = "Choose an ingredient and enter a valid positive quantity.";
+                              return;
+                            }
+
+                            // Staff enter only kg, litres or pieces. Inventory and recipe
+                            // math continue to use the database's canonical g/ml/pcs units.
+                            const factor = ingredient.baseUnit === "g" || ingredient.baseUnit === "ml" ? 1000 : 1;
+                            const baseQuantity = Math.round(quantity * factor * 1000) / 1000;
+                            const reason = "Stock received";
+                            if (!Number.isFinite(baseQuantity) || baseQuantity <= 0) {
+                              errorNode.textContent = "The converted quantity is invalid.";
+                              return;
+                            }
+
+                            const hasOpening = inventoryMovementDrafts.some(item => item.ingredientId === ingredient.id && item.movementType === "opening_stock");
+                            button.disabled = true;
+                            button.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i> Recording...';
+                            try {
+                              const { data, error: movementError } = await supabase.rpc("admin_record_inventory_movement", {
+                                p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null,
+                                p_ingredient_id: ingredient.id,
+                                p_movement_type: hasOpening ? "received" : "opening_stock",
+                                p_quantity: baseQuantity,
+                                p_reason: reason
+                              });
+                              if (movementError) throw movementError;
+                              const result = Array.isArray(data) ? data[0] : data;
+                              if (result?.ok !== true) throw new Error("The stock movement was not confirmed by the server.");
+                              await reloadInventoryDrafts();
+                              close();
+                              showToast("Stock recorded", `${ingredient.name}: +${formatInventoryQuantity(baseQuantity, ingredient.baseUnit)} · ${formatInventoryDate(Date.now())}`, "success");
+                              renderInventoryView();
+                            } catch (stockError) {
+                              button.disabled = false;
+                              button.innerHTML = '<i class="ph ph-check-circle" style="font-size:22px;margin-right:2px;"></i>Record stock';
+                              errorNode.textContent = stockError.message || "The stock receipt could not be saved.";
+                            }
+                          }
+                        }
+                      ]
+                    });
+
+                    const form = modal.root.querySelector("[data-stock-add-form]");
+                    const ingredientSelect = form?.elements.ingredientId;
+                    const quantityHelp = form?.querySelector("[data-stock-unit-help]");
+                    const updateQuantityUnit = () => {
+                      const chosen = ingredientDrafts.find(item => item.id === ingredientSelect?.value);
+                      if (!chosen || !quantityHelp) return;
+                      quantityHelp.textContent = chosen.baseUnit === "g"
+                        ? "Enter the quantity in kilograms (kg)."
+                        : chosen.baseUnit === "ml"
+                          ? "Enter the quantity in litres (L)."
+                          : "Enter the quantity in pieces (pcs).";
+                    };
+                    ingredientSelect?.addEventListener("change", updateQuantityUnit);
+                    updateQuantityUnit();
+                    form?.elements.quantity?.focus();
+                  }
+                },
+                {
+                  label: "Add new ingredient",
+                  icon: "ph-plus-circle",
+                  className: "btn-quiet",
+                  onClick: ({ close }) => {
+                    close();
+                    const createModal = openAppModal({
+                      title: "Create ingredient",
+                      subtitle: "Set the ingredient's purchase unit, price and opening quantity.",
+                      body: `
+                        <form class="inventory-ingredient-form" data-modal-ingredient-form style="margin:0;">
+                          <div class="inventory-ingredient-grid">
+                            <label class="field">
+                              <span>Ingredient name *</span>
+                              <input class="field-input" name="name" type="text" maxlength="100" required placeholder="e.g. Paneer" autocomplete="off" />
+                            </label>
+                            <label class="field">
+                              <span>Category</span>
+                              <div class="inventory-category-combobox" data-category-combobox id="inventory-create-category-combobox">
+                                <div class="inventory-category-input-wrap">
+                                  <input class="field-input" name="category" type="text"
+                                    data-category-input role="combobox" aria-autocomplete="list"
+                                    aria-expanded="false" aria-controls="inventory-create-category-options"
+                                    maxlength="60" autocomplete="off"
+                                    placeholder="Type or select a category"
+                                    aria-label="Ingredient category" />
+                                  <button class="inventory-category-toggle" type="button"
+                                    data-category-toggle aria-label="Show categories">
+                                    <i class="ph ph-caret-down"></i>
+                                  </button>
+                                </div>
+                                <div class="inventory-category-options" id="inventory-create-category-options"
+                                  data-category-options role="listbox" hidden>
+                                  ${renderDatabaseIngredientCategoryOptions("inventory-create-category-options")}
+                                </div>
+                              </div>
+                              <small style="color:var(--muted);font-size:11px;line-height:1.5;">
+                                Suggestions come from this restaurant's saved ingredient categories. You can also type a new category.
+                              </small>
+                            </label>
+                            <label class="field">
+                              <span>Purchase unit *</span>
+                              <select class="field-input" name="purchaseUnit" required>
+                                <option value="kg">Kilograms (kg)</option>
+                                <option value="L">Litres (L)</option>
+                                <option value="pcs">Pieces (pcs)</option>
+                              </select>
+                            </label>
+                            <label class="field">
+                              <span>Opening quantity *</span>
+                              <input class="field-input" name="openingQuantity" type="number" min="0.001" step="any" inputmode="decimal" required placeholder="e.g. 2.5" />
+                              <small data-opening-unit-help style="color:var(--muted);font-size:11px;">Enter quantity in kg.</small>
+                            </label>
+                            <label class="field" style="grid-column:1/-1;">
+                              <span data-modal-price-label>Price per kg (₹) *</span>
+                              <div style="position:relative;">
+                                <span style="position:absolute;left:15px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:700;pointer-events:none;">₹</span>
+                                <input class="field-input" name="purchasePrice" type="number" min="0" step="0.01" inputmode="decimal" style="padding-left:34px;" required placeholder="e.g. 250.00" />
+                              </div>
+                              <small data-modal-price-help style="color:var(--muted);font-size:11px;line-height:1.5;">Total purchase price for 1 kg, in Indian rupees.</small>
+                            </label>
+                          </div>
+                          <p data-modal-ingredient-error role="alert" style="margin:12px 0 0;color:var(--danger);font-size:12px;"></p>
+                        </form>
+                      `,
+                      actions: [
+                        { label: "Cancel", icon: "ph-x", className: "btn-quiet", onClick: ({ close: closeCreate }) => closeCreate() },
+                        {
+                          label: "Create & record stock",
+                          icon: "ph-check-circle",
+                          className: "btn-primary",
+                          onClick: async ({ root, close: closeCreate, button }) => {
+                            const form = root.querySelector("[data-modal-ingredient-form]");
+                            const errorNode = root.querySelector("[data-modal-ingredient-error]");
+                            if (!form?.reportValidity()) return;
+                            const name = form.elements.name.value.trim();
+                            const category = normalizeIngredientCategory(form.elements.category.value);
+                            form.elements.category.value = category;
+                            const purchaseUnit = form.elements.purchaseUnit.value;
+                            const openingQuantity = Number(form.elements.openingQuantity.value);
+                            const purchasePrice = Number(form.elements.purchasePrice.value);
+                            const baseUnit = purchaseUnit === "kg" ? "g" : purchaseUnit === "L" ? "ml" : "pcs";
+                            const factor = purchaseUnit === "kg" || purchaseUnit === "L" ? 1000 : 1;
+                            const costPerUnit = purchasePrice / factor;
+                            if (!name || !Number.isFinite(openingQuantity) || openingQuantity <= 0 || !Number.isFinite(purchasePrice) || purchasePrice < 0) {
+                              errorNode.textContent = "Enter a name, positive opening quantity and a valid non-negative price.";
+                              return;
+                            }
+                            if (ingredientDrafts.some(item => item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+                              errorNode.textContent = "An ingredient with this name already exists. Use Add to existing ingredient instead.";
+                              return;
+                            }
+                            button.disabled = true;
+                            button.innerHTML = '<i class="ph ph-spinner-gap ph-spin"></i> Saving...';
+                            try {
+                              const { data: saveData, error: saveError } = await supabase.rpc("admin_save_ingredient", {
+                                p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null,
+                                p_ingredient_id: null,
+                                p_payload: { name, category, baseUnit, reorderLevel: 0, costPerUnit }
+                              });
+                              if (saveError) throw saveError;
+                              const saved = Array.isArray(saveData) ? saveData[0] : saveData;
+                              const ingredient = saved?.ingredient || saved?.record || null;
+                              const ingredientId = ingredient?.id || saved?.ingredient_id || saved?.id;
+                              if (saved?.ok !== true || !ingredientId) throw new Error("Ingredient creation was not confirmed by the server; opening stock was not recorded.");
+                              const internalQuantity = Math.round(openingQuantity * factor * 1000) / 1000;
+                              const { data: movementData, error: movementError } = await supabase.rpc("admin_record_inventory_movement", {
+                                p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null,
+                                p_ingredient_id: ingredientId,
+                                p_movement_type: "opening_stock",
+                                p_quantity: internalQuantity,
+                                p_reason: "Opening stock · initial inventory"
+                              });
+                              if (movementError) throw movementError;
+                              const movementResult = Array.isArray(movementData) ? movementData[0] : movementData;
+                              if (movementResult?.ok !== true) throw new Error("Ingredient was created, but opening stock was not confirmed. Reopen Add to existing and record the quantity.");
+                              await reloadInventoryDrafts();
+                              closeCreate();
+                              showToast("Ingredient created", `${name}: ${openingQuantity.toLocaleString("en-IN")} ${purchaseUnit} · ₹${purchasePrice.toLocaleString("en-IN", {minimumFractionDigits:2, maximumFractionDigits:2})} per ${purchaseUnit}`, "success");
+                              renderInventoryView();
+                            } catch (saveError) {
+                              errorNode.textContent = saveError.message || "The ingredient and opening stock could not be saved.";
+                              button.disabled = false;
+                              button.innerHTML = '<i class="ph-bold ph-check-circle"></i> Create & record stock';
+                            }
+                          }
+                        }
+                      ]
+                    });
+                    const form = createModal.root?.querySelector("[data-modal-ingredient-form]");
+                    bindInventoryCategoryCombobox(createModal.root);
+                    const createCategoryInput = form?.elements.category;
+                    createCategoryInput?.addEventListener("blur", () => {
+                      createCategoryInput.value = normalizeIngredientCategory(createCategoryInput.value);
+                    });
+                    createCategoryInput?.addEventListener("change", () => {
+                      createCategoryInput.value = normalizeIngredientCategory(createCategoryInput.value);
+                    });
+                    const updateUnitLabels = () => {
+                      if (!form) return;
+                      const unit = form.elements.purchaseUnit.value;
+                      const configs = {
+                        kg: { price: "Price per kg (₹) *", priceHelp: "Total purchase price for 1 kg, in Indian rupees.", qty: "Enter quantity in kg.", placeholder: "e.g. 250.00" },
+                        L: { price: "Price per litre (₹) *", priceHelp: "Total purchase price for 1 litre, in Indian rupees.", qty: "Enter quantity in litres.", placeholder: "e.g. 120.00" },
+                        pcs: { price: "Price per piece (₹) *", priceHelp: "Purchase price for one piece, in Indian rupees.", qty: "Enter quantity in pieces.", placeholder: "e.g. 12.00" }
+                      };
+                      const config = configs[unit];
+                      form.querySelector("[data-modal-price-label]").textContent = config.price;
+                      form.querySelector("[data-modal-price-help]").textContent = config.priceHelp;
+                      form.querySelector("[data-opening-unit-help]").textContent = config.qty;
+                      form.elements.purchasePrice.placeholder = config.placeholder;
+                    };
+                    form?.elements.purchaseUnit.addEventListener("change", updateUnitLabels);
+                    updateUnitLabels();
+                    requestAnimationFrame(() => form?.elements.name?.focus());
+                  }
+                }
+              ]
+            });
           });
 
         panel.querySelectorAll("[data-edit-ingredient]")
           .forEach(button => {
             button.addEventListener("click", () => {
-              editingIngredientId = button.dataset.editIngredient;
-              showIngredientForm = true;
-              renderInventoryView();
+              const ingredient = ingredientDrafts.find(
+                item => item.id === button.dataset.editIngredient
+              );
+              if (!ingredient) return;
+
+              const purchaseUnit = getInventoryDisplayUnit(ingredient.baseUnit);
+              const unitFactor = ingredient.baseUnit === "g" || ingredient.baseUnit === "ml"
+                ? 1000
+                : 1;
+              const displayedPrice = ingredient.costPerUnit == null
+                ? ""
+                : (Number(ingredient.costPerUnit) * unitFactor).toFixed(2);
+
+              const editModal = openAppModal({
+                title: "Edit ingredient",
+                subtitle: "Update the ingredient details and purchasing price. Existing stock history and recipe units will be preserved.",
+                body: `
+                  <form class="inventory-ingredient-form" data-edit-ingredient-form style="margin:0;">
+                    <div class="inventory-ingredient-grid">
+                      <label class="field ingredient-name-field">
+                        <span>Ingredient name *</span>
+                        <input
+                          class="field-input ingredient-name-input"
+                          name="name"
+                          type="text"
+                          required
+                          maxlength="120"
+                          autocomplete="off"
+                          value="${escapeHtml(ingredient.name)}"
+                          placeholder="e.g. Almonds"
+                        />
+                      </label>
+
+                      <label class="field">
+                        <span>Category</span>
+                        <div class="inventory-category-combobox" data-category-combobox id="inventory-edit-category-combobox">
+                          <div class="inventory-category-input-wrap">
+                            <input class="field-input" name="category" type="text"
+                              data-category-input role="combobox" aria-autocomplete="list"
+                              aria-expanded="false" aria-controls="inventory-edit-category-options"
+                              maxlength="60" autocomplete="off"
+                              value="${escapeHtml(normalizeIngredientCategory(ingredient.category || ""))}"
+                              placeholder="Type or select a category" aria-label="Ingredient category" />
+                            <button class="inventory-category-toggle" type="button"
+                              data-category-toggle aria-label="Show categories">
+                              <i class="ph ph-caret-down"></i>
+                            </button>
+                          </div>
+                          <div class="inventory-category-options" id="inventory-edit-category-options"
+                            data-category-options role="listbox" hidden>
+                            ${renderDatabaseIngredientCategoryOptions("inventory-edit-category-options", ingredient.category || "")}
+                          </div>
+                        </div>
+                        <small style="color:var(--muted);font-size:11px;line-height:1.5;">
+                          Suggestions come from this restaurant's saved ingredient categories. You can also type a new category.
+                        </small>
+                      </label>
+
+                      <label class="field">
+                        <span>Base measurement unit</span>
+                        <select class="field-input" name="purchaseUnit" disabled aria-describedby="edit-ingredient-unit-help" style="opacity:1;color:var(--forest-950);background:#f5f7f2;cursor:not-allowed;-webkit-text-fill-color:var(--forest-950);">
+                          <option value="kg" ${purchaseUnit === "kg" ? "selected" : ""}>Kilograms (kg)</option>
+                          <option value="L" ${purchaseUnit === "L" ? "selected" : ""}>Litres (L)</option>
+                          <option value="pcs" ${purchaseUnit === "pcs" ? "selected" : ""}>Pieces (pcs)</option>
+                        </select>
+                        <small id="edit-ingredient-unit-help" style="color:var(--muted);font-size:11px;line-height:1.5;">The unit is locked to protect saved recipes and historical stock movements.</small>
+                      </label>
+
+                      <label class="field">
+                        <span data-edit-price-label>Price per ${escapeHtml(purchaseUnit)} (₹, optional)</span>
+                        <div style="position:relative;">
+                          <span style="position:absolute;left:15px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:700;pointer-events:none;">₹</span>
+                          <input class="field-input" name="purchasePrice" type="number" min="0" step="0.01" inputmode="decimal" style="padding-left:34px;" value="${escapeHtml(displayedPrice)}" placeholder="e.g. 250.00" />
+                        </div>
+                        <small data-edit-price-help style="color:var(--muted);font-size:11px;line-height:1.5;">${purchaseUnit === "kg" ? "Price for 1 kilogram." : purchaseUnit === "L" ? "Price for 1 litre." : "Price for one piece."} Values are saved in the database's existing internal unit.</small>
+                      </label>
+                    </div>
+                    <p data-edit-ingredient-error role="alert" style="margin:12px 0 0;color:var(--danger);font-size:12px;"></p>
+                  </form>
+                `,
+                actions: [
+                  {
+                    label: "Cancel",
+                    icon: "ph-x",
+                    className: "btn-quiet",
+                    onClick: ({ close }) => close()
+                  },
+                  {
+                    label: "Save changes",
+                    icon: "ph-check-circle",
+                    className: "btn-primary",
+                    onClick: async ({ root, close, button: saveButton }) => {
+                      const form = root.querySelector("[data-edit-ingredient-form]");
+                      const errorNode = root.querySelector("[data-edit-ingredient-error]");
+                      if (!form?.reportValidity()) return;
+
+                      const name = form.elements.name.value.trim();
+                      const category = normalizeIngredientCategory(form.elements.category.value);
+                      form.elements.category.value = category;
+                      const priceText = form.elements.purchasePrice.value.trim();
+                      const purchasePrice = priceText === "" ? null : Number(priceText);
+
+                      if (!name || (purchasePrice !== null && (!Number.isFinite(purchasePrice) || purchasePrice < 0))) {
+                        errorNode.textContent = "Enter a valid ingredient name and a non-negative price.";
+                        return;
+                      }
+
+                      if (ingredientDrafts.some(item =>
+                        item.id !== ingredient.id &&
+                        item.name.toLocaleLowerCase() === name.toLocaleLowerCase()
+                      )) {
+                        errorNode.textContent = "An ingredient with this name already exists in the inventory.";
+                        form.elements.name.focus();
+                        return;
+                      }
+
+                      // UI price is per kg/L/pcs. Keep DB storage canonical (g/ml/pcs).
+                      const costPerUnit = purchasePrice === null
+                        ? null
+                        : purchasePrice / unitFactor;
+
+                      saveButton.disabled = true;
+                      saveButton.innerHTML = '<i class="ph ph-spinner-gap ph-spin" style="font-size:22px;margin-right:2px;"></i>Saving...';
+
+                      try {
+                        const { data: saveData, error: saveError } = await supabase.rpc("admin_save_ingredient", {
+                          p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null,
+                          p_ingredient_id: ingredient.id,
+                          p_payload: {
+                            name,
+                            category,
+                            baseUnit: ingredient.baseUnit,
+                            reorderLevel: Number(ingredient.reorderLevel ?? 0),
+                            costPerUnit
+                          }
+                        });
+                        if (saveError) throw saveError;
+                        const saveResult = Array.isArray(saveData) ? saveData[0] : saveData;
+                        if (saveResult?.ok !== true) {
+                          throw new Error("The server did not confirm that the ingredient was saved.");
+                        }
+
+                        await reloadInventoryDrafts();
+                        close();
+                        showToast("Ingredient updated", `${name} was saved successfully.`, "success");
+                        renderInventoryView();
+                      } catch (saveError) {
+                        errorNode.textContent = saveError.message || "The ingredient could not be saved.";
+                        saveButton.disabled = false;
+                        saveButton.innerHTML = '<i class="ph ph-check-circle" style="font-size:22px;margin-right:2px;"></i>Save changes';
+                      }
+                    }
+                  }
+                ]
+              });
+
+              bindInventoryCategoryCombobox(editModal.root);
+              const editCategoryInput = editModal.root.querySelector(
+                '[data-edit-ingredient-form] [name="category"]'
+              );
+              editCategoryInput?.addEventListener("blur", () => {
+                editCategoryInput.value = normalizeIngredientCategory(editCategoryInput.value);
+              });
+              editCategoryInput?.addEventListener("change", () => {
+                editCategoryInput.value = normalizeIngredientCategory(editCategoryInput.value);
+              });
+
+              requestAnimationFrame(() => {
+                editModal.root.querySelector('[data-edit-ingredient-form] [name="name"]')?.focus();
+              });
             });
           });
 
-        
         panel.querySelectorAll("[data-delete-ingredient]")
           .forEach(button => {
             button.addEventListener("click", async () => {
@@ -2316,11 +2962,6 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
 
                         await reloadInventoryDrafts();
 
-                        if (editingIngredientId === ingredientId) {
-                          editingIngredientId = null;
-                          showIngredientForm = false;
-                        }
-
                         close();
 
                         showToast(
@@ -2349,75 +2990,6 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
             });
           });
 
-        panel.querySelector("[data-ingredient-form]")
-          ?.addEventListener("submit", async event => {
-            event.preventDefault();
-
-            const form = event.currentTarget;
-            const error = form.querySelector(
-              "[data-ingredient-form-error]"
-            );
-
-            const name = form.elements.name.value.trim();
-            const category = form.elements.category.value;
-            const baseUnit = form.elements.baseUnit.value;
-            const reorderLevel = Number(
-              form.elements.reorderLevel.value
-            );
-
-            const costInput = form.elements.costPerUnit.value.trim();
-            const costPerUnit = costInput === ""
-              ? null
-              : Number(costInput);
-
-            if (!name) {
-              error.textContent = "Enter an ingredient name.";
-              return;
-            }
-
-            if (
-              !["g", "ml", "pcs"].includes(baseUnit) ||
-              !Number.isFinite(reorderLevel) ||
-              reorderLevel < 0 ||
-              (costPerUnit !== null &&
-                (!Number.isFinite(costPerUnit) || costPerUnit < 0))
-            ) {
-              error.textContent =
-                "Check the measurement unit, reorder level and cost.";
-              return;
-            }
-
-            const duplicate = ingredientDrafts.some(item =>
-              item.id !== editingIngredientId &&
-              item.name.toLocaleLowerCase() === name.toLocaleLowerCase()
-            );
-
-            if (duplicate) {
-              error.textContent =
-                "An ingredient with this name already exists in the inventory.";
-              return;
-            }
-
-            const submitButton = form.querySelector('button[type="submit"]');
-            if (submitButton) submitButton.disabled = true;
-            try {
-              const { error: saveError } = await supabase.rpc("admin_save_ingredient", {
-                p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null,
-                p_ingredient_id: editingIngredientId && !String(editingIngredientId).startsWith("draft-") ? editingIngredientId : null,
-                p_payload: { name, category, baseUnit, reorderLevel, costPerUnit }
-              });
-              if (saveError) throw saveError;
-              await reloadInventoryDrafts();
-              editingIngredientId = null;
-              showIngredientForm = false;
-              showToast("Ingredient saved", `${name} was saved to the restaurant inventory.`, "success");
-              renderInventoryView();
-            } catch (saveError) {
-              error.textContent = saveError.message || "The ingredient could not be saved.";
-            } finally {
-              if (submitButton) submitButton.disabled = false;
-            }
-          });
       }
 
       tabs.forEach(tab => {
@@ -4218,8 +4790,8 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 footerWrap.style.display = "block";
                 let confirmBtn = footerWrap.querySelector("#confirm-new-round");
                 const buttonContent = `
-                    <span style="display:flex;align-items:center;gap:10px;"><span style="background:rgba(255,255,255,.25);width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;font-weight:900;">${cartCount}</span> Confirm Round</span>
-                    <span>${money(cartTotal, settings.currency_symbol)} <i class="ph-bold ph-arrow-right" style="margin-left:6px;font-size:16px;"></i></span>
+                    <span style="display:flex;align-items:center;gap:10px;"><span data-round-count style="background:rgba(255,255,255,.25);width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;font-weight:900;">${cartCount}</span> Confirm Round</span>
+                    <span><span data-round-total>${money(cartTotal, settings.currency_symbol)}</span> <i class="ph-bold ph-arrow-right" style="margin-left:6px;font-size:16px;"></i></span>
                 `;
 
                 if (!confirmBtn) {
@@ -4251,9 +4823,18 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                         }
                     });
                 } else if (!confirmBtn.disabled) {
-                    // Updating the existing button preserves its event listener and
-                    // avoids replacing the footer DOM on every quantity tap.
-                    confirmBtn.innerHTML = buttonContent;
+                    // Update only the two changing labels; preserve the button and
+                    // its child tree during rapid quantity taps.
+                    const countLabel = confirmBtn.querySelector("[data-round-count]");
+                    const totalLabel = confirmBtn.querySelector("[data-round-total]");
+                    if (countLabel && totalLabel) {
+                        countLabel.textContent = String(cartCount);
+                        totalLabel.textContent = money(cartTotal, settings.currency_symbol);
+                    } else {
+                        // Recover the stable markup if a failed submit temporarily
+                        // replaced the button contents with a retry label.
+                        confirmBtn.innerHTML = buttonContent;
+                    }
                 }
             }
 
@@ -4384,11 +4965,13 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
 
                             const control = catalogControlMap.get(id);
                             if (control && !window.matchMedia("(prefers-reduced-motion: reduce)").matches && typeof control.animate === "function") {
-                                catalogControlAnimations.get(control)?.cancel();
-                                catalogControlAnimations.set(control, control.animate(
-                                    [{ transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }],
-                                    { duration: 145, easing: "cubic-bezier(.2,.7,.2,1)" }
-                                ));
+                                const running = catalogControlAnimations.get(control);
+                                if (!running || running.playState !== "running") {
+                                    catalogControlAnimations.set(control, control.animate(
+                                        [{ transform: "scale(1)" }, { transform: "scale(1.012)" }, { transform: "scale(1)" }],
+                                        { duration: 90, easing: "cubic-bezier(.2,.7,.2,1)" }
+                                    ));
+                                }
                             } else if (control && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
                                 control.classList.remove("qty-pulse");
                                 requestAnimationFrame(() => control.classList.add("qty-pulse"));
@@ -4408,11 +4991,13 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                                 if (current.qty > 0) {
                                     const control = catalogControlMap.get(id);
                                     if (control && !window.matchMedia("(prefers-reduced-motion: reduce)").matches && typeof control.animate === "function") {
-                                        catalogControlAnimations.get(control)?.cancel();
-                                        catalogControlAnimations.set(control, control.animate(
-                                            [{ transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }],
-                                            { duration: 145, easing: "cubic-bezier(.2,.7,.2,1)" }
-                                        ));
+                                        const running = catalogControlAnimations.get(control);
+                                        if (!running || running.playState !== "running") {
+                                            catalogControlAnimations.set(control, control.animate(
+                                                [{ transform: "scale(1)" }, { transform: "scale(1.012)" }, { transform: "scale(1)" }],
+                                                { duration: 90, easing: "cubic-bezier(.2,.7,.2,1)" }
+                                            ));
+                                        }
                                     } else if (control && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
                                         control.classList.remove("qty-pulse");
                                         requestAnimationFrame(() => control.classList.add("qty-pulse"));
@@ -4577,7 +5162,20 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
         <section class="admin-panel settings-panel">
           <form id="settings-form" class="settings-form-grid">
             <label class="field"><span>Restaurant name</span><input class="field-input" name="restaurant_name" value="${escapeHtml(settings.restaurant_name)}" required></label>
-            <label class="field"><span>GSTIN (GST Number)</span><input class="field-input" name="gst_number" value="${escapeHtml(settings.gst_number || "")}" placeholder="22AAAAA0000A1Z5"></label>
+            <label class="field">
+              <span>GSTIN (GST Number)</span>
+              <input class="field-input" type="text" name="gst_number"
+                value="${escapeHtml(String(settings.gst_number || "").trim().toUpperCase())}"
+                placeholder="22AAAAA0000A1Z5" maxlength="15" minlength="15"
+                pattern="[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]"
+                title="Enter a valid 15-character GSTIN using uppercase letters and digits."
+                autocapitalize="characters" autocomplete="off" spellcheck="false"
+                aria-describedby="gst-number-help"
+                ${String(settings.gst_number || "").trim() ? 'disabled aria-disabled="true"' : ""}>
+              <small id="gst-number-help" style="font-size:.67rem;line-height:1.45;color:var(--muted);">
+                ${String(settings.gst_number || "").trim() ? "GSTIN is locked after its first save." : "Enter the exact 15-character GSTIN. It can be saved only once."}
+              </small>
+            </label>
             <label class="field settings-wide"><span>Restaurant Address (Prints on Bill)</span><textarea class="field-input textarea-input" name="restaurant_address" placeholder="123 Food Street, City, State" rows="2">${escapeHtml(settings.restaurant_address || "")}</textarea></label>
             <label class="field"><span>CGST %</span><input class="field-input" name="cgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.cgst_rate)}" required></label>
             <label class="field"><span>SGST %</span><input class="field-input" name="sgst_rate" type="number" min="0" max="100" step="0.01" value="${Number(settings.sgst_rate)}" required></label>
@@ -4593,6 +5191,19 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
         </section>
         
         `;
+
+      // GSTIN is uppercased and restricted to its 15-character alphabet.
+      const gstNumberInput = area.querySelector('[name="gst_number"]');
+      gstNumberInput?.addEventListener("input", () => {
+        if (gstNumberInput.disabled) return;
+        const cleaned = gstNumberInput.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 15);
+        if (gstNumberInput.value !== cleaned) {
+          const position = Math.min(gstNumberInput.selectionStart ?? cleaned.length, cleaned.length);
+          gstNumberInput.value = cleaned;
+          gstNumberInput.setSelectionRange(position, position);
+        }
+        gstNumberInput.setCustomValidity("");
+      });
 
       // 1. Add Instant Image Previews for the Uploaders
       area.querySelector("#icon_upload")?.addEventListener("change", e => {
@@ -4737,116 +5348,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           }
       });
 
-      panelPinForm.addEventListener("submit", async event => {
-        event.preventDefault();
-
-        if (panelPinButton.disabled) return;
-
-        const targetPanel = panelPinForm.elements.target_panel.value;
-        const currentAdminPin = getPanelPinValue("current");
-        const newPin = getPanelPinValue("new");
-        const confirmPin = getPanelPinValue("confirm");
-
-        if (
-          !/^\d{6}$/.test(currentAdminPin) ||
-          !/^\d{6}$/.test(newPin) ||
-          !/^\d{6}$/.test(confirmPin)
-        ) {
-          showToast(
-            "Invalid PIN",
-            "Complete all three six-digit PIN fields.",
-            "error"
-          );
-          return;
-        }
-
-        if (newPin !== confirmPin) {
-          panelPinStatus.textContent = "The new PINs do not match.";
-          panelPinStatus.style.color = "var(--danger)";
-
-          panelPinForm.querySelector(
-            '[data-panel-pin-set="confirm"] input'
-          )?.focus();
-
-          panelPinForm.querySelectorAll(
-            '[data-panel-pin-set="confirm"] input'
-          ).forEach(input => {
-            input.style.borderColor = "var(--danger)";
-          });
-
-          return;
-        }
-
-        panelPinButton.disabled = true;
-
-        const originalHTML = panelPinButton.innerHTML;
-
-        panelPinButton.innerHTML =
-          '<i class="ph-bold ph-spinner-gap ph-spin"></i> Verifying…';
-
-        panelPinStatus.textContent = "Submitting the secure PIN update…";
-        panelPinStatus.style.color = "var(--muted)";
-
-        try {
-          const { data: authorization, error: authorizationError } = await supabase.rpc(
-            "authorize_panel_pin_management",
-            {
-              p_restaurant_id: window.__ACTIVE_TENANT__.id,
-              p_current_admin_pin: currentAdminPin
-            }
-          );
-          if (authorizationError) throw authorizationError;
-          const authorizationResult = Array.isArray(authorization) ? authorization[0] : authorization;
-          if (authorizationResult?.ok !== true || typeof authorizationResult.management_token !== "string") {
-            throw new Error("Admin PIN verification failed or the authorization expired.");
-          }
-          const { data: pinResult, error } = await supabase.rpc("admin_set_panel_pin", {
-            p_management_token: authorizationResult.management_token,
-            p_panel_id: targetPanel,
-            p_new_pin: newPin
-          });
-          if (error) throw error;
-          if (pinResult?.ok !== true || pinResult.panel_id !== targetPanel) {
-            throw new Error("The server did not confirm the PIN change.");
-          }
-
-          clearPanelPinInputs();
-
-          panelPinStatus.textContent =
-            `The ${targetPanel.toUpperCase()} PIN was updated successfully.`;
-
-          panelPinStatus.style.color = "var(--forest-800)";
-
-          showToast(
-            "Security updated",
-            `${targetPanel.toUpperCase()} PIN changed successfully.`
-          );
-          if (targetPanel === "admin") {
-            window.__RMS_PANEL_ACCESS__ = null;
-            history.pushState({}, "", `${location.pathname}${location.search}#/panel/admin`);
-            window.dispatchEvent(new Event("rms:navigate"));
-          }
-        } catch (error) {
-          console.error("Panel PIN update failed:", error);
-
-          clearPanelPinInputs();
-
-          panelPinStatus.textContent = targetPanel === "admin"
-            ? "The Admin PIN could not be changed. Check the current PIN and database response."
-            : "This panel PIN update is not available until its secure database function is installed.";
-
-          panelPinStatus.style.color = "var(--danger)";
-
-          showToast(
-            "PIN update failed",
-            "No successful PIN change was confirmed.",
-            "error"
-          );
-        } finally {
-          panelPinButton.disabled = false;
-          panelPinButton.innerHTML = originalHTML;
-        }
-      });
+      // Panel PIN changes are handled by the dedicated panelPinManager modal.
 
       area.querySelector("#settings-form").addEventListener("submit", async e => {
         e.preventDefault(); 
@@ -4860,20 +5362,35 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
         btn.innerHTML = `<i class="ph ph-spinner-gap ph-spin"></i> Saving...`;
 
         const fd = new FormData(form);
+        const existingGstin = String(settings.gst_number || "").trim().toUpperCase();
+        const enteredGstin = String(fd.get("gst_number") || "").trim().toUpperCase();
+        // A disabled field is intentionally absent from FormData. Always retain
+        // the existing GSTIN in later saves so it cannot be cleared accidentally.
+        const gstNumber = existingGstin || enteredGstin;
+        const gstinPattern = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+
+        if (!existingGstin && enteredGstin && !gstinPattern.test(enteredGstin)) {
+          showToast("Invalid GSTIN", "Enter a valid 15-character GSTIN in uppercase letters and digits.", "error");
+          gstNumberInput?.focus();
+          btn.innerHTML = ogText;
+          btn.disabled = false;
+          return;
+        }
+
         const payload = {
           restaurant_id: window.__ACTIVE_TENANT__.id,
           restaurant_name: String(fd.get("restaurant_name") || "").trim(),
-          gst_number: String(fd.get("gst_number") || "").trim(),
+          gst_number: gstNumber || null,
           restaurant_address: String(fd.get("restaurant_address") || "").trim(),
           cgst_rate: Number(fd.get("cgst_rate")),
           sgst_rate: Number(fd.get("sgst_rate")),
           upi_id: String(fd.get("upi_id") || "").trim(),
           receipt_footer: String(fd.get("receipt_footer") || "").trim()
         };
-        
-        try { 
-          // 1. Save Billing Settings
-          const { error } = await supabase.rpc("admin_mutate_resource", {
+
+        try {
+          // 1. Save Billing Settings and require an explicit server success result.
+          const { data: saveResult, error } = await supabase.rpc("admin_mutate_resource", {
             p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null,
             p_resource: "settings",
             p_action: "save",
@@ -4881,9 +5398,23 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
             p_payload: payload
           });
           if (error) throw error;
+          const confirmedSave = Array.isArray(saveResult) ? saveResult[0] : saveResult;
+          if (confirmedSave?.ok !== true) {
+            throw new Error(confirmedSave?.message || "The server did not confirm that the settings were saved.");
+          }
 
           // 3. Update Memory State
-          Object.assign(settings, payload); 
+          Object.assign(settings, payload);
+          if (payload.gst_number) {
+            if (gstNumberInput) {
+              gstNumberInput.value = payload.gst_number;
+              gstNumberInput.disabled = true;
+              gstNumberInput.setAttribute("aria-disabled", "true");
+              gstNumberInput.setCustomValidity("");
+            }
+            const gstHelp = form.querySelector("#gst-number-help");
+            if (gstHelp) gstHelp.textContent = "GSTIN is locked after its first save.";
+          }
           if (window.__ACTIVE_TENANT__) {
             window.__ACTIVE_TENANT__.name = payload.restaurant_name;
           }

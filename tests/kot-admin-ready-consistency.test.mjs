@@ -24,13 +24,16 @@ test("Admin Table Open uses the same Ready RPC rather than a separate status cyc
   assert.match(admin, /Bill already prepared/);
 });
 
-test("all panel PINs use 5:6 portrait boxes on desktop and mobile", async () => {
+test("panel PIN screen uses responsive 6:7 boxes and legacy Admin lock keeps 5:6 boxes", async () => {
   const pin = await read("src/components/panelPinScreen.js");
   const styles = await read("styles.css");
-  assert.match(pin, /aspect-ratio:\s*5\s*\/\s*6/);
-  assert.match(pin, /height:\s*60px/);
-  assert.match(pin, /height:\s*43\.2px/);
+  assert.match(pin, /aspect-ratio:\s*6\s*\/\s*7/);
+  assert.match(pin, /height:\s*49px/);
+  assert.match(pin, /height:\s*42px/);
+  assert.match(pin, /height:\s*37\.333px/);
   assert.match(styles, /#admin-pin-container \.pin-box[\s\S]*?aspect-ratio:\s*5\s*\/\s*6/);
+  assert.match(styles, /#admin-pin-container \.pin-box[\s\S]*?height:\s*60px/);
+  assert.match(styles, /#admin-pin-container \.pin-box[\s\S]*?height:\s*43\.2px/);
 });
 
 test("KOT SQL patch adds trigger marker columns and keeps ready items visible until bill-ready", async () => {

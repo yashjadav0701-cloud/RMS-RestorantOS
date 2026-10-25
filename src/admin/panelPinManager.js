@@ -171,8 +171,11 @@ export function openPanelPinManager({ restaurantId, onNotice = () => {}, onAdmin
 
       .pin-manager-verify-inputs input:focus,
       .pin-manager-new-pin input:focus {
-        outline: 2px solid var(--forest-700);
-        outline-offset: 1px;
+        outline: none;
+        outline-offset: 0;
+        border-color: var(--forest-700);
+        box-shadow: 0 0 0 3px rgba(54, 91, 56, .12);
+        transform: none;
       }
 
       .pin-manager-panel-list {

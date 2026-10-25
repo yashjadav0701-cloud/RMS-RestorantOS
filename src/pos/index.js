@@ -125,6 +125,9 @@ export async function render({ mount, route }) {
   const restaurant = window.__ACTIVE_TENANT__ || { name: "Table Forge", background_color: "#fcfbf7", foreground_color: "#122216" };
   const settings = { ...DEFAULT_SETTINGS, ...(settingsResult.data ?? {}) };
   const products = productsResult.data ?? [];
+  // Product lookups happen on every quantity tap; keep them O(1) rather than
+  // scanning the entire menu array on the hot interaction path.
+  const productsById = new Map(products.map(product => [product.id, product]));
   const cuisines = cuisinesResult.data ?? [];
 
   if (restaurant.background_color) {
@@ -1560,12 +1563,12 @@ export async function render({ mount, route }) {
       const dec = event.target.closest("[data-product-dec]");
       const card = event.target.closest("[data-product-card]"); 
 
-      if (add) { const product = products.find(item => item.id === add.dataset.productAdd); if (!product) return; state.addProduct(product); animateProductControl(add); return; }
+      if (add) { const product = productsById.get(add.dataset.productAdd); if (!product) return; state.addProduct(product); animateProductControl(add); return; }
       if (inc) { state.increment(inc.dataset.productInc); animateProductControl(inc); return; }
       if (dec) { state.decrement(dec.dataset.productDec); animateProductControl(dec); }
 
       if (card && !event.target.closest(".premium-qty-wrapper")) {
-        const product = products.find(item => item.id === card.dataset.productCard);
+        const product = productsById.get(card.dataset.productCard);
         if (product) openProductDetailModal(product);
       }
     });
@@ -1622,23 +1625,17 @@ export async function render({ mount, route }) {
       const actionWrap = modal.root.querySelector("#detail-action-wrap");
       const doneBtn = modal.root.querySelector("#detail-done-btn");
 
-      const updateUI = () => {
-        const qty = state.getState().items.find(i => i.id === product.id)?.quantity || 0;
-        qtyVal.textContent = qty;
-        
-        if (qty > 0) {
-          actionWrap.classList.add("is-active");
-        } else {
-          actionWrap.classList.remove("is-active");
-        }
-        
-        renderProductQuantities();
-        renderActionBar();
+      const updateUI = (current = state.getState()) => {
+        const qty = current.items.find(item => item.id === product.id)?.quantity || 0;
+        if (qtyVal.textContent !== String(qty)) qtyVal.textContent = String(qty);
+        actionWrap.classList.toggle("is-active", qty > 0);
       };
 
-      mainBtn.addEventListener("click", () => { state.addProduct(product); updateUI(); });
-      incBtn.addEventListener("click", () => { state.increment(product.id); updateUI(); });
-      decBtn.addEventListener("click", () => { state.decrement(product.id); updateUI(); });
+      // The shared state subscription updates the main menu/action bar. These
+      // handlers only mutate state; they must not trigger a second full refresh.
+      mainBtn.addEventListener("click", () => state.addProduct(product));
+      incBtn.addEventListener("click", () => state.increment(product.id));
+      decBtn.addEventListener("click", () => state.decrement(product.id));
       doneBtn.addEventListener("click", () => { modal.close(); });
       
       const unsubscribe = state.subscribe(updateUI);
@@ -1667,25 +1664,44 @@ export async function render({ mount, route }) {
     renderProductQuantities(state.getState(), true);
   }
 
-  state.subscribe(current => {
+  state.subscribe((current, change) => {
     renderActionBar(current);
-    renderProductQuantities(current);
+    renderProductQuantities(current, false, change);
   });
 
   renderProducts();
 
-  function renderProductQuantities(current = state.getState(), force = false) {
+  function renderProductQuantities(current = state.getState(), force = false, change = null) {
+    if (!force && change?.quantitiesUnchanged) return;
+
+    // The common case is a single product +/- tap. Update one node and one cache
+    // entry without allocating a full Map/Set over every cart item.
+    if (!force && change?.productId) {
+      const productId = change.productId;
+      const quantity = change.quantity ?? 0;
+      const previousQuantity = lastRenderedProductQuantities.get(productId) ?? 0;
+      if (quantity === previousQuantity) return;
+      const control = productControlMap.get(productId);
+      if (control) {
+        control.classList.toggle("is-active", quantity > 0);
+        const valSpan = control.querySelector(".premium-qty-value");
+        if (valSpan && valSpan.textContent !== String(quantity)) valSpan.textContent = String(quantity);
+      }
+      if (quantity > 0) lastRenderedProductQuantities.set(productId, quantity);
+      else lastRenderedProductQuantities.delete(productId);
+      return;
+    }
+
     const quantities = new Map(current.items.map(item => [item.id, item.quantity]));
 
-    // Rebuild this lookup only when the menu DOM is rebuilt. A cart tap should
-    // update only products whose quantity changed, not walk the entire menu grid.
-    if (force) {
+    // Rebuild the DOM lookup only after the menu itself is rebuilt.
+    if (force || change?.resync) {
       productControlMap = new Map(
         Array.from(mount.querySelectorAll("[data-product-control]"), control => [control.dataset.productControl, control])
       );
     }
 
-    const productIds = force
+    const productIds = force || change?.resync
       ? productControlMap.keys()
       : new Set([...lastRenderedProductQuantities.keys(), ...quantities.keys()]);
 
@@ -1693,15 +1709,12 @@ export async function render({ mount, route }) {
       const quantity = quantities.get(productId) ?? 0;
       const previousQuantity = lastRenderedProductQuantities.get(productId) ?? 0;
       if (!force && quantity === previousQuantity) continue;
-
       const control = productControlMap.get(productId);
       if (!control) continue;
-      const valSpan = control.querySelector(".premium-qty-value");
-
       control.classList.toggle("is-active", quantity > 0);
+      const valSpan = control.querySelector(".premium-qty-value");
       if (valSpan && valSpan.textContent !== String(quantity)) valSpan.textContent = String(quantity);
     }
-
     lastRenderedProductQuantities = quantities;
   }
 
@@ -1709,22 +1722,29 @@ export async function render({ mount, route }) {
     const control = element.closest("[data-product-control]");
     if (!control || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     if (typeof control.animate === "function") {
-      // Cancel only our previous tap pulse, never the CSS width/background transition.
-      productControlAnimations.get(control)?.cancel();
+      // Do not cancel/restart an animation while the user is tapping rapidly.
+      const running = productControlAnimations.get(control);
+      if (running?.playState === "running") return;
       const animation = control.animate(
-        [{ transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }],
-        { duration: 145, easing: "cubic-bezier(.2,.7,.2,1)" }
+        [{ transform: "scale(1)" }, { transform: "scale(1.012)" }, { transform: "scale(1)" }],
+        { duration: 90, easing: "cubic-bezier(.2,.7,.2,1)" }
       );
       productControlAnimations.set(control, animation);
       return;
     }
-    control.classList.remove("qty-pulse");
-    requestAnimationFrame(() => control.classList.add("qty-pulse"));
+    if (!control.classList.contains("qty-pulse")) {
+      control.classList.add("qty-pulse");
+      control.addEventListener("animationend", () => control.classList.remove("qty-pulse"), { once: true });
+    }
   }
 
   function renderActionBar(current = state.getState()) {
-    const count = current.items.reduce((sum, i) => sum + i.quantity, 0);
-    const total = current.items.reduce((sum, i) => sum + (i.price * i.quantity), 0);
+    let count = 0;
+    let total = 0;
+    for (const item of current.items) {
+      count += item.quantity;
+      total += item.price * item.quantity;
+    }
     
     mount.querySelector("#pos-cart-count").textContent = `${count} ${count === 1 ? "item" : "items"}`;
     
@@ -1869,7 +1889,7 @@ export async function render({ mount, route }) {
     const modal = openAppModal({
       title: "Review order",
       subtitle: "Review your items before sending to the kitchen.",
-      body: `<div class="pos-review-head"><div><span class="eyebrow">Order</span><strong>${current.orderType === "dine_in" ? `Dine-in · Table ${escapeHtml(tables.find(t => t.id === current.tableId)?.table_no ?? "")}` : "Takeaway"}</strong></div><span class="secure-mini"><i class="ph ph-shield-check"></i>Verified</span></div><div class="review-items">${current.items.map(item => `<div class="review-item" style="align-items: center;"><div class="review-item-copy"><strong>${escapeHtml(item.name)}</strong><span>${money(item.price)}</span></div><div class="premium-qty-wrapper is-active" style="flex-shrink: 0; margin-left: 12px;"><button class="premium-qty-btn dec-btn" data-dec="${item.id}" title="Decrease"><i class="ph ph-minus"></i></button><span class="premium-qty-value">${item.quantity}</span><button class="premium-qty-btn inc-btn" data-inc="${item.id}" title="Increase"><i class="ph ph-plus"></i></button></div></div>`).join("")}</div><div class="review-total-hint"><i class="ph ph-info"></i><span>GST and the final total are calculated securely by the server.</span></div><div id="review-error-box" class="dining-warning-box" style="display: none; background: var(--danger-soft); border-color: #f1c7c4; color: var(--danger); margin-top: 12px; align-items: center;"></div>`,
+      body: `<div class="pos-review-head"><div><span class="eyebrow">Order</span><strong>${current.orderType === "dine_in" ? `Dine-in · Table ${escapeHtml(tables.find(t => t.id === current.tableId)?.table_no ?? "")}` : "Takeaway"}</strong></div><span class="secure-mini"><i class="ph ph-shield-check"></i>Verified</span></div><div class="review-items">${current.items.map(item => `<div class="review-item" data-review-item="${item.id}" style="align-items: center;"><div class="review-item-copy"><strong>${escapeHtml(item.name)}</strong><span>${money(item.price)}</span></div><div class="premium-qty-wrapper is-active" style="flex-shrink: 0; margin-left: 12px;"><button class="premium-qty-btn dec-btn" data-dec="${item.id}" title="Decrease"><i class="ph ph-minus"></i></button><span class="premium-qty-value">${item.quantity}</span><button class="premium-qty-btn inc-btn" data-inc="${item.id}" title="Increase"><i class="ph ph-plus"></i></button></div></div>`).join("")}</div><div class="review-total-hint"><i class="ph ph-info"></i><span>GST and the final total are calculated securely by the server.</span></div><div id="review-error-box" class="dining-warning-box" style="display: none; background: var(--danger-soft); border-color: #f1c7c4; color: var(--danger); margin-top: 12px; align-items: center;"></div>`,
       actions: [
         { label: "Keep editing", icon: "ph-arrow-left", className: "btn-quiet", onClick: ({ close }) => close() },
         { label: isOpen ? "Update Kitchen" : "Confirm order", icon: "ph-check", className: "btn-primary", onClick: async ({ close, button, root }) => { 
@@ -1891,19 +1911,23 @@ export async function render({ mount, route }) {
       ]
     });
 
-    modal.root.addEventListener("click", event => { 
-      const inc = event.target.closest("[data-inc]"); 
-      const dec = event.target.closest("[data-dec]"); 
-      if (inc) { state.increment(inc.dataset.inc); refreshReview(modal.root); } 
-      if (dec) { state.decrement(dec.dataset.dec); refreshReview(modal.root); } 
+    modal.root.addEventListener("click", event => {
+      const inc = event.target.closest("[data-inc]");
+      const dec = event.target.closest("[data-dec]");
+      const control = inc || dec;
+      if (!control) return;
+      const productId = control.dataset.inc || control.dataset.dec;
+      if (inc) state.increment(productId);
+      else state.decrement(productId);
+      refreshReview(modal.root, productId);
     });
   }
 
-  function refreshReview(root) {
+  function refreshReview(root, changedProductId = null) {
     const current = state.getState();
     const list = root.querySelector(".review-items");
     if (!list) return;
-    
+
     if (current.items.length === 0) {
       list.innerHTML = `<div class="empty-state compact"><i class="ph ph-shopping-cart"></i><strong>Empty</strong><span>Add items to continue.</span></div>`;
       const confirmBtn = root.querySelector(".btn-primary");
@@ -1911,7 +1935,22 @@ export async function render({ mount, route }) {
       return;
     }
 
-    list.innerHTML = current.items.map(item => `<div class="review-item" style="align-items: center;"><div class="review-item-copy"><strong>${escapeHtml(item.name)}</strong><span>${money(item.price)}</span></div><div class="premium-qty-wrapper is-active" style="flex-shrink: 0; margin-left: 12px;"><button class="premium-qty-btn dec-btn" data-dec="${item.id}" title="Decrease"><i class="ph ph-minus"></i></button><span class="premium-qty-value">${item.quantity}</span><button class="premium-qty-btn inc-btn" data-inc="${item.id}" title="Increase"><i class="ph ph-plus"></i></button></div></div>`).join("");
+    // Quantity taps update one row in place rather than replacing every item row.
+    if (changedProductId) {
+      const row = Array.from(list.querySelectorAll("[data-review-item]")).find(node => node.dataset.reviewItem === changedProductId);
+      const item = current.items.find(entry => entry.id === changedProductId);
+      if (row && item) {
+        const value = row.querySelector(".premium-qty-value");
+        if (value && value.textContent !== String(item.quantity)) value.textContent = String(item.quantity);
+      } else if (row) {
+        row.remove();
+      }
+      const confirmBtn = root.querySelector(".btn-primary");
+      if (confirmBtn) confirmBtn.disabled = current.items.length === 0;
+      return;
+    }
+
+    list.innerHTML = current.items.map(item => `<div class="review-item" data-review-item="${item.id}" style="align-items: center;"><div class="review-item-copy"><strong>${escapeHtml(item.name)}</strong><span>${money(item.price)}</span></div><div class="premium-qty-wrapper is-active" style="flex-shrink: 0; margin-left: 12px;"><button class="premium-qty-btn dec-btn" data-dec="${item.id}" title="Decrease"><i class="ph ph-minus"></i></button><span class="premium-qty-value">${item.quantity}</span><button class="premium-qty-btn inc-btn" data-inc="${item.id}" title="Increase"><i class="ph ph-plus"></i></button></div></div>`).join("");
   }
 
     async function submitPOSOrder(closeModal, errorBoxElement = null) {

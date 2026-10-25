@@ -46,14 +46,14 @@ export function createPOSState(initial = {}) {
   // does not compete with animation frames. Pending changes are flushed before a
   // draft switch and whenever the page becomes hidden or is being left.
   const getDraftKey = () => `rms.draft.${window.__ACTIVE_TENANT__?.id || 'sys'}.${orderType}.${tableId || 'none'}`;
-  let pendingDraft = null;
+  let pendingDraftKey = null;
   let draftSaveTimer = null;
 
-  const persistDraft = draft => {
-    if (!draft) return;
+  const persistDraft = (key, items) => {
+    if (!key) return;
     try {
-      if (draft.items.length > 0) localStorage.setItem(draft.key, JSON.stringify(draft.items));
-      else localStorage.removeItem(draft.key);
+      if (items.length > 0) localStorage.setItem(key, JSON.stringify(items));
+      else localStorage.removeItem(key);
     } catch (error) {
       // Ordering must remain usable even when browser storage is unavailable/full.
       console.warn("Draft persistence failed", error);
@@ -65,16 +65,17 @@ export function createPOSState(initial = {}) {
       clearTimeout(draftSaveTimer);
       draftSaveTimer = null;
     }
-    const draft = pendingDraft;
-    pendingDraft = null;
-    persistDraft(draft);
+    const key = pendingDraftKey;
+    pendingDraftKey = null;
+    if (!key) return;
+
+    // Clone and serialize only when the coalesced write is flushed, not on every tap.
+    const items = [...cart.values()].map(item => ({ ...item }));
+    persistDraft(key, items);
   };
 
   const saveDraft = () => {
-    pendingDraft = {
-      key: getDraftKey(),
-      items: [...cart.values()].map(item => ({ ...item }))
-    };
+    pendingDraftKey = getDraftKey();
     if (draftSaveTimer !== null) clearTimeout(draftSaveTimer);
     draftSaveTimer = setTimeout(flushDraft, 120);
   };
@@ -102,51 +103,64 @@ export function createPOSState(initial = {}) {
     return { items, orderType, tableId, totals: calculateTotals(items, settings) };
   };
   
-  const emit = () => {
+  const emit = change => {
     saveDraft(); // Coalesce storage writes so rapid taps stay responsive.
-    listeners.forEach(listener => listener(snapshot()));
+    // Build one snapshot per change. Every subscriber receives the same immutable
+    // view instead of cloning the cart and calculating totals once per subscriber.
+    const current = snapshot();
+    listeners.forEach(listener => listener(current, change));
   };
 
   // Restore initial state on load
   loadDraft();
 
   return {
-    subscribe(listener) { listeners.add(listener); listener(snapshot()); return () => listeners.delete(listener); },
+    subscribe(listener) { listeners.add(listener); listener(snapshot(), { resync: true }); return () => listeners.delete(listener); },
     getState() { return snapshot(); },
-    setSettings(next) { settings = { ...settings, ...(next ?? {}) }; emit(); },
+    setSettings(next) { settings = { ...settings, ...(next ?? {}) }; emit({ quantitiesUnchanged: true }); },
     setOrderType(next) {
+      flushDraft(); // Flush under the old key before changing context.
       orderType = next === "takeaway" ? "takeaway" : "dine_in";
       if (orderType === "takeaway") tableId = null;
-      loadDraft(); // Magically switch cart memory when changing modes
-      emit();
+      loadDraft(); // Switch cart memory when changing modes.
+      emit({ resync: true });
     },
-    setTable(table) { 
-      tableId = table?.id ?? null; 
-      loadDraft(); // Magically switch cart memory when switching between tables
-      emit(); 
+    setTable(table) {
+      flushDraft(); // Flush under the old key before changing context.
+      tableId = table?.id ?? null;
+      loadDraft(); // Switch cart memory when switching between tables.
+      emit({ resync: true });
     },
     addProduct(product) {
       if (!product?.id) return;
       const current = cart.get(product.id);
+      const quantity = qty((current?.quantity ?? 0) + 1);
       cart.set(product.id, {
         id: product.id,
         name: product.name,
         category: product.category ?? "Uncategorized",
         price: Number(product.price) || 0,
         tax_exempt: Boolean(product.tax_exempt),
-        quantity: qty((current?.quantity ?? 0) + 1)
+        quantity
       });
-      emit();
+      emit({ productId: product.id, quantity });
     },
-    increment(id) { const item = cart.get(id); if (!item) return; item.quantity = qty(item.quantity + 1); cart.set(id, item); emit(); },
+    increment(id) {
+      const item = cart.get(id);
+      if (!item) return;
+      item.quantity = qty(item.quantity + 1);
+      cart.set(id, item);
+      emit({ productId: id, quantity: item.quantity });
+    },
     decrement(id) {
-      const item = cart.get(id); if (!item) return;
+      const item = cart.get(id);
+      if (!item) return;
       item.quantity = qty(item.quantity - 1);
       if (item.quantity <= 0) cart.delete(id); else cart.set(id, item);
-      emit();
+      emit({ productId: id, quantity: item.quantity });
     },
-    remove(id) { cart.delete(id); emit(); },
-    clear() { cart.clear(); emit(); },
+    remove(id) { cart.delete(id); emit({ productId: id, quantity: 0 }); },
+    clear() { cart.clear(); emit({ resync: true }); },
     canSubmit() {
       const value = snapshot();
       return value.items.length > 0 && (value.orderType === "takeaway" || Boolean(value.tableId));

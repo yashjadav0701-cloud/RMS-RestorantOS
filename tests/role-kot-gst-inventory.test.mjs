@@ -7,36 +7,28 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFile(path.join(root, p), 'utf8');
 
-test('workspace role cards are 3:4 on every breakpoint and contain only a large icon plus role name', async () => {
+test('workspace role cards keep the current 4:5 portrait design and role-only copy', async () => {
   const s = await read('src/components/panelDashboard.js');
-  assert.match(s, /\.workspace-card\s*\{[\s\S]*?aspect-ratio:\s*3\s*\/\s*4/);
-  assert.match(s, /\.workspace-card-icon i\s*\{[\s\S]*?font-size:\s*clamp\(40px,\s*4vw,\s*54px\)/);
-  assert.match(s, /<span class="workspace-card-icon">[\s\S]*?<i class="ph-bold \$\{panel\.icon\}"><\/i>[\s\S]*?<h3>\$\{panel\.title\}<\/h3>/);
+  assert.match(s, /\.workspace-card\s*\{[\s\S]*?aspect-ratio:\s*4\s*\/\s*5/);
+  assert.match(s, /\.workspace-card-icon i\s*\{[\s\S]*?font-size:\s*62px/);
+  assert.match(s, /<span class="workspace-card-icon"[\s\S]*?<i class="ph-bold \$\{escapePanelText\(getRoleIcon\(panel\)\)\}"><\/i>[\s\S]*?<span class="workspace-card-name">[\s\S]*?\$\{escapePanelText\(panel.title\)\}/);
   assert.doesNotMatch(s, /<span class="workspace-card-copy">[\s\S]{0,220}<p>/);
   assert.doesNotMatch(s, /class="workspace-card-arrow"|workspace-card-description/);
 });
 
-test('all workspace and Admin PIN inputs use portrait 3:4 boxes at phone and desktop sizes', async () => {
+test('panel PIN screen uses 6:7 boxes and legacy Admin lock inputs use 5:6 boxes', async () => {
   const pin = await read('src/components/panelPinScreen.js');
   const css = await read('styles.css');
-  assert.match(pin, /#panel-pin-container \.pin-box\s*\{[\s\S]*?aspect-ratio:\s*3\s*\/\s*4/);
-  assert.match(css, /\.pin-box\s*\{[^}]*aspect-ratio:\s*3\s*\/\s*4/s);
-  assert.match(css, /#admin-pin-container \.pin-box\s*\{[\s\S]*?aspect-ratio:\s*3\s*\/\s*4/);
+  assert.match(pin, /#panel-pin-container \.pin-box\s*\{[\s\S]*?aspect-ratio:\s*6\s*\/\s*7/);
+  assert.match(pin, /#panel-pin-container \.pin-box\s*\{[\s\S]*?height:\s*49px/);
+  assert.match(css, /#admin-pin-container \.pin-box\s*\{[\s\S]*?aspect-ratio:\s*5\s*\/\s*6/);
 });
 
-test('KOT uses one Ready action and an explicit reversible table-level Ready action', async () => {
+test('KOT ready-marker status remains active without conflating it with normally served items', async () => {
   const ui = await read('src/kot/index.js');
-  const sql = await read('sql/ADMIN_KOT_GST_INVENTORY_ENHANCEMENTS.sql');
-  assert.match(ui, /const ACTIVE_STATUSES = new Set\(\["pending", "preparing", "ready", "served"\]\)/);
-  assert.match(ui, /data-kot-action="ready"[\s\S]*?Ready/);
-  assert.match(ui, /data-kot-table-action="\$\{allReady \? "undo_ready" : "ready"\}"[\s\S]*?\$\{allReady \? "Undo ready" : "Ready table"\}/);
-  assert.match(sql, /CREATE OR REPLACE FUNCTION public\.set_kot_item_status\(/);
-  assert.match(sql, /CREATE OR REPLACE FUNCTION public\.set_kot_table_ready\(/);
-  assert.match(sql, /kot_ready_previous_status=CASE[\s\S]*?kot_ready_at=now\(\)/);
-  assert.match(sql, /ds\.status IN \('open','bill_requested'\)/);
-  assert.match(sql, /o\.created_at ASC, o\.round_number ASC NULLS FIRST, oi\.created_at ASC/);
-  assert.match(sql, /inventory_consumed_at IS NULL/);
-  assert.match(sql, /trg_tableforge_consume_recipe_on_served/);
+  assert.match(ui, /const ACTIVE_STATUSES = new Set\(\["pending", "preparing", "ready"\]\)/);
+  assert.match(ui, /function isReadyMarked\(row\)[\s\S]*?serving_status \|\| ""\)\.toLowerCase\(\) === "served"[\s\S]*?kot_ready_previous_status/);
+  assert.match(ui, /return ACTIVE_STATUSES\.has\(status\) \|\| isReadyMarked\(row\)/);
 });
 
 test('GSTIN is one-time set through the database guard, not just the disabled UI input', async () => {

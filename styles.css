@@ -2024,8 +2024,10 @@ nav#admin-section-nav.admin-section-nav::after {
   overflow: hidden;
   border: none;
   box-shadow: 0 1px 3px rgba(0,0,0,0.035);
-  /* Keep the compact add state; use a short, non-overshooting expansion. */
-  transition: width 170ms cubic-bezier(.2,.75,.25,1), background-color 120ms ease, box-shadow 120ms ease;
+  /* Keep the compact add state; animate the only layout dimension briefly. */
+  transition: width 115ms cubic-bezier(.2,.7,.25,1), background-color 90ms ease;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   position: relative;
 }
 
@@ -2045,10 +2047,12 @@ nav#admin-section-nav.admin-section-nav::after {
   place-items: center;
   background: transparent;
   color: var(--forest-900);
-  transition: background-color 110ms ease, color 110ms ease;
+  transition: background-color 85ms ease, color 85ms ease;
   border-radius: 0;
   z-index: 2;
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .premium-qty-btn i {
@@ -2111,11 +2115,11 @@ nav#admin-section-nav.admin-section-nav::after {
 }
 
 .qty-pulse {
-  animation: premium-pulse 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: premium-pulse 95ms cubic-bezier(.2,.7,.2,1);
 }
 @keyframes premium-pulse {
   0% { transform: scale(1); }
-  40% { transform: scale(1.12); }
+  45% { transform: scale(1.02); }
   100% { transform: scale(1); }
 }
 
@@ -2342,7 +2346,7 @@ nav#admin-section-nav.admin-section-nav::after {
   flex: 0 0 0%;
   opacity: 0;
   overflow: hidden;
-  transition: flex-basis 180ms cubic-bezier(.2,.75,.25,1), opacity 140ms ease;
+  transition: flex-basis 115ms cubic-bezier(.2,.7,.25,1), opacity 95ms ease;
   border: none; /* Border completely removed */
   box-shadow: 0 4px 12px rgba(0,0,0,0.06); /* Matches the product card shadow */
   border-radius: 14px;
@@ -2366,7 +2370,7 @@ nav#admin-section-nav.admin-section-nav::after {
   opacity: 0;
   overflow: hidden;
   white-space: nowrap;
-  transition: flex-basis 180ms cubic-bezier(.2,.75,.25,1), opacity 140ms ease, padding 180ms ease;
+  transition: flex-basis 115ms cubic-bezier(.2,.7,.25,1), opacity 95ms ease, padding 115ms ease;
   background: var(--forest-900);
   color: #fff;
   border-radius: 14px;
@@ -2403,7 +2407,9 @@ nav#admin-section-nav.admin-section-nav::after {
   color: #fff;
   font-size: 1.1rem;
   cursor: pointer;
-  transition: background 0.2s ease;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background-color 85ms ease;
   flex-shrink: 0;
 }
 
@@ -3736,3 +3742,80 @@ h3 {
   .detail-qty-ui, .detail-done-btn, .detail-qty-btn { transition-duration: 0.01ms !important; }
 }
 
+
+
+/* Tenant-backed ingredient category combo box */
+.inventory-category-combobox { position: relative; width: 100%; min-width: 0; }
+.inventory-category-input-wrap { position: relative; display: flex; align-items: center; }
+.inventory-category-input-wrap .field-input { width: 100%; min-width: 0; padding-right: 46px !important; }
+.inventory-category-toggle {
+  position: absolute; inset-block: 4px; right: 4px; width: 38px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 10px; color: var(--ink, #18291c);
+  background: transparent; cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.inventory-category-toggle:hover, .inventory-category-toggle:focus-visible {
+  background: var(--surface-muted, #edf2e9); outline: none;
+}
+.inventory-category-toggle:focus-visible { box-shadow: 0 0 0 2px var(--accent, #24472b); }
+.inventory-category-options {
+  position: absolute; z-index: 1200; top: calc(100% + 7px); left: 0; right: 0;
+  max-height: min(260px, 38vh); overflow-y: auto; padding: 6px;
+  border: 1px solid var(--line, #dce4d7); border-radius: 14px;
+  background: var(--surface, #fff);
+  box-shadow: 0 16px 38px rgba(20, 35, 23, .18), 0 3px 8px rgba(20, 35, 23, .08);
+  overscroll-behavior: contain;
+}
+.inventory-category-options[hidden] { display: none !important; }
+.inventory-category-option {
+  display: block; width: 100%; padding: 10px 12px; border: 0; border-radius: 9px;
+  text-align: left; font: inherit; font-size: 14px; line-height: 1.35;
+  color: var(--ink, #18291c); background: transparent; cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.inventory-category-option:hover, .inventory-category-option:focus-visible,
+.inventory-category-option[aria-selected="true"] {
+  color: var(--ink, #18291c); background: var(--surface-muted, #eef3eb); outline: none;
+}
+.inventory-category-empty { padding: 12px; color: var(--muted, #68746a); font-size: 12px; line-height: 1.5; }
+@media (max-width: 600px) { .inventory-category-options { max-height: 220px; } }
+
+/* Ingredient dialog — consistent, full-size name input */
+.ingredient-name-field {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  min-width: 0;
+  width: 100%;
+  gap: 10px;
+}
+
+.ingredient-name-input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 54px;
+  height: 54px;
+  box-sizing: border-box;
+  padding: 0 16px;
+  border: 1px solid var(--line, #d9e1d2);
+  border-radius: 15px;
+  background: var(--surface, #fff);
+  color: var(--ink, #193321);
+  font: inherit;
+  line-height: 1.4;
+  box-shadow: 0 2px 4px rgb(25 51 33 / 3%);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.ingredient-name-input:focus {
+  outline: none;
+  border-color: var(--primary, #24472c);
+  box-shadow: 0 0 0 3px rgb(36 71 44 / 12%);
+}
+
+.ingredient-name-input::placeholder {
+  color: var(--muted, #8b9588);
+  opacity: 1;
+}
