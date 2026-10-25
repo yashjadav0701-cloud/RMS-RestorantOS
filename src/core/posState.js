@@ -42,16 +42,47 @@ export function createPOSState(initial = {}) {
   const cart = new Map();
   const listeners = new Set();
 
-  // 💾 POWER OUTAGE RECOVERY: Secure Local Persistence
+  // Draft persistence is coalesced during rapid taps so synchronous storage I/O
+  // does not compete with animation frames. Pending changes are flushed before a
+  // draft switch and whenever the page becomes hidden or is being left.
   const getDraftKey = () => `rms.draft.${window.__ACTIVE_TENANT__?.id || 'sys'}.${orderType}.${tableId || 'none'}`;
-  
+  let pendingDraft = null;
+  let draftSaveTimer = null;
+
+  const persistDraft = draft => {
+    if (!draft) return;
+    try {
+      if (draft.items.length > 0) localStorage.setItem(draft.key, JSON.stringify(draft.items));
+      else localStorage.removeItem(draft.key);
+    } catch (error) {
+      // Ordering must remain usable even when browser storage is unavailable/full.
+      console.warn("Draft persistence failed", error);
+    }
+  };
+
+  const flushDraft = () => {
+    if (draftSaveTimer !== null) {
+      clearTimeout(draftSaveTimer);
+      draftSaveTimer = null;
+    }
+    const draft = pendingDraft;
+    pendingDraft = null;
+    persistDraft(draft);
+  };
+
   const saveDraft = () => {
-    const items = [...cart.values()];
-    if (items.length > 0) localStorage.setItem(getDraftKey(), JSON.stringify(items));
-    else localStorage.removeItem(getDraftKey());
+    pendingDraft = {
+      key: getDraftKey(),
+      items: [...cart.values()].map(item => ({ ...item }))
+    };
+    if (draftSaveTimer !== null) clearTimeout(draftSaveTimer);
+    draftSaveTimer = setTimeout(flushDraft, 120);
   };
 
   const loadDraft = () => {
+    // Commit the previous cart under its captured key before changing the active
+    // order/table context; otherwise a pending save could overwrite another draft.
+    flushDraft();
     cart.clear();
     try {
       const saved = localStorage.getItem(getDraftKey());
@@ -59,13 +90,20 @@ export function createPOSState(initial = {}) {
     } catch (e) { console.warn("Draft restore failed", e); }
   };
 
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", flushDraft);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") flushDraft();
+    }, { passive: true });
+  }
+
   const snapshot = () => {
     const items = [...cart.values()].map(item => ({ ...item }));
     return { items, orderType, tableId, totals: calculateTotals(items, settings) };
   };
   
   const emit = () => {
-    saveDraft(); // Instantly save to disk on every single tap
+    saveDraft(); // Coalesce storage writes so rapid taps stay responsive.
     listeners.forEach(listener => listener(snapshot()));
   };
 

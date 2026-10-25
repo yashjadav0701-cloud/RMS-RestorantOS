@@ -617,7 +617,10 @@ export async function render({ mount, route }) {
   let drawerCleanup = null;
   let realtimeChannel = null;
   let unreadOrders = 0;
-  const activeTableOrders = {}; 
+  const activeTableOrders = {};
+  let productControlMap = new Map();
+  let lastRenderedProductQuantities = new Map();
+  const productControlAnimations = new WeakMap();
 
   const handlePopState = (e) => {
     if (e.state?.view === "cuisine" && e.state?.cuisine) {
@@ -1007,10 +1010,11 @@ export async function render({ mount, route }) {
     if (!tableId) return;
 
     const button = mount.querySelector("#customer-live-tab");
-    if (button) {
-      button.classList.remove("qty-pulse");
-      void button.offsetWidth;
-      button.classList.add("qty-pulse");
+    if (button && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      button.animate?.(
+        [{ transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }],
+        { duration: 180, easing: "cubic-bezier(.2,.7,.2,1)" }
+      );
     }
 
     try {
@@ -1520,7 +1524,7 @@ export async function render({ mount, route }) {
       return `
       <article class="pos-product-card" data-product-card="${product.id}">
         <div class="pos-product-media">
-          ${product.image_url ? `<img src="${versionedAsset(product.image_url)}" alt="" loading="lazy">` : `<div class="product-placeholder"><i class="ph ph-fork-knife"></i></div>`}
+          ${product.image_url ? `<img src="${versionedAsset(product.image_url)}" alt="" loading="lazy" decoding="async">` : `<div class="product-placeholder"><i class="ph ph-fork-knife"></i></div>`}
           <span class="veg-mark" title="${markTitle}" style="border: 2px solid ${markColor}; background: #fff; width: 24px; height: 24px; box-shadow: 0 3px 10px rgba(0,0,0,0.3);"><span style="background: ${markColor}; width: 10px; height: 10px;"></span></span>
         </div>
         <div class="pos-product-copy">
@@ -1540,9 +1544,15 @@ export async function render({ mount, route }) {
       `;
     }).join("") : `<div class="empty-state"><i class="ph ph-magnifying-glass"></i><strong>No dishes found</strong><span>Try another search or category.</span></div>`;
 
-    grid.classList.remove("grid-refresh-anim");
-    void grid.offsetWidth;
-    grid.classList.add("grid-refresh-anim");
+    if (typeof grid.animate === "function" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      grid.animate(
+        [{ opacity: 0.78, transform: "translate3d(0, 3px, 0)" }, { opacity: 1, transform: "translate3d(0, 0, 0)" }],
+        { duration: 135, easing: "cubic-bezier(.2,.75,.25,1)" }
+      );
+    } else {
+      grid.classList.remove("grid-refresh-anim");
+      requestAnimationFrame(() => grid.classList.add("grid-refresh-anim"));
+    }
 
     area.querySelector("#pos-product-grid")?.addEventListener("click", event => {
       const add = event.target.closest("[data-product-add]");
@@ -1569,7 +1579,7 @@ export async function render({ mount, route }) {
       const modalBody = `
         <div class="premium-product-detail">
           <div class="detail-media">
-            ${product.image_url ? `<img src="${versionedAsset(product.image_url)}" alt="">` : `<div class="product-placeholder"><i class="ph ph-fork-knife"></i></div>`}
+            ${product.image_url ? `<img src="${versionedAsset(product.image_url)}" alt="" decoding="async">` : `<div class="product-placeholder"><i class="ph ph-fork-knife"></i></div>`}
             <span class="veg-mark" title="${isVeg ? 'Vegetarian' : 'Non-Vegetarian'}" style="border: 2px solid ${markColor}; background: #fff; width: 28px; height: 28px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); top: 16px; right: 16px;"><span style="background: ${markColor}; width: 12px; height: 12px;"></span></span>
           </div>
           <div class="detail-content">
@@ -1654,7 +1664,7 @@ export async function render({ mount, route }) {
       }, { passive: true });
     }
 
-    renderProductQuantities();
+    renderProductQuantities(state.getState(), true);
   }
 
   state.subscribe(current => {
@@ -1664,30 +1674,52 @@ export async function render({ mount, route }) {
 
   renderProducts();
 
-  function renderProductQuantities(current = state.getState()) {
+  function renderProductQuantities(current = state.getState(), force = false) {
     const quantities = new Map(current.items.map(item => [item.id, item.quantity]));
 
-    mount.querySelectorAll("[data-product-control]").forEach(control => {
-      const productId = control.dataset.productControl;
+    // Rebuild this lookup only when the menu DOM is rebuilt. A cart tap should
+    // update only products whose quantity changed, not walk the entire menu grid.
+    if (force) {
+      productControlMap = new Map(
+        Array.from(mount.querySelectorAll("[data-product-control]"), control => [control.dataset.productControl, control])
+      );
+    }
+
+    const productIds = force
+      ? productControlMap.keys()
+      : new Set([...lastRenderedProductQuantities.keys(), ...quantities.keys()]);
+
+    for (const productId of productIds) {
       const quantity = quantities.get(productId) ?? 0;
+      const previousQuantity = lastRenderedProductQuantities.get(productId) ?? 0;
+      if (!force && quantity === previousQuantity) continue;
+
+      const control = productControlMap.get(productId);
+      if (!control) continue;
       const valSpan = control.querySelector(".premium-qty-value");
 
-      if (quantity <= 0) {
-        control.classList.remove("is-active");
-        if (valSpan) valSpan.textContent = "0";
-      } else {
-        control.classList.add("is-active");
-        if (valSpan) valSpan.textContent = quantity;
-      }
-    });
+      control.classList.toggle("is-active", quantity > 0);
+      if (valSpan && valSpan.textContent !== String(quantity)) valSpan.textContent = String(quantity);
+    }
+
+    lastRenderedProductQuantities = quantities;
   }
 
   function animateProductControl(element) {
     const control = element.closest("[data-product-control]");
-    if (!control) return;
+    if (!control || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (typeof control.animate === "function") {
+      // Cancel only our previous tap pulse, never the CSS width/background transition.
+      productControlAnimations.get(control)?.cancel();
+      const animation = control.animate(
+        [{ transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }],
+        { duration: 145, easing: "cubic-bezier(.2,.7,.2,1)" }
+      );
+      productControlAnimations.set(control, animation);
+      return;
+    }
     control.classList.remove("qty-pulse");
-    void control.offsetWidth;
-    control.classList.add("qty-pulse");
+    requestAnimationFrame(() => control.classList.add("qty-pulse"));
   }
 
   function renderActionBar(current = state.getState()) {

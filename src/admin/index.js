@@ -650,6 +650,9 @@ async function renderAdminWorkspace(
 
   window.__FF_TABLES__ = tables;
   let section = "overview";
+  let sectionTransitionPending = false;
+  let sectionTransitionTimer = null;
+  const lazyAdminSections = new Set(["top-products", "ingredient-usage", "activity-audit"]);
   let orderDateRange = createPresetRange("today");
   let revenueDateRange = createPresetRange("7");
   let productAnalyticsDateRange = createPresetRange("7");
@@ -709,7 +712,12 @@ async function renderAdminWorkspace(
           <button data-section="settings"><i class="ph ph-bold ph-gear"></i><span>Settings</span></button>
         `}
       </nav>
-      <main class="admin-content"><section id="admin-area"></section></main>
+      <main class="admin-content">
+        <div class="admin-section-loader" id="admin-section-loader" role="status" aria-live="polite" hidden>
+          <span><i class="ph-bold ph-spinner-gap ph-spin" aria-hidden="true"></i>Loading section…</span>
+        </div>
+        <section id="admin-area"></section>
+      </main>
     </section>`;
 
   const navCleanup = managerMode
@@ -789,6 +797,75 @@ async function renderAdminWorkspace(
     evaluateGlobalAlerts();
   }
 
+  function finishAdminSectionTransition(targetSection) {
+    if (!sectionTransitionPending || section !== targetSection) return;
+    if (sectionTransitionTimer !== null) {
+      clearTimeout(sectionTransitionTimer);
+      sectionTransitionTimer = null;
+    }
+
+    const nav = mount.querySelector("#admin-section-nav");
+    const loader = mount.querySelector("#admin-section-loader");
+    area.inert = false;
+    area.classList.remove("admin-area-exit", "admin-tab-content");
+    requestAnimationFrame(() => {
+      if (section !== targetSection) return;
+      area.classList.add("admin-tab-content");
+      if (loader) loader.hidden = true;
+      nav?.removeAttribute("aria-busy");
+      nav?.querySelectorAll("[data-section]").forEach(button => { button.disabled = false; });
+      sectionTransitionPending = false;
+    });
+  }
+
+  function transitionToSection(nextSection, sourceButton = null) {
+    if (!nextSection || nextSection === section || sectionTransitionPending) return;
+    const nav = mount.querySelector("#admin-section-nav");
+    const validTarget = nav?.querySelector(`[data-section="${nextSection}"]`);
+    if (!validTarget) return;
+    if (managerMode && !["overview", "orders", "tables"].includes(nextSection)) return;
+
+    sectionTransitionPending = true;
+    const loader = mount.querySelector("#admin-section-loader");
+    if (loader) loader.hidden = false;
+    nav?.setAttribute("aria-busy", "true");
+    nav?.querySelectorAll("[data-section]").forEach(button => { button.disabled = true; });
+    area.inert = true;
+    area.classList.remove("admin-tab-content");
+    area.classList.add("admin-area-exit");
+
+    // The selected tab responds immediately; allow a short exit frame before
+    // rendering its new section. Rapid taps are ignored while one switch is active.
+    section = nextSection;
+    if (["orders", "overview", "tables"].includes(nextSection)) {
+      if (sourceButton) {
+        sourceButton.style.color = "";
+        sourceButton.classList.remove("qty-pulse");
+      }
+      window.__tableAlerts = {};
+      if (window.clearGlobalNotification) window.clearGlobalNotification();
+    }
+    updateNavUI();
+
+    sectionTransitionTimer = window.setTimeout(() => {
+      sectionTransitionTimer = null;
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      const adminContent = mount.querySelector(".admin-content");
+      if (adminContent) adminContent.scrollTop = 0;
+      try {
+        renderSection();
+      } catch (error) {
+        console.error(`Admin section failed to render (${nextSection}):`, error);
+        area.innerHTML = `<section class="section-title-row"><div><h1>Could not open this section</h1><p>Please retry. ${escapeHtml(error?.message || "Unexpected rendering error.")}</p></div></section>`;
+        finishAdminSectionTransition(nextSection);
+        return;
+      }
+
+      if (lazyAdminSections.has(nextSection) && !managerMode) return;
+      requestAnimationFrame(() => requestAnimationFrame(() => finishAdminSectionTransition(nextSection)));
+    }, 70);
+  }
+
   if (managerMode) {
     mount.querySelector("#manager-workspaces")?.addEventListener("click", () => {
       window.__RMS_PANEL_ACCESS__ = null;
@@ -838,27 +915,9 @@ async function renderAdminWorkspace(
   });
 
   mount.querySelector("#admin-section-nav").addEventListener("click", event => {
-    const b = event.target.closest("[data-section]");
-    if (!b) return;
-    section = b.dataset.section;
-    
-    // PREMIUM UX: Automatically clear "New Activity" ghost alerts when the admin checks the dashboard!
-    if (section === "orders" || section === "overview" || section === "tables") {
-      b.style.color = "";
-      b.classList.remove("qty-pulse");
-      window.__tableAlerts = {}; // Wipe local temporary alerts
-      if (window.clearGlobalNotification) window.clearGlobalNotification();
-    }
-    
-    updateNavUI();
-    renderSection();
-    
-    // NATIVE APP BEHAVIOR: Instantly snap the page back to the absolute top
-    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
-    
-    // Failsafe: Reset the internal flex container if it caught any scroll momentum
-    const adminContent = mount.querySelector(".admin-content");
-    if (adminContent) adminContent.scrollTop = 0;
+    const button = event.target.closest("[data-section]");
+    if (!button || button.disabled) return;
+    transitionToSection(button.dataset.section, button);
   });
 
   async function reload() {
@@ -890,6 +949,7 @@ async function renderAdminWorkspace(
         .then(({ renderTopProductsDashboard }) => {
           if (!managerMode && section === "top-products") {
             renderTopProductsDashboard(area);
+            finishAdminSectionTransition("top-products");
           }
         })
         .catch(error => {
@@ -902,6 +962,7 @@ async function renderAdminWorkspace(
               </div>
             </section>
           `;
+          finishAdminSectionTransition("top-products");
         });
     }
 
@@ -910,6 +971,7 @@ async function renderAdminWorkspace(
         .then(({ renderIngredientUsageDashboard }) => {
           if (!managerMode && section === "ingredient-usage") {
             renderIngredientUsageDashboard(area);
+            finishAdminSectionTransition("ingredient-usage");
           }
         })
         .catch(error => {
@@ -922,6 +984,7 @@ async function renderAdminWorkspace(
               </div>
             </section>
           `;
+          finishAdminSectionTransition("ingredient-usage");
         });
     }
 
@@ -930,6 +993,7 @@ async function renderAdminWorkspace(
         .then(({ renderAuditDashboard }) => {
           if (!managerMode && section === "activity-audit") {
             renderAuditDashboard(area);
+            finishAdminSectionTransition("activity-audit");
           }
         })
         .catch(error => {
@@ -942,6 +1006,7 @@ async function renderAdminWorkspace(
               </div>
             </section>
           `;
+          finishAdminSectionTransition("activity-audit");
         });
     }
 
@@ -1921,7 +1986,7 @@ These estimates use saved stock movements and recipe-consumption records for the
           </div>
           ${missingRecipeProducts.length ? `<p style="margin-top:14px;color:var(--muted);font-size:12px;">${missingRecipeProducts.length} dishes do not yet have a recipe. They are not included in ingredient-consumption reporting until recipes are saved.</p>` : ""}
         `;
-        panel.querySelector("[data-open-menu-to-edit-recipes]")?.addEventListener("click", () => { section = "menu"; updateNavUI(); renderSection(); });
+        panel.querySelector("[data-open-menu-to-edit-recipes]")?.addEventListener("click", () => transitionToSection("menu"));
       } else if (activeView !== "ingredients") {
         panel.innerHTML = `
           <div class="inventory-view-panel-icon">
@@ -3242,7 +3307,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
         </div></article>
       </section>`;
     
-    area.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => { section = b.dataset.go; updateNavUI(); renderSection(); }));
+    area.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => transitionToSection(b.dataset.go)));
     
     area.querySelector("#overview-session-list")?.addEventListener("click", e => {
       const row = e.target.closest("[data-manage-session]");
@@ -3264,9 +3329,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           if (window.__tableAlerts) delete window.__tableAlerts[tableId];
           if (window.clearTableAlert) window.clearTableAlert(tableId);
           window.__autoOpenOrderTableId = tableId;
-          section = "orders";
-          updateNavUI();
-          renderSection();
+          transitionToSection("orders");
       }
     });
     
@@ -3729,9 +3792,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           if (window.__tableAlerts) delete window.__tableAlerts[tableId];
           if (window.clearTableAlert) window.clearTableAlert(tableId);
           window.__autoOpenOrderTableId = tableId;
-          section = "orders";
-          updateNavUI();
-          renderSection();
+          transitionToSection("orders");
       }
     });
   }
@@ -4089,6 +4150,9 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               .filter(c => c && c !== "Global" && c !== "Other"))];
             
             let localCart = new Map();
+            let catalogControlMap = new Map();
+            let catalogSubmitInFlight = false;
+            const catalogControlAnimations = new WeakMap();
             let searchQuery = "";
             let selectedCuisine = "All";
             let selectedSub = "All";
@@ -4113,68 +4177,83 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 return ["All", ...Array.from(subs).filter(Boolean).sort((a, b) => a.localeCompare(b))];
             }
 
-            // The DOM Updater: Animates quantities & updates cart without destroying HTML nodes
-            function updateAdminCatalogQuantities() {
-                const cartTotal = Array.from(localCart.values()).reduce((sum, item) => sum + (item.product.price * item.qty), 0);
-                const cartCount = Array.from(localCart.values()).reduce((sum, item) => sum + item.qty, 0);
+            // Keep quantity updates local to the changed row. Full synchronization is
+            // only needed after the catalog HTML has been rebuilt by a filter/search.
+            function updateAdminCatalogQuantities(changedProductId = null) {
+                let cartTotal = 0;
+                let cartCount = 0;
+                for (const item of localCart.values()) {
+                    cartTotal += item.product.price * item.qty;
+                    cartCount += item.qty;
+                }
 
-                host.querySelectorAll("[data-catalog-control]").forEach(control => {
+                const controls = changedProductId
+                    ? [catalogControlMap.get(changedProductId)].filter(Boolean)
+                    : catalogControlMap.values();
+
+                for (const control of controls) {
                     const id = control.dataset.catalogControl;
                     const qty = localCart.get(id)?.qty || 0;
-                    const valSpan = control.querySelector(".premium-qty-value");
+                    const value = control.querySelector(".premium-qty-value");
                     const incBtn = control.querySelector(".inc-btn");
-                    
-                    // Highlight the parent row when active
-                    const row = control.closest('.catalog-row');
-                    if (row) {
-                        row.style.background = qty > 0 ? "var(--cream-50)" : "#fff";
-                    }
+                    const row = control.closest(".catalog-row");
 
-                    if (qty <= 0) {
-                        control.classList.remove("is-active");
-                        if (valSpan) valSpan.textContent = "0";
-                        if (incBtn) { incBtn.classList.remove("catalog-inc"); incBtn.classList.add("catalog-add"); }
-                    } else {
-                        control.classList.add("is-active");
-                        if (valSpan) valSpan.textContent = qty;
-                        if (incBtn) { incBtn.classList.remove("catalog-add"); incBtn.classList.add("catalog-inc"); }
+                    control.classList.toggle("is-active", qty > 0);
+                    if (value && value.textContent !== String(qty)) value.textContent = String(qty);
+                    if (row) row.style.background = qty > 0 ? "var(--cream-50)" : "#fff";
+                    if (incBtn) {
+                        incBtn.classList.toggle("catalog-inc", qty > 0);
+                        incBtn.classList.toggle("catalog-add", qty <= 0);
                     }
-                });
+                }
 
                 const footerWrap = host.querySelector("#catalog-footer-wrap");
-                if (footerWrap) {
-                    if (cartCount > 0) {
-                        footerWrap.style.display = "block";
-                        footerWrap.innerHTML = `
-                            <button class="btn btn-primary" id="confirm-new-round" style="width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 0 16px; height: 50px; border-radius: 12px; font-size: 15px; box-shadow: 0 8px 24px rgba(25, 50, 28, 0.25);">
-                                <span style="display: flex; align-items: center; gap: 10px;"><div style="background: rgba(255,255,255,0.25); width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border-radius: 6px; font-size: 13px; font-weight: 900;">${cartCount}</div> Confirm Round</span>
-                                <span>${money(cartTotal, settings.currency_symbol)} <i class="ph-bold ph-arrow-right" style="margin-left: 6px; font-size: 16px;"></i></span>
-                            </button>
-                        `;
-                        
-                        const confirmBtn = footerWrap.querySelector("#confirm-new-round");
-                        confirmBtn.addEventListener("click", async () => {
-                            confirmBtn.disabled = true;
-                            confirmBtn.innerHTML = `<i class="ph-bold ph-spinner-gap ph-spin" style="font-size: 20px;"></i> <span>Sending to kitchen...</span>`;
-                            const itemsToSubmit = Array.from(localCart.values()).map(x => ({ id: x.product.id, quantity: x.qty }));
-                            try {
-                                const { error } = await supabase.rpc("create_pos_order", { 
-                                    p_restaurant_id: window.__ACTIVE_TENANT__.id,
-                                    p_order_type: 'dine_in', p_table_id: table.id, p_items: itemsToSubmit, p_note: "Admin Added Round", p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null 
-                                });
-                                if (error) throw error;
-                                showToast("Round Added", "Items sent to kitchen successfully.", "success");
-                                renderManager(); 
-                            } catch(err) {
-                                showToast("Error", err.message, "error");
-                                confirmBtn.disabled = false;
-                                confirmBtn.innerHTML = `Try Again`;
-                            }
-                        });
-                    } else {
-                        footerWrap.style.display = "none";
-                        footerWrap.innerHTML = "";
-                    }
+                if (!footerWrap) return;
+                if (cartCount <= 0) {
+                    footerWrap.style.display = "none";
+                    footerWrap.innerHTML = "";
+                    return;
+                }
+
+                footerWrap.style.display = "block";
+                let confirmBtn = footerWrap.querySelector("#confirm-new-round");
+                const buttonContent = `
+                    <span style="display:flex;align-items:center;gap:10px;"><span style="background:rgba(255,255,255,.25);width:26px;height:26px;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;font-weight:900;">${cartCount}</span> Confirm Round</span>
+                    <span>${money(cartTotal, settings.currency_symbol)} <i class="ph-bold ph-arrow-right" style="margin-left:6px;font-size:16px;"></i></span>
+                `;
+
+                if (!confirmBtn) {
+                    footerWrap.innerHTML = `<button class="btn btn-primary" id="confirm-new-round" style="width:100%;display:flex;justify-content:space-between;align-items:center;padding:0 16px;height:50px;border-radius:12px;font-size:15px;box-shadow:0 5px 14px rgba(25,50,28,.16);">${buttonContent}</button>`;
+                    confirmBtn = footerWrap.querySelector("#confirm-new-round");
+                    confirmBtn.addEventListener("click", async () => {
+                        if (catalogSubmitInFlight || !localCart.size) return;
+                        catalogSubmitInFlight = true;
+                        confirmBtn.disabled = true;
+                        confirmBtn.innerHTML = '<i class="ph-bold ph-spinner-gap ph-spin" style="font-size:20px;"></i><span>Sending to kitchen…</span>';
+                        const itemsToSubmit = Array.from(localCart.values()).map(item => ({ id: item.product.id, quantity: item.qty }));
+                        try {
+                            const { error } = await supabase.rpc("create_pos_order", {
+                                p_restaurant_id: window.__ACTIVE_TENANT__.id,
+                                p_order_type: "dine_in",
+                                p_table_id: table.id,
+                                p_items: itemsToSubmit,
+                                p_note: "Admin Added Round",
+                                p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null
+                            });
+                            if (error) throw error;
+                            showToast("Round Added", "Items sent to kitchen successfully.", "success");
+                            renderManager();
+                        } catch (error) {
+                            catalogSubmitInFlight = false;
+                            showToast("Error", error.message, "error");
+                            confirmBtn.disabled = false;
+                            confirmBtn.textContent = "Try Again";
+                        }
+                    });
+                } else if (!confirmBtn.disabled) {
+                    // Updating the existing button preserves its event listener and
+                    // avoids replacing the footer DOM on every quantity tap.
+                    confirmBtn.innerHTML = buttonContent;
                 }
             }
 
@@ -4251,7 +4330,11 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                     </div>
                 `;
 
-                // Instantly inject quantities & activate footer without destroying DOM transitions
+                // Index the rebuilt catalog once; rapid quantity taps then touch only
+                // the selected control instead of every product row.
+                catalogControlMap = new Map(
+                    Array.from(host.querySelectorAll("[data-catalog-control]"), control => [control.dataset.catalogControl, control])
+                );
                 updateAdminCatalogQuantities();
 
                 // Bind Search Input
@@ -4284,6 +4367,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 const listContainer = host.querySelector("#catalog-list-container");
                 if (listContainer) {
                     listContainer.addEventListener("click", (e) => {
+                        if (catalogSubmitInFlight) return;
                         const addBtn = e.target.closest(".catalog-add");
                         const incBtn = e.target.closest(".catalog-inc");
                         const decBtn = e.target.closest(".catalog-dec");
@@ -4296,13 +4380,18 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                             current.qty += 1;
                             localCart.set(id, current);
                             
-                            updateAdminCatalogQuantities();
-                            
-                            const control = btn.closest("[data-catalog-control]");
-                            if (control) {
+                            updateAdminCatalogQuantities(id);
+
+                            const control = catalogControlMap.get(id);
+                            if (control && !window.matchMedia("(prefers-reduced-motion: reduce)").matches && typeof control.animate === "function") {
+                                catalogControlAnimations.get(control)?.cancel();
+                                catalogControlAnimations.set(control, control.animate(
+                                    [{ transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }],
+                                    { duration: 145, easing: "cubic-bezier(.2,.7,.2,1)" }
+                                ));
+                            } else if (control && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
                                 control.classList.remove("qty-pulse");
-                                void control.offsetWidth;
-                                control.classList.add("qty-pulse");
+                                requestAnimationFrame(() => control.classList.add("qty-pulse"));
                             }
                         }
 
@@ -4314,14 +4403,19 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                                 if (current.qty <= 0) localCart.delete(id);
                                 else localCart.set(id, current);
                                 
-                                updateAdminCatalogQuantities();
-                                
+                                updateAdminCatalogQuantities(id);
+
                                 if (current.qty > 0) {
-                                    const control = decBtn.closest("[data-catalog-control]");
-                                    if (control) {
+                                    const control = catalogControlMap.get(id);
+                                    if (control && !window.matchMedia("(prefers-reduced-motion: reduce)").matches && typeof control.animate === "function") {
+                                        catalogControlAnimations.get(control)?.cancel();
+                                        catalogControlAnimations.set(control, control.animate(
+                                            [{ transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }],
+                                            { duration: 145, easing: "cubic-bezier(.2,.7,.2,1)" }
+                                        ));
+                                    } else if (control && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
                                         control.classList.remove("qty-pulse");
-                                        void control.offsetWidth;
-                                        control.classList.add("qty-pulse");
+                                        requestAnimationFrame(() => control.classList.add("qty-pulse"));
                                     }
                                 }
                             }
@@ -5641,7 +5735,12 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
          const ordersNavBtn = mount.querySelector('[data-section="orders"]');
          if (ordersNavBtn) {
            ordersNavBtn.style.color = "var(--gold-600)";
-           ordersNavBtn.classList.remove("qty-pulse"); void ordersNavBtn.offsetWidth; ordersNavBtn.classList.add("qty-pulse");
+           if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+             ordersNavBtn.animate?.(
+               [{ transform: "scale(1)" }, { transform: "scale(1.035)" }, { transform: "scale(1)" }],
+               { duration: 190, easing: "cubic-bezier(.2,.7,.2,1)" }
+             );
+           }
          }
       } else if (payload.eventType === 'UPDATE' && payload.new?.status === "closed" && payload.old?.status !== "closed") {
          showToast("Table Closed", `Table ${tableNo} was finalized and is now free.`, "success");
