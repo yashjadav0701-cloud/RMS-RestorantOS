@@ -21,6 +21,8 @@ test('Admin bill discounts are persisted with separate session and takeaway fiel
   assert.match(sql, /nullif\(v_session\.bill_subtotal, 0\)/i);
   assert.match(sql, /fixed discount cannot exceed the bill subtotal/i);
   assert.match(sql, /admin_bill_discount_updated/i);
+  assert.match(sql, /v_value > 0 AND v_reason IS NULL THEN/i);
+  assert.match(sql, /A reason is required for a non-zero discount/i);
   assert.match(sql, /FUNCTION public\.generate_cashier_bill\(p_panel_token text,p_order_id uuid DEFAULT NULL,p_session_id uuid DEFAULT NULL\)/i);
   assert.match(sql, /Session discount persists across Cashier reprints/i);
   assert.match(sql, /REVOKE ALL ON FUNCTION public\.apply_admin_bill_discount\(uuid,uuid,text,numeric,text,text\) FROM PUBLIC, anon/i);
@@ -34,6 +36,9 @@ test('Admin can apply or clear discounts only from an Admin grant and the receip
   assert.match(admin, /p_discount_type: type/);
   assert.match(admin, /p_discount_value: value/);
   assert.match(admin, /p_reason: reason/);
+  assert.match(admin, /Reason \* \(required for non-zero discounts\)/);
+  assert.match(admin, /value > 0 && !reason/);
+  assert.match(admin, /data-admin-discount-error/);
   assert.match(receipt, /discountLineHtml/);
   assert.match(receipt, /Discount \(/);
   assert.match(receipt, /thermal-discount/);

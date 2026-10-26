@@ -106,6 +106,9 @@ BEGIN
   IF v_reason IS NOT NULL AND length(v_reason) > 300 THEN
     RAISE EXCEPTION 'Discount reason must be 300 characters or fewer.';
   END IF;
+  IF v_value > 0 AND v_reason IS NULL THEN
+    RAISE EXCEPTION 'A reason is required for a non-zero discount.';
+  END IF;
 
   IF p_session_id IS NOT NULL THEN
     SELECT ds.* INTO v_session

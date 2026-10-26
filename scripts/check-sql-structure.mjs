@@ -13,7 +13,8 @@ const files = [
   path.join(root, 'sql', 'ADMIN_KOT_READY_ALIGNMENT_AUDIT.sql'),
   path.join(root, 'sql', 'ADMIN_KOT_GST_INVENTORY_ENHANCEMENTS.sql'),
   path.join(root, 'sql', 'AUDIT_KOT_GST_INVENTORY_ENHANCEMENTS.sql'),
-  path.join(root, 'sql', 'GSTIN_ONE_TIME_LOCK_PATCH.sql')
+  path.join(root, 'sql', 'GSTIN_ONE_TIME_LOCK_PATCH.sql'),
+  path.join(root, 'sql', 'TABLEFORGE_RELEASE_SAFETY_PATCH.sql')
 ];
 const sources = await Promise.all(files.map(async (file) => ({ file, sql: await readFile(file, 'utf8') })));
 

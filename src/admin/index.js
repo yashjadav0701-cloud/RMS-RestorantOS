@@ -772,7 +772,9 @@ async function renderAdminWorkspace(
       const rows = productRecipeDrafts.get(recipe.product_id) || [];
       rows.push({
         ingredient_id: recipe.ingredient_id,
-        quantity_per_serving: String(recipe.quantity_per_serving)
+        quantity_per_serving: String(recipe.quantity_per_serving),
+        is_estimate: recipe.is_estimate !== false,
+        source_note: recipe.source_note || ""
       });
       productRecipeDrafts.set(recipe.product_id, rows);
     }
@@ -2266,7 +2268,15 @@ These estimates use saved stock movements and recipe-consumption records for the
               <tbody>
                 ${activeProducts.length ? activeProducts.map(item => {
                   const recipe = productRecipeDrafts.get(item.id) || [];
-                  return `<tr><td><strong>${escapeHtml(item.name)}</strong><div style="color:var(--muted);font-size:11px;margin-top:3px;">${escapeHtml(item.category || "Uncategorized")}</div></td><td>${recipe.length ? recipe.map(row => `${escapeHtml(ingredientDrafts.find(ingredient => ingredient.id === row.ingredient_id)?.name || "Unknown ingredient")} · ${escapeHtml(row.quantity_per_serving)} per serving`).join("<br>") : "No recipe saved"}</td><td><span style="font-size:11px;font-weight:850;color:${recipe.length ? "var(--forest-800)" : "var(--danger)"};">${recipe.length ? "Configured" : "Missing recipe"}</span></td></tr>`;
+                  const verified = recipe.length > 0 &&
+                    recipe.every(row => row.is_estimate === false) &&
+                    recipe.every(row => {
+                      const note = String(row.source_note || "").trim();
+                      return note.length > 0 && note !== "Reviewed by Admin.";
+                    });
+                  const stateLabel = !recipe.length ? "Missing recipe" : verified ? "Verified" : "Estimated";
+                  const stateColor = !recipe.length ? "var(--danger)" : verified ? "var(--forest-800)" : "var(--muted)";
+                  return `<tr><td><strong>${escapeHtml(item.name)}</strong><div style="color:var(--muted);font-size:11px;margin-top:3px;">${escapeHtml(item.category || "Uncategorized")}</div></td><td>${recipe.length ? recipe.map(row => `${escapeHtml(ingredientDrafts.find(ingredient => ingredient.id === row.ingredient_id)?.name || "Unknown ingredient")} · ${escapeHtml(row.quantity_per_serving)} per serving`).join("<br>") : "No recipe saved"}</td><td><span style="font-size:11px;font-weight:850;color:${stateColor};">${escapeHtml(stateLabel)}</span></td></tr>`;
                 }).join("") : `<tr><td colspan="3"><div style="padding:20px;text-align:center;color:var(--muted);">No active menu dishes are available for recipe coverage.</div></td></tr>`}
               </tbody>
             </table>
@@ -3389,6 +3399,9 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
     const currentDiscountAmount = Number(
       order.bill_discount_amount ?? order.discount_amount ?? order.dining_sessions?.bill_discount_amount ?? 0
     );
+    const currentDiscountReason = String(
+      order.bill_discount_reason ?? order.discount_reason ?? order.dining_sessions?.bill_discount_reason ?? ""
+    );
 
     if (canApplyBillDiscount) {
       extraActions.push({
@@ -3420,9 +3433,10 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 <label class="field"><span data-admin-discount-value-label>Discount percentage *</span>
                   <input data-admin-discount-value type="number" min="0" max="${currentType === "percent" ? "100" : subtotal.toFixed(2)}" step="0.01" inputmode="decimal" value="${currentDiscountAmount > 0 ? escapeHtml(String(currentDiscountValue)) : ""}" placeholder="${currentType === "percent" ? "e.g. 10" : "e.g. 100"}" required />
                 </label>
-                <label class="field"><span>Reason (optional, saved in audit log)</span>
-                  <input data-admin-discount-reason type="text" maxlength="300" placeholder="e.g. Customer loyalty or service recovery" />
+                <label class="field"><span>Reason * (required for non-zero discounts)</span>
+                  <input data-admin-discount-reason type="text" maxlength="300" value="${escapeHtml(currentDiscountReason)}" placeholder="e.g. Customer loyalty or service recovery" autocomplete="off" />
                 </label>
+                <p class="tf-admin-discount-error" data-admin-discount-error role="alert" hidden></p>
                 <div class="tf-admin-discount-preview" data-admin-discount-preview role="status">Enter a discount to see the estimated reduction.</div>
                 <p class="tf-admin-discount-note">Discount is applied before GST. The server recalculates tax and rounding. Enter 0 to remove an existing discount. Paid or closed bills cannot be changed.</p>
               </div>
@@ -3439,11 +3453,24 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                   const reason = String(root.querySelector("[data-admin-discount-reason]")?.value || "").trim();
                   const value = rawValue === "" ? NaN : Number(rawValue);
                   const errorNode = root.querySelector("[data-admin-discount-error]");
+                  const setDiscountValidationError = (message) => {
+                    if (errorNode) {
+                      errorNode.textContent = message;
+                      errorNode.hidden = !message;
+                    } else if (message) {
+                      showToast("Invalid discount", message, "error");
+                    }
+                  };
                   if (!Number.isFinite(value) || value < 0 || (type === "percent" && value > 100) || (type === "amount" && value > subtotal)) {
-                    if (errorNode) errorNode.textContent = "Enter a valid discount. Percentage must be 0–100%; rupee discount cannot exceed the subtotal.";
-                    else showToast("Invalid discount", "Percentage must be 0–100%; rupee discount cannot exceed the subtotal.", "error");
+                    setDiscountValidationError("Enter a valid discount. Percentage must be 0–100%; rupee discount cannot exceed the subtotal.");
                     return;
                   }
+                  if (value > 0 && !reason) {
+                    setDiscountValidationError("Enter a reason before applying a non-zero discount.");
+                    root.querySelector("[data-admin-discount-reason]")?.focus();
+                    return;
+                  }
+                  setDiscountValidationError("");
                   const access = window.__RMS_PANEL_ACCESS__;
                   if (!access?.token || access.panelId !== "admin" || !Number.isFinite(access.expiresAt) || access.expiresAt <= Date.now()) {
                     showToast("Admin access expired", "Verify the Admin PIN again before changing a bill.", "error");
@@ -3518,6 +3545,8 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
           const valueControl = discountRoot.querySelector("[data-admin-discount-value]");
           const valueLabel = discountRoot.querySelector("[data-admin-discount-value-label]");
           const preview = discountRoot.querySelector("[data-admin-discount-preview]");
+          const reasonControl = discountRoot.querySelector("[data-admin-discount-reason]");
+          const errorNode = discountRoot.querySelector("[data-admin-discount-error]");
           const updateDiscountPreview = () => {
             const type = typeControl?.value || "percent";
             const raw = valueControl?.value;
@@ -3533,8 +3562,20 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               ? `Estimated discount: ${settings.currency_symbol || "₹"}${amount.toFixed(2)}. GST and final rounding are recalculated when saved.`
               : "No discount will be applied. This removes any current discount.";
           };
-          typeControl?.addEventListener("change", updateDiscountPreview);
-          valueControl?.addEventListener("input", updateDiscountPreview);
+          const clearDiscountValidationError = () => {
+            if (!errorNode) return;
+            errorNode.textContent = "";
+            errorNode.hidden = true;
+          };
+          typeControl?.addEventListener("change", () => {
+            updateDiscountPreview();
+            clearDiscountValidationError();
+          });
+          valueControl?.addEventListener("input", () => {
+            updateDiscountPreview();
+            clearDiscountValidationError();
+          });
+          reasonControl?.addEventListener("input", clearDiscountValidationError);
           updateDiscountPreview();
         }
       });
@@ -5848,6 +5889,20 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               </p>
             </div>
 
+            <div style="margin-top:12px;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--paper);">
+              <label style="display:flex;align-items:flex-start;gap:9px;cursor:pointer;">
+                <input type="checkbox" data-recipe-verified style="width:17px;height:17px;margin-top:2px;accent-color:var(--forest-700);">
+                <span style="display:block;">
+                  <strong style="display:block;font-size:12px;color:var(--ink);">I verified these quantities against actual kitchen measurements</strong>
+                  <small style="display:block;margin-top:4px;color:var(--muted);line-height:1.5;">Leave unchecked for estimated recipes. Strict inventory stays unavailable until active recipes are verified.</small>
+                </span>
+              </label>
+              <label class="field" style="margin-top:10px;">
+                <span>Verification source / note <span style="color:var(--muted);font-weight:500;">(required when verified)</span></span>
+                <input class="field-input" data-recipe-verification-note type="text" maxlength="300" placeholder="e.g. weighed in kitchen on 26 Oct 2026" disabled>
+              </label>
+            </div>
+
             <div
               class="product-recipe-list"
               data-product-recipe-list
@@ -5869,7 +5924,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               aria-live="polite"
               style="margin:13px 0 0;color:var(--muted);font-size:12px;line-height:1.6;"
             >
-              Recipe assignments are saved to the database and drive consumption tracking when dishes are marked Served.
+              In strict inventory mode, verified recipe quantities are deducted when preparation starts. Unverified recipes stay estimated and do not enable strict inventory.
             </p>
           </section>
         </form>
@@ -5882,6 +5937,29 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
 
             const recipeSelection = [];
             const seenIngredientIds = new Set();
+
+            const recipeVerified = Boolean(root.querySelector("[data-recipe-verified]")?.checked);
+            const recipeSourceNote = String(
+              root.querySelector("[data-recipe-verification-note]")?.value || ""
+            ).trim();
+            const recipeStatusNode = root.querySelector("[data-product-recipe-status]");
+
+            if (recipeVerified && productRecipeSelection.length === 0) {
+              switchProductTab("ingredients");
+              if (recipeStatusNode) {
+                recipeStatusNode.textContent = "Add recipe ingredients before marking this recipe verified.";
+              }
+              return;
+            }
+
+            if (recipeVerified && (!recipeSourceNote || recipeSourceNote.length > 300)) {
+              switchProductTab("ingredients");
+              if (recipeStatusNode) {
+                recipeStatusNode.textContent = "Enter a verification source/note of 1–300 characters before marking the recipe verified.";
+              }
+              root.querySelector("[data-recipe-verification-note]")?.focus();
+              return;
+            }
 
             for (const item of productRecipeSelection) {
               const ingredient = ingredientDrafts.find(
@@ -5915,7 +5993,11 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 ingredient_id: ingredient.id,
                 ingredient_name: ingredient.name,
                 quantity_per_serving: quantity,
-                unit: ingredient.baseUnit
+                unit: ingredient.baseUnit,
+                is_estimate: !recipeVerified,
+                source_note: recipeVerified
+                  ? recipeSourceNote
+                  : "Not yet verified against actual kitchen measurements; quantity remains estimated."
               });
             }
 
@@ -6027,12 +6109,45 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
     const productForm = modal.root.querySelector("#product-form");
     const recipeList = modal.root.querySelector("[data-product-recipe-list]");
     const recipeStatus = modal.root.querySelector("[data-product-recipe-status]");
+    const recipeVerifiedToggle = modal.root.querySelector("[data-recipe-verified]");
+    const recipeVerificationNote = modal.root.querySelector("[data-recipe-verification-note]");
     let previewUrl = null;
 
     // Load in-memory recipe drafts when editing an existing product.
     let productRecipeSelection = (
       product?.id ? productRecipeDrafts.get(product.id) || [] : []
     ).map(item => ({ ...item }));
+
+    const savedRecipeVerified = productRecipeSelection.length > 0 &&
+      productRecipeSelection.every(item => item.is_estimate === false) &&
+      productRecipeSelection.every(item => {
+        const note = String(item.source_note || "").trim();
+        return note.length > 0 && note !== "Reviewed by Admin.";
+      });
+
+    if (recipeVerifiedToggle) recipeVerifiedToggle.checked = savedRecipeVerified;
+
+    if (recipeVerificationNote) {
+      recipeVerificationNote.disabled = !savedRecipeVerified;
+      recipeVerificationNote.value = savedRecipeVerified
+        ? String(productRecipeSelection.find(item => item.source_note)?.source_note || "")
+        : "";
+    }
+
+    recipeVerifiedToggle?.addEventListener("change", () => {
+      const verified = Boolean(recipeVerifiedToggle.checked);
+
+      if (recipeVerificationNote) {
+        recipeVerificationNote.disabled = !verified;
+        if (!verified) recipeVerificationNote.value = "";
+      }
+
+      if (recipeStatus) {
+        recipeStatus.textContent = verified
+          ? "Enter a verification source note before saving this recipe as verified."
+          : "This recipe will remain marked as estimated until actual kitchen quantities are confirmed.";
+      }
+    });
 
     function switchProductTab(tabName) {
       modal.root.querySelectorAll("[data-product-tab]").forEach(tab => {

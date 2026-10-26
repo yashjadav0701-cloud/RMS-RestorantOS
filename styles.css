@@ -26,7 +26,36 @@
 html,body{width:100%;max-width:100vw;min-height:100%;margin:0;background-color:var(--cream-100)!important;color:var(--forest-950)!important;overscroll-behavior-y:auto!important;overflow:visible!important}
 body{background:var(--cream-100)!important;color:var(--forest-950)!important;font-family:var(--ui-font);-webkit-font-smoothing:antialiased!important;text-rendering:optimizeLegibility}
 body.drawer-open,body.modal-open{overflow:hidden!important}
-button,input,select,textarea{font:inherit}button{border:0}button:disabled{cursor:not-allowed;opacity:.46}img{display:block;max-width:100%}input,textarea,select{max-width:100%}
+button,input,select,textarea{font:inherit}
+button{border:0}
+button:disabled{cursor:not-allowed;opacity:.46}
+img{display:block;max-width:100%}
+input,textarea,select{max-width:100%;font-family:inherit}
+input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not([type="file"]),
+textarea,
+select{
+  color:var(--ink);
+  background-color:var(--paper);
+  border-color:var(--line);
+  border-radius:11px;
+  accent-color:var(--forest-700);
+}
+input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not([type="file"]):focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+button:focus-visible{
+  outline:2px solid var(--forest-500);
+  outline-offset:2px;
+}
+input:disabled,
+textarea:disabled,
+select:disabled{
+  opacity:.68;
+  cursor:not-allowed;
+}
+select{
+  color-scheme:light;
+}
 .is-hidden,.hidden{display:none!important}
 .noscript{position:fixed;inset:14px;z-index:9999;padding:18px;border-radius:16px;background:var(--danger-soft);color:#6e211d;box-shadow:var(--shadow-strong)}
 #app{width:100%;max-width:100vw;min-height:100vh}
@@ -3653,6 +3682,18 @@ h3 {
   font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
+.tf-admin-discount-error {
+  margin: -4px 0 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, #b42318 30%, var(--line));
+  border-radius: 10px;
+  background: color-mix(in srgb, #b42318 7%, var(--paper));
+  color: #a21d16;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.5;
+}
+.tf-admin-discount-error[hidden] { display: none !important; }
 .tf-admin-discount-preview {
   padding: 12px 14px;
   border: 1px solid var(--line);

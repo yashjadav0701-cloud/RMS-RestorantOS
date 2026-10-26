@@ -35,11 +35,14 @@ test("every operational panel has a sign-out action and panel-only sign-out sema
   assert.match(admin, /admin-logout[\s\S]{0,220}requestPanelSignOut/);
 });
 
-test("back navigation prompts before leaving an active PIN-protected workspace", async () => {
+test("back navigation uses a system-themed modal instead of browser confirmation", async () => {
   const router = await source("src/core/router.js");
   assert.match(router, /function guardLeavingPanel\(/);
-  assert.match(router, /You are leaving the current workspace/);
+  assert.match(router, /showWorkspaceLeaveConfirmation/);
+  assert.match(router, /role="alertdialog"/);
+  assert.match(router, /data-workspace-leave-confirm/);
   assert.match(router, /lastGrantedWorkspaceUrl/);
+  assert.doesNotMatch(router, /window\.confirm\s*\(/);
 });
 
 test("shared date range presets create valid local inclusive date ranges", () => {

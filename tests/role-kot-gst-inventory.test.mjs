@@ -68,3 +68,19 @@ test('workflow settings audit call passes all required audit arguments', async (
   const sql = await read('sql/ADMIN_KOT_GST_INVENTORY_ENHANCEMENTS.sql');
   assert.match(sql, /_tableforge_audit_event\(v_restaurant_id,'restaurant_workflow_settings_updated',[\s\S]*?jsonb_build_object\('method_count',cardinality\(v_methods\)\)\)/);
 });
+
+
+test('release safety patch requires discount reasons and blocks estimated or unavailable inventory recipes', async () => {
+  const sql = await read('sql/TABLEFORGE_RELEASE_SAFETY_PATCH.sql');
+  assert.match(sql, /BEGIN;/i);
+  assert.match(sql, /DO \$preflight\$/i);
+  assert.match(sql, /to_regprocedure\('public\.apply_admin_bill_discount\(uuid,uuid,text,numeric,text,text\)'\)/i);
+  assert.match(sql, /v_value > 0 AND v_reason IS NULL/i);
+  assert.match(sql, /Strict inventory cannot be enabled while estimated recipes remain/i);
+  assert.match(sql, /missing, inactive, or cross-restaurant ingredient/i);
+  assert.match(sql, /opening stock is recorded for every ingredient used by an active recipe/i);
+  assert.match(sql, /m\.movement_type='opening_stock'/i);
+  assert.match(sql, /coalesce\(r\.is_estimate,true\) OR i\.id IS NULL OR NOT i\.is_active/i);
+  assert.match(sql, /IF NOT FOUND THEN\s+RAISE EXCEPTION 'Recipe ingredient % is no longer active/i);
+  assert.match(sql, /COMMIT;/i);
+});

@@ -59,3 +59,11 @@ These are local static/source tests. They are **not** proof that PostgreSQL acce
 ## Release status
 
 **Not production-cleared yet.** No PostgreSQL/Supabase execution or browser end-to-end test was available in the local workspace. This handoff is ready for a staging migration and integration-validation pass, not a guarantee of flawless live behavior.
+
+## Latest release safety patch
+
+For a database already running the previously audited TableForge schema and V3 guards, run `sql/TABLEFORGE_RELEASE_SAFETY_PATCH.sql` once in the Supabase SQL Editor. It performs a preflight before replacing three existing functions, is wrapped in one transaction, and does not alter historical orders, dining sessions, recipes, or stock movements. If preflight fails, stop and inspect the reported schema mismatch rather than running a broader migration blindly.
+
+This patch makes the Admin discount RPC require a reason for non-zero discounts; prevents strict inventory activation when active recipes reference missing, inactive, cross-restaurant, or estimated ingredients or lack opening-stock entries; and applies recipe validation at the first Preparing transition. Inventory remains disabled by default and must not be enabled until the real recipes and opening stock have been verified.
+
+After running the patch, redeploy the application ZIP so the Admin discount form displays and validates the reason field consistently with the database.

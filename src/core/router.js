@@ -182,10 +182,110 @@ export function startRouter({ mount }) {
 
   let lastGrantedWorkspaceUrl = "";
 
+  let leaveConfirmationOpen = false;
+
   function mayOpenWorkspace(panelId, access) {
     if (!access || !panelId) return false;
     if (access.panelId === panelId) return true;
     return access.panelId === "manager" && ["captain", "kot", "cashier"].includes(panelId);
+  }
+
+  function showWorkspaceLeaveConfirmation() {
+    if (leaveConfirmationOpen) return;
+    leaveConfirmationOpen = true;
+
+    const root = document.createElement("div");
+    root.className = "modal-backdrop workspace-leave-backdrop";
+    root.style.placeItems = "center";
+    root.style.zIndex = "5000";
+    root.innerHTML = `
+      <section class="app-modal workspace-leave-modal" role="alertdialog" aria-modal="true" aria-labelledby="workspace-leave-title" aria-describedby="workspace-leave-copy">
+        <header class="modal-head">
+          <div class="modal-title-wrap">
+            <span class="modal-kicker"><i class="ph ph-shield-check"></i>${escapeHtml(window.__ACTIVE_TENANT__?.name || "TableForge")}</span>
+            <h2 id="workspace-leave-title">Leave this workspace?</h2>
+            <p>Your current panel access will be locked.</p>
+          </div>
+          <div class="danger-confirm-icon" aria-hidden="true"><i class="ph ph-sign-out"></i></div>
+        </header>
+        <div class="modal-body">
+          <div class="danger-confirm">
+            <p id="workspace-leave-copy">Returning to workspaces will end this panel's temporary access. Your restaurant account will remain signed in.</p>
+            <div class="modal-form-note warning"><i class="ph ph-shield-warning"></i><span>Financial and administrative panels should be locked when you leave the workstation.</span></div>
+          </div>
+        </div>
+        <footer class="modal-actions">
+          <button class="btn btn-quiet" type="button" data-workspace-leave-cancel><i class="ph ph-arrow-left"></i>Stay here</button>
+          <button class="btn btn-danger" type="button" data-workspace-leave-confirm><i class="ph ph-lock-key"></i>Lock panel &amp; return</button>
+        </footer>
+      </section>`;
+
+    const close = () => {
+      root.remove();
+      document.body.classList.remove("modal-open");
+      document.removeEventListener("keydown", onKeyDown);
+      leaveConfirmationOpen = false;
+    };
+
+    const stay = () => {
+      close();
+      if (lastGrantedWorkspaceUrl) {
+        history.replaceState({}, "", lastGrantedWorkspaceUrl);
+      }
+    };
+
+    const leave = () => {
+      window.__RMS_PANEL_ACCESS__ = null;
+      window.__RMS_PANEL_MANAGEMENT_TOKEN__ = null;
+      window.__RMS_PANEL_PIN_MANAGEMENT__ = null;
+      history.replaceState({}, "", `${location.pathname}${location.search}#/panels`);
+      lastGrantedWorkspaceUrl = "";
+      close();
+      window.dispatchEvent(new Event("rms:navigate"));
+    };
+
+    const onKeyDown = event => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        stay();
+        return;
+      }
+
+      if (event.key === "Tab") {
+        const buttons = [...root.querySelectorAll("button:not([disabled])")];
+        if (!buttons.length) return;
+
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    root.addEventListener("click", event => {
+      if (
+        event.target === root ||
+        event.target.closest("[data-workspace-leave-cancel]")
+      ) {
+        stay();
+        return;
+      }
+
+      if (event.target.closest("[data-workspace-leave-confirm]")) {
+        leave();
+      }
+    });
+
+    document.body.appendChild(root);
+    document.body.classList.add("modal-open");
+    document.addEventListener("keydown", onKeyDown);
+    root.querySelector("[data-workspace-leave-cancel]")?.focus();
   }
 
   function guardLeavingPanel() {
@@ -205,18 +305,8 @@ export function startRouter({ mount }) {
     }
 
     if (!lastGrantedWorkspaceUrl) return true;
-    const leave = window.confirm("You are leaving the current workspace. Sign out of this panel and return to workspaces?");
-    if (!leave) {
-      history.replaceState({}, "", lastGrantedWorkspaceUrl);
-      return false;
-    }
-
-    window.__RMS_PANEL_ACCESS__ = null;
-    window.__RMS_PANEL_MANAGEMENT_TOKEN__ = null;
-    window.__RMS_PANEL_PIN_MANAGEMENT__ = null;
-    history.replaceState({}, "", `${location.pathname}${location.search}#/panels`);
-    lastGrantedWorkspaceUrl = "";
-    return true;
+    showWorkspaceLeaveConfirmation();
+    return false;
   }
 
   const rerender = () => {
