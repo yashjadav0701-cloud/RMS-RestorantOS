@@ -32,7 +32,7 @@ test('workflow configuration and inventory policy are scoped to a restaurant', (
   assert.match(sql, /CREATE TABLE IF NOT EXISTS public\.restaurant_workflow_settings/);
   assert.match(sql, /PRIMARY KEY REFERENCES public\.restaurants\(id\)/);
   assert.match(sql, /_tableforge_validate_panel_token\(p_panel_token, ARRAY\['admin'\]\)/);
-  assert.match(sql, /inventory_mode IN \('disabled','strict'\)/);
+  assert.match(sql, /inventory_mode IN \('disabled','automatic','strict'\)/);
 });
 
 test('strict inventory snapshots and consumes recipes at first Preparing transition', () => {

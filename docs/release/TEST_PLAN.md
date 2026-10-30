@@ -202,6 +202,10 @@
 | K08 | Low-stock threshold | Move stock below threshold. | Correct warning appears for that tenant only. | BLOCKED |
 | K09 | Forecast | Generate usage/forecast view. | Forecast labels data window and avoids misleading output for insufficient data. | NOT RUN |
 | K10 | Concurrent stock changes | Two users update stock simultaneously. | No lost updates or negative stock unless explicitly allowed. | BLOCKED |
+| K11 | Automatic estimated deduction | With inventory mode `automatic`, prepare a dish whose saved recipe is marked estimated. | Stock ledger creates one `sale` movement per ingredient with `recipe_is_estimated=true`; Ingredient Usage shows “Deducted · estimated recipe”. | NOT RUN |
+| K12 | Non-blocking shortage | In a staging tenant, set an ingredient balance below the recipe requirement, then start the dish in `automatic` mode. | Kitchen/Ready succeeds; ledger records the full saved recipe quantity; balance may become negative and is displayed as a shortage. | NOT RUN |
+| K13 | Strict mode remains optional | Attempt to enable `strict` with estimated recipes, missing opening stock or active orders. | Strict mode is rejected with blockers; Automatic mode remains available and operational. | NOT RUN |
+| K14 | No retroactive deduction | Enable `automatic` after an item already has a usage snapshot but no sale movement, then use Undo Ready/Ready. | Existing snapshot is not deducted retroactively and no duplicate sale movement appears. | NOT RUN |
 
 ## L. Reports, analytics, and audit
 

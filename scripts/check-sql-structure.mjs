@@ -14,7 +14,15 @@ const files = [
   path.join(root, 'sql', 'ADMIN_KOT_GST_INVENTORY_ENHANCEMENTS.sql'),
   path.join(root, 'sql', 'AUDIT_KOT_GST_INVENTORY_ENHANCEMENTS.sql'),
   path.join(root, 'sql', 'GSTIN_ONE_TIME_LOCK_PATCH.sql'),
-  path.join(root, 'sql', 'TABLEFORGE_RELEASE_SAFETY_PATCH.sql')
+  path.join(root, 'sql', 'TABLEFORGE_RELEASE_SAFETY_PATCH.sql'),
+  path.join(root, 'sql', 'DATE_RANGE_REPORT_PATCH.sql'),
+  path.join(root, 'sql', 'POST_MIGRATION_VALIDATION.sql'),
+  path.join(root, 'sql', 'INGREDIENT_USAGE_RELIABILITY_PATCH.sql'),
+  path.join(root, 'sql', 'INGREDIENT_USAGE_ALWAYS_CALCULATE_PATCH.sql'),
+  path.join(root, 'sql', 'KOT_READY_SNAPSHOT_VARIABLE_HOTFIX.sql'),
+  path.join(root, 'sql', 'VERIFY_KOT_READY_HOTFIX.sql'),
+  path.join(root, 'sql', 'VERIFY_INGREDIENT_USAGE_ALWAYS_CALCULATE.sql'),
+  path.join(root, 'sql', 'VERIFY_INGREDIENT_USAGE_READINESS.sql')
 ];
 const sources = await Promise.all(files.map(async (file) => ({ file, sql: await readFile(file, 'utf8') })));
 

@@ -838,9 +838,7 @@ export async function render({ mount, route }) {
   searchInput.addEventListener("input", event => { searchTerm = event.target.value.trim().toLowerCase(); renderProducts(); });
   
   if (isCustomerMode) {
-    mount.querySelector("#customer-live-tab").addEventListener("click", () => openLiveTabDashboard());
-  } else {
-    state.setOrderType("dine_in");
+    mount.querySelector("#customer-live-tab")?.addEventListener("click", () => openLiveTabDashboard());
   }
 
   mount.querySelector("#pos-next").addEventListener("click", openReview);

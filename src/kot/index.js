@@ -896,7 +896,7 @@ export async function render({ mount }) {
     } catch (error) {
       console.error("KOT status update failed:", error);
       feedbackNode.textContent = "";
-      errorNode.textContent =
+      errorNode.textContent = String(error?.message || "").trim() ||
         "The dish status could not be changed. Refresh and try again.";
     } finally {
       busyItems.delete(itemId);

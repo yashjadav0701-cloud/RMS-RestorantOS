@@ -1,0 +1,284 @@
+{
+  "generated_from": "current frontend source and supplied live database metadata export",
+  "frontend_distinct_rpc_names": 42,
+  "database_routines": 41,
+  "rpc_calls": {
+    "admin_mutate_resource": {
+      "locations": [
+        "src/admin/index.js:3068",
+        "src/admin/index.js:3077",
+        "src/admin/index.js:3130",
+        "src/admin/index.js:4474",
+        "src/admin/index.js:4691",
+        "src/admin/index.js:4753",
+        "src/admin/index.js:4780",
+        "src/admin/index.js:4940",
+        "src/admin/index.js:5251"
+      ],
+      "present_in_live_catalog": false
+    },
+    "admin_record_inventory_movement": {
+      "locations": [
+        "src/admin/index.js:2020"
+      ],
+      "present_in_live_catalog": false
+    },
+    "admin_save_ingredient": {
+      "locations": [
+        "src/admin/index.js:2540"
+      ],
+      "present_in_live_catalog": false
+    },
+    "admin_set_panel_pin": {
+      "locations": [
+        "src/admin/panelPinManager.js:816",
+        "src/admin/index.js:4618"
+      ],
+      "present_in_live_catalog": false
+    },
+    "admin_set_product_recipe": {
+      "locations": [
+        "src/admin/index.js:5272"
+      ],
+      "present_in_live_catalog": false
+    },
+    "authorize_panel_pin_management": {
+      "locations": [
+        "src/admin/panelPinManager.js:682",
+        "src/admin/index.js:4606"
+      ],
+      "present_in_live_catalog": false
+    },
+    "cancel_order_item": {
+      "locations": [
+        "src/pos/index.js:dynamic cancellation RPC selection"
+      ],
+      "present_in_live_catalog": false
+    },
+    "close_empty_dining_session": {
+      "locations": [
+        "src/admin/index.js:3766"
+      ],
+      "present_in_live_catalog": true
+    },
+    "complete_session_payment": {
+      "locations": [
+        "src/admin/index.js:2930",
+        "src/admin/index.js:4277",
+        "src/cashier/index.js:dynamic payment RPC selection"
+      ],
+      "present_in_live_catalog": true
+    },
+    "complete_takeaway_payment": {
+      "locations": [
+        "src/cashier/index.js:dynamic payment RPC selection"
+      ],
+      "present_in_live_catalog": false
+    },
+    "create_pos_order": {
+      "locations": [
+        "src/admin/index.js:4072",
+        "src/pos/index.js:1946"
+      ],
+      "present_in_live_catalog": true
+    },
+    "decide_dish_cancellation": {
+      "locations": [
+        "src/admin/cancellationApprovals.js:518"
+      ],
+      "present_in_live_catalog": false
+    },
+    "delete_pos_order": {
+      "locations": [
+        "src/admin/index.js:2892"
+      ],
+      "present_in_live_catalog": true
+    },
+    "ensure_customer_session": {
+      "locations": [
+        "src/pos/index.js:350",
+        "src/pos/index.js:501"
+      ],
+      "present_in_live_catalog": true
+    },
+    "generate_cashier_bill": {
+      "locations": [
+        "src/cashier/index.js:575"
+      ],
+      "present_in_live_catalog": false
+    },
+    "generate_takeaway_bill": {
+      "locations": [
+        "src/pos/index.js:2227"
+      ],
+      "present_in_live_catalog": false
+    },
+    "get_admin_cancellation_requests": {
+      "locations": [
+        "src/admin/cancellationApprovals.js:412"
+      ],
+      "present_in_live_catalog": false
+    },
+    "get_admin_settings": {
+      "locations": [
+        "src/admin/index.js:fetchWorkspace (dynamic settings RPC selection)"
+      ],
+      "present_in_live_catalog": false
+    },
+    "get_cashier_bill_queue": {
+      "locations": [
+        "src/cashier/index.js:711"
+      ],
+      "present_in_live_catalog": false
+    },
+    "get_customer_session_state": {
+      "locations": [
+        "src/pos/index.js:181",
+        "src/pos/index.js:239",
+        "src/pos/index.js:1016",
+        "src/pos/index.js:2104",
+        "src/pos/index.js:2709"
+      ],
+      "present_in_live_catalog": true
+    },
+    "get_customer_table_access": {
+      "locations": [
+        "src/pos/index.js:309"
+      ],
+      "present_in_live_catalog": true
+    },
+    "get_inventory_dashboard": {
+      "locations": [
+        "src/admin/index.js:599"
+      ],
+      "present_in_live_catalog": false
+    },
+    "get_inventory_usage_report": {
+      "locations": [
+        "src/admin/ingredientUsage.js:319"
+      ],
+      "present_in_live_catalog": false
+    },
+    "get_kot_queue": {
+      "locations": [
+        "src/kot/index.js:829"
+      ],
+      "present_in_live_catalog": true,
+      "notes": "Returns session/table identity and reversible KOT Ready markers; tickets stop appearing after bill_ready."
+    },
+    "get_operational_settings": {
+      "locations": [
+        "src/pos/index.js:112"
+      ],
+      "present_in_live_catalog": false
+    },
+    "get_panel_pin_statuses": {
+      "locations": [
+        "src/admin/panelPinManager.js:722"
+      ],
+      "present_in_live_catalog": false
+    },
+    "get_public_pos_data": {
+      "locations": [
+        "src/pos/index.js:99"
+      ],
+      "present_in_live_catalog": false
+    },
+    "get_table_daily_pin": {
+      "locations": [
+        "src/admin/index.js:4866"
+      ],
+      "present_in_live_catalog": true
+    },
+    "get_tenant_branding": {
+      "locations": [
+        "src/customer/index.js:29"
+      ],
+      "present_in_live_catalog": true
+    },
+    "regenerate_table_daily_pin": {
+      "locations": [
+        "src/admin/index.js:4912"
+      ],
+      "present_in_live_catalog": false
+    },
+    "remove_order_item": {
+      "locations": [
+        "src/admin/index.js:3954"
+      ],
+      "present_in_live_catalog": true
+    },
+    "request_captain": {
+      "locations": [
+        "src/pos/index.js:938"
+      ],
+      "present_in_live_catalog": false
+    },
+    "request_dish_cancellation": {
+      "locations": [
+        "src/pos/index.js:dynamic cancellation RPC selection"
+      ],
+      "present_in_live_catalog": false
+    },
+    "request_session_bill": {
+      "locations": [
+        "src/pos/index.js:2047",
+        "src/pos/index.js:2331"
+      ],
+      "present_in_live_catalog": true
+    },
+    "rms_check_pin_v2": {
+      "locations": [
+        "src/components/lockScreen.js:213"
+      ],
+      "present_in_live_catalog": true
+    },
+    "rms_set_pin_v2": {
+      "locations": [
+        "src/components/lockScreen.js:340"
+      ],
+      "present_in_live_catalog": true
+    },
+    "rms_verify_pin_v2": {
+      "locations": [
+        "src/components/lockScreen.js:345"
+      ],
+      "present_in_live_catalog": true
+    },
+    "set_kot_item_status": {
+      "locations": [
+        "src/kot/index.js:883",
+        "src/admin/index.js:3925"
+      ],
+      "present_in_live_catalog": true,
+      "notes": "Shared Ready/Undo Ready transition used by KOT and Admin Table Open."
+    },
+    "submit_customer_order": {
+      "locations": [
+        "src/pos/index.js:1931"
+      ],
+      "present_in_live_catalog": true
+    },
+    "verify_panel_pin": {
+      "locations": [
+        "src/components/panelPinScreen.js:365"
+      ],
+      "present_in_live_catalog": false
+    },
+    "apply_admin_bill_discount": {
+      "locations": [
+        "src/admin/index.js:Admin receipt discount action"
+      ],
+      "present_in_live_catalog": false,
+      "notes": "Added by ADMIN_BILL_DISCOUNT_PATCH.sql; must be migrated before use."
+    },
+    "set_kot_table_ready": {
+      "locations": [
+        "src/kot/index.js:920",
+        "src/admin/index.js:3950"
+      ],
+      "present_in_live_catalog": true,
+      "notes": "Atomically marks eligible items on one open dining table Ready or undoes Ready."
+    }
+  }
+}

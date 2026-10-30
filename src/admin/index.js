@@ -27,6 +27,7 @@ let inventoryDraftTenantId = null;
 let ingredientDrafts = [];
 let productRecipeDrafts = new Map();
 let inventoryMovementDrafts = [];
+let inventoryModeDraft = "disabled";
 
 // Ingredient categories are tenant-scoped values loaded from the database by
 // get_inventory_dashboard(). There is intentionally no hard-coded category list:
@@ -706,6 +707,7 @@ async function renderAdminWorkspace(
     ingredientDrafts = [];
     productRecipeDrafts = new Map();
     inventoryMovementDrafts = [];
+    inventoryModeDraft = "disabled";
   }
   // 1. HARDWARE AUDIO ENGINE: Generates a perfect 880Hz POS 'Ding' without needing MP3 files
   const playDing = () => {
@@ -743,11 +745,14 @@ async function renderAdminWorkspace(
     if (managerMode) return;
     const access = window.__RMS_PANEL_ACCESS__;
     if (access?.panelId !== "admin" || !access?.token || access.expiresAt <= Date.now()) return;
-    const { data, error } = await supabase.rpc("get_inventory_dashboard", {
-      p_panel_token: access.token
-    });
-    if (error) throw error;
-    const result = Array.isArray(data) ? data[0] : data;
+    const [dashboardResult, setupResult] = await Promise.all([
+      supabase.rpc("get_inventory_dashboard", { p_panel_token: access.token }),
+      supabase.rpc("get_inventory_setup_status", { p_panel_token: access.token })
+    ]);
+    if (dashboardResult.error) throw dashboardResult.error;
+    const result = Array.isArray(dashboardResult.data) ? dashboardResult.data[0] : dashboardResult.data;
+    const setup = Array.isArray(setupResult.data) ? setupResult.data[0] : setupResult.data;
+    inventoryModeDraft = setupResult.error ? "disabled" : (setup?.inventoryMode || "disabled");
     ingredientDrafts = (result?.ingredients || []).map(item => ({
       id: item.id,
       name: item.name,
@@ -1915,7 +1920,8 @@ async function renderAdminWorkspace(
                           <td>${escapeHtml(movement.reason)}</td>
 
                           <td>
-                            ${formatInventoryQuantity(getBalance(movement.ingredientId), movement.unit)}
+                            <strong style="color:${getBalance(movement.ingredientId) < 0 ? "var(--danger)" : "inherit"};">${formatInventoryQuantity(getBalance(movement.ingredientId), movement.unit)}</strong>
+                            ${getBalance(movement.ingredientId) < 0 ? `<div style="margin-top:3px;color:var(--danger);font-size:10px;font-weight:850;">SHORTAGE</div>` : ""}
                           </td>
                         </tr>
                       `;
@@ -2036,9 +2042,10 @@ async function renderAdminWorkspace(
           const nextBalance =
             getBalance(ingredientId) + quantityDelta;
 
-          if (nextBalance < 0) {
-            errorNode.textContent =
-              "This movement would create negative draft stock. Review the quantity before continuing.";
+          if (nextBalance < 0 && inventoryModeDraft !== "automatic") {
+            errorNode.textContent = inventoryModeDraft === "strict"
+              ? "Strict inventory does not allow a negative balance. Record a verified receipt or reduce the adjustment."
+              : "This movement would create negative stock while automatic deductions are off. Record the missing stock or reduce the quantity.";
             return;
           }
 
@@ -2109,11 +2116,11 @@ async function renderAdminWorkspace(
 
           let stockStatus;
 
-          if (!hasOpeningStock) {
+          if (currentBalance < 0) {
+            stockStatus = "Shortage";
+          } else if (!hasOpeningStock) {
             stockStatus = "Opening stock needed";
-          } else if (
-            currentBalance <= Number(ingredient.reorderLevel)
-          ) {
+          } else if (currentBalance <= Number(ingredient.reorderLevel)) {
             stockStatus = "Reorder";
           } else if (averageDailyUsage <= 0) {
             stockStatus = "Usage history needed";
@@ -2269,11 +2276,7 @@ These estimates use saved stock movements and recipe-consumption records for the
                 ${activeProducts.length ? activeProducts.map(item => {
                   const recipe = productRecipeDrafts.get(item.id) || [];
                   const verified = recipe.length > 0 &&
-                    recipe.every(row => row.is_estimate === false) &&
-                    recipe.every(row => {
-                      const note = String(row.source_note || "").trim();
-                      return note.length > 0 && note !== "Reviewed by Admin.";
-                    });
+                    recipe.every(row => row.is_estimate === false);
                   const stateLabel = !recipe.length ? "Missing recipe" : verified ? "Verified" : "Estimated";
                   const stateColor = !recipe.length ? "var(--danger)" : verified ? "var(--forest-800)" : "var(--muted)";
                   return `<tr><td><strong>${escapeHtml(item.name)}</strong><div style="color:var(--muted);font-size:11px;margin-top:3px;">${escapeHtml(item.category || "Uncategorized")}</div></td><td>${recipe.length ? recipe.map(row => `${escapeHtml(ingredientDrafts.find(ingredient => ingredient.id === row.ingredient_id)?.name || "Unknown ingredient")} · ${escapeHtml(row.quantity_per_serving)} per serving`).join("<br>") : "No recipe saved"}</td><td><span style="font-size:11px;font-weight:850;color:${stateColor};">${escapeHtml(stateLabel)}</span></td></tr>`;
@@ -2347,7 +2350,10 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 </td>
 
                 <td>${item.baseUnit === "g" ? "kg" : item.baseUnit === "ml" ? "L" : "pcs"}</td>
-                <td><strong>${escapeHtml(formatInventoryQuantity(item.currentStock || 0, item.baseUnit))}</strong></td>
+                <td>
+                  <strong style="color:${Number(item.currentStock || 0) < 0 ? "var(--danger)" : "inherit"};">${escapeHtml(formatInventoryQuantity(item.currentStock || 0, item.baseUnit))}</strong>
+                  ${Number(item.currentStock || 0) < 0 ? `<div style="margin-top:3px;color:var(--danger);font-size:10px;font-weight:850;">SHORTAGE</div>` : Number(item.currentStock || 0) === 0 ? `<div style="margin-top:3px;color:var(--muted);font-size:10px;font-weight:750;">OUT OF STOCK</div>` : ""}
+                </td>
                 <td>${item.costPerUnit === null ? "Not entered" : `₹${(Number(item.costPerUnit) * (item.baseUnit === "g" || item.baseUnit === "ml" ? 1000 : 1)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / ${item.baseUnit === "g" ? "kg" : item.baseUnit === "ml" ? "L" : "pcs"}`}</td>
 
                 <td>
@@ -4530,7 +4536,11 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 quantity: oi.quantity,
                 status: String(oi.serving_status || 'pending').toLowerCase(),
                 kotReadyPreviousStatus: oi.kot_ready_previous_status || null,
-                kotReadyAt: oi.kot_ready_at || null
+                kotReadyAt: oi.kot_ready_at || null,
+                inventoryConsumedAt: oi.inventory_consumed_at || null,
+                inventoryUsageCalculatedAt: oi.inventory_usage_calculated_at || null,
+                inventoryRecipeSnapshot: Array.isArray(oi.inventory_recipe_snapshot) ? oi.inventory_recipe_snapshot : [],
+                inventoryActualUsageSnapshot: Array.isArray(oi.inventory_actual_usage_snapshot) ? oi.inventory_actual_usage_snapshot : []
               });
             });
           displayRounds.push({ id: o.id, round_number: o.round_number || (index+1), items: roundItems, total: o.grand_total });
@@ -4669,28 +4679,111 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
         const newScrollNode = host.querySelector(".dining-items-list");
         if (newScrollNode) newScrollNode.scrollTop = currentScroll;
 
-        // Admin may remove any item from an unpaid, open order. The database verifies
-        // tenant ownership, preserves an audit snapshot, deletes the item, and recalculates totals.
+        // Cancellation preserves the order line and stock ledger. If the item already
+        // consumed ingredients, Admin must reconcile actual quantities before cancelling.
         host.querySelectorAll(".admin-delete-item-btn").forEach(button => {
-            button.addEventListener("click", async () => {
+            button.addEventListener("click", () => {
                 const itemId = button.dataset.deleteId;
-                const originalHTML = button.innerHTML;
-                button.disabled = true;
-                button.innerHTML = '<i class="ph-bold ph-spinner-gap ph-spin"></i>';
-
-                try {
-                    const { error } = await supabase.rpc("remove_order_item", {
-                        p_item_id: itemId,
-                        p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null
-                    });
-                    if (error) throw error;
-
-                    renderManager();
-                } catch (error) {
-                    button.disabled = false;
-                    button.innerHTML = originalHTML;
-                    showToast("Could not remove item", error.message, "error");
+                const item = displayRounds.flatMap(round => round.items).find(row => row.id === itemId);
+                if (!item) {
+                    showToast("Could not cancel item", "The order item is no longer available. Refresh the table and try again.", "error");
+                    return;
                 }
+
+                const snapshot = Array.isArray(item.inventoryRecipeSnapshot) ? item.inventoryRecipeSnapshot : [];
+                const hasConsumptionMarker = Boolean(item.inventoryConsumedAt);
+                const hasUsageCalculationMarker = Boolean(item.inventoryUsageCalculatedAt);
+                const hasSnapshot = snapshot.length > 0;
+                const needsReconciliation = hasUsageCalculationMarker && hasSnapshot;
+                const snapshotMissing = (hasConsumptionMarker && !hasSnapshot)
+                  || (hasUsageCalculationMarker && !hasSnapshot)
+                  || (hasSnapshot && !hasUsageCalculationMarker);
+                const modal = openAppModal({
+                    title: snapshotMissing ? "Stock reconciliation required" : `Cancel ${item.name}?`,
+                    subtitle: "This action is recorded in the restaurant audit history.",
+                    body: snapshotMissing
+                      ? `<p style="margin:0;color:var(--muted);line-height:1.65;">The item's stock-consumption timestamp and saved recipe snapshot do not agree. Keep it unchanged and investigate the stock ledger before cancelling; the system will not guess which ingredients should be returned.</p>`
+                      : `<div style="display:grid;gap:13px;">
+                          <p style="margin:0;color:var(--muted);line-height:1.6;">${needsReconciliation
+                            ? hasConsumptionMarker
+                              ? "Stock was deducted when preparation started. Enter the actual quantity used for each ingredient. Unused quantities will be returned to stock; additional usage will be recorded as an adjustment-out."
+                              : "Recipe usage was calculated when preparation started, but stock was not deducted. Enter the actual quantity used for the audit record; the system will preserve this usage without changing stock balances."
+                            : "No preparation recipe snapshot is attached to this item. It will be marked cancelled without deleting its order history or changing stock."}</p>
+                          ${needsReconciliation ? `<div style="display:grid;gap:9px;max-height:260px;overflow:auto;padding-right:4px;">
+                            ${snapshot.map(row => {
+                              const ingredientId = String(row.ingredient_id || "");
+                              const name = escapeHtml(row.name || "Ingredient");
+                              const unit = escapeHtml(row.unit || "");
+                              const issued = Number(row.quantity || 0);
+                              return `<label style="display:grid;grid-template-columns:minmax(0,1fr) minmax(110px,145px);gap:10px;align-items:center;font-size:12px;font-weight:750;">
+                                <span>${name}<small style="display:block;color:var(--muted);font-weight:500;">Issued: ${issued.toLocaleString("en-IN", { maximumFractionDigits: 3 })} ${unit}</small></span>
+                                <span><input type="number" min="0" step="0.001" required inputmode="decimal" data-actual-usage-ingredient="${escapeHtml(ingredientId)}" value="" placeholder="${Number.isFinite(issued) ? issued : 0}" style="width:100%;min-height:40px;padding:8px;border:1px solid var(--line);border-radius:9px;background:var(--paper);color:var(--ink);font:inherit;"><small style="display:block;color:var(--muted);font-weight:500;">Actual used (${unit})</small></span>
+                              </label>`;
+                            }).join("")}
+                          </div>` : ""}
+                          <label style="display:grid;gap:6px;font-size:12px;font-weight:800;">Cancellation reason
+                            <textarea data-cancel-reason maxlength="250" rows="2" required placeholder="Enter the reason for cancellation" style="width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink);font:inherit;resize:vertical;"></textarea>
+                          </label>
+                        </div>`,
+                    actions: snapshotMissing ? [
+                      { label: "Close", className: "btn-quiet", onClick: ({ close }) => close() }
+                    ] : [
+                      { label: "Keep item", className: "btn-quiet", onClick: ({ close }) => close() },
+                      {
+                        label: needsReconciliation ? "Reconcile & cancel" : "Cancel dish",
+                        className: "btn-danger",
+                        onClick: async ({ root, close, button: confirmButton }) => {
+                          const reason = root.querySelector("[data-cancel-reason]")?.value?.trim() || "";
+                          if (!reason) {
+                            showToast("Reason required", "Enter why this dish is being cancelled.", "error");
+                            root.querySelector("[data-cancel-reason]")?.focus();
+                            return;
+                          }
+                          const actualUsage = needsReconciliation
+                            ? [...root.querySelectorAll("[data-actual-usage-ingredient]")].map(input => ({
+                                ingredient_id: input.dataset.actualUsageIngredient,
+                                actual_quantity: input.value.trim()
+                              }))
+                            : [];
+                          if (needsReconciliation && actualUsage.some(row => row.actual_quantity === "" || !Number.isFinite(Number(row.actual_quantity)) || Number(row.actual_quantity) < 0)) {
+                            showToast("Invalid ingredient quantity", "Enter a valid non-negative actual quantity for every listed ingredient.", "error");
+                            return;
+                          }
+
+                          confirmButton.disabled = true;
+                          const oldLabel = confirmButton.textContent;
+                          confirmButton.textContent = "Saving…";
+                          try {
+                            const { data, error } = await supabase.rpc("admin_cancel_order_item", {
+                              p_item_id: itemId,
+                              p_actual_usage: actualUsage,
+                              p_reason: reason,
+                              p_panel_token: window.__RMS_PANEL_ACCESS__?.token || null
+                            });
+                            if (error) throw error;
+                            if (!data?.ok) throw new Error("The database did not confirm the cancellation.");
+                            close();
+                            showToast(
+                              data.inventory_reconciled
+                                ? data.stock_deduction_was_recorded ? "Dish cancelled and stock reconciled" : "Dish cancelled and actual use recorded"
+                                : "Dish cancelled",
+                              data.inventory_reconciled
+                                ? data.stock_deduction_was_recorded
+                                  ? `${Number(data.adjustment_count || 0)} stock correction(s) were added to the permanent ledger.`
+                                  : "Actual ingredient use was saved for reporting; stock balances were not changed."
+                                : "The order line was retained in history; no stock movement was changed.",
+                              "success"
+                            );
+                            await renderManager();
+                          } catch (error) {
+                            confirmButton.disabled = false;
+                            confirmButton.textContent = oldLabel;
+                            showToast("Could not cancel item", error?.message || "Please refresh and try again.", "error");
+                          }
+                        }
+                      }
+                    ]
+                });
             });
         });
 
@@ -5924,7 +6017,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
               aria-live="polite"
               style="margin:13px 0 0;color:var(--muted);font-size:12px;line-height:1.6;"
             >
-              In strict inventory mode, verified recipe quantities are deducted when preparation starts. Unverified recipes stay estimated and do not enable strict inventory.
+              In Automatic mode, saved recipe quantities are deducted when preparation starts, including estimated recipes; stock shortages never block the kitchen. Strict mode is optional and requires verified recipes and sufficient stock.
             </p>
           </section>
         </form>
@@ -5972,11 +6065,12 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 !ingredient ||
                 item.quantity_per_serving === "" ||
                 !Number.isFinite(quantity) ||
-                quantity <= 0
+                quantity <= 0 ||
+                Math.abs(quantity - Math.round(quantity * 1000) / 1000) > 1e-9
               ) {
                 switchProductTab("ingredients");
                 recipeStatus.textContent =
-                  "Choose an ingredient and enter a quantity greater than zero for every recipe row.";
+                  "Choose an ingredient and enter a positive quantity with at most three decimal places for every recipe row.";
                 return;
               }
 
@@ -6119,11 +6213,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
     ).map(item => ({ ...item }));
 
     const savedRecipeVerified = productRecipeSelection.length > 0 &&
-      productRecipeSelection.every(item => item.is_estimate === false) &&
-      productRecipeSelection.every(item => {
-        const note = String(item.source_note || "").trim();
-        return note.length > 0 && note !== "Reviewed by Admin.";
-      });
+      productRecipeSelection.every(item => item.is_estimate === false);
 
     if (recipeVerifiedToggle) recipeVerifiedToggle.checked = savedRecipeVerified;
 
@@ -6213,7 +6303,7 @@ This inventory view is unavailable. Use Ingredient Usage for the server-backed c
                 class="field-input"
                 type="number"
                 min="0"
-                step="any"
+                step="0.001"
                 inputmode="decimal"
                 data-recipe-quantity="${index}"
                 value="${escapeHtml(item.quantity_per_serving ?? "")}"

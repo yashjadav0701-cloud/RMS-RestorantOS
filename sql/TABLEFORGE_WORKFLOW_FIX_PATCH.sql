@@ -281,7 +281,7 @@ GRANT EXECUTE ON FUNCTION public.complete_takeaway_payment(uuid,text,text) TO au
 CREATE TABLE IF NOT EXISTS public.restaurant_workflow_settings (
   restaurant_id uuid PRIMARY KEY REFERENCES public.restaurants(id) ON DELETE CASCADE,
   inventory_mode text NOT NULL DEFAULT 'disabled'
-    CHECK (inventory_mode IN ('disabled','strict')),
+    CHECK (inventory_mode IN ('disabled','automatic','strict')),
   allow_takeaway_prepayment boolean NOT NULL DEFAULT true,
   allowed_payment_methods text[] NOT NULL DEFAULT ARRAY['upi_qr','cash']::text[],
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -374,7 +374,7 @@ BEGIN
   SELECT x.restaurant_id INTO v_restaurant_id
   FROM public._tableforge_validate_panel_token(p_panel_token, ARRAY['admin']) x;
   IF v_restaurant_id IS NULL THEN RAISE EXCEPTION 'Admin panel authorization expired or invalid.'; END IF;
-  IF p_inventory_mode NOT IN ('disabled','strict') THEN RAISE EXCEPTION 'Inventory mode must be disabled or strict.'; END IF;
+  IF p_inventory_mode NOT IN ('disabled','automatic','strict') THEN RAISE EXCEPTION 'Inventory mode must be disabled, automatic, or strict.'; END IF;
   SELECT array_agg(DISTINCT lower(btrim(x))) INTO v_methods FROM unnest(coalesce(p_allowed_payment_methods,ARRAY[]::text[])) x;
   IF coalesce(cardinality(v_methods),0)=0 OR EXISTS(SELECT 1 FROM unnest(v_methods) x WHERE x NOT IN ('upi_qr','cash')) THEN
     RAISE EXCEPTION 'Select at least one supported payment method: UPI QR or Cash.';

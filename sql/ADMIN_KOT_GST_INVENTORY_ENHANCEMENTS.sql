@@ -537,7 +537,7 @@ BEGIN
   SELECT x.restaurant_id INTO v_restaurant_id
   FROM public._tableforge_validate_panel_token(p_panel_token, ARRAY['admin']) x;
   IF v_restaurant_id IS NULL THEN RAISE EXCEPTION 'Admin panel authorization expired or invalid.'; END IF;
-  IF p_inventory_mode NOT IN ('disabled','strict') THEN RAISE EXCEPTION 'Inventory mode must be disabled or strict.'; END IF;
+  IF p_inventory_mode NOT IN ('disabled','automatic','strict') THEN RAISE EXCEPTION 'Inventory mode must be disabled, automatic, or strict.'; END IF;
   SELECT array_agg(DISTINCT lower(btrim(x))) INTO v_methods
   FROM unnest(coalesce(p_allowed_payment_methods,ARRAY[]::text[])) x;
   IF coalesce(cardinality(v_methods),0)=0 OR EXISTS(

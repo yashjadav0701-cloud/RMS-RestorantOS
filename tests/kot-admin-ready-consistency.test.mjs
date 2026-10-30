@@ -47,3 +47,9 @@ test("KOT SQL patch adds trigger marker columns and keeps ready items visible un
   assert.match(sql, /v_item\.serving_status IN \('pending','ready'\) AND v_item\.inventory_consumed_at IS NULL/);
   assert.match(sql, /v_item\.serving_status='preparing' AND v_item\.inventory_consumed_at IS NULL/);
 });
+
+
+test("KOT shows the database's actionable status error instead of hiding it behind a generic message", async () => {
+  const kot = await read("src/kot/index.js");
+  assert.match(kot, /errorNode\.textContent = String\(error\?\.message \|\| \"\"\)\.trim\(\)/);
+});

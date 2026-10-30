@@ -554,8 +554,10 @@ export async function renderCancellationApprovals(area) {
       console.error("Cancellation decision failed:", error);
 
       if (errorNode) {
-        errorNode.textContent =
-          "The decision was not confirmed. The request remains unresolved.";
+        const databaseMessage = String(error?.message || "");
+        errorNode.textContent = /stock-consumption history|stock ledger|ingredient quantities|reconcile the actual ingredient/i.test(databaseMessage)
+          ? "This dish already has stock activity, so it cannot be approved from this queue. Open Admin → Orders → Table Manager, use Undo Ready first when required, then choose Cancel dish and enter the actual ingredient quantities. The request will be cleared after that reconciliation."
+          : "The decision was not confirmed. The request remains unresolved.";
       }
 
       button.disabled = false;
